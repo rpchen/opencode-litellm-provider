@@ -60,7 +60,7 @@
 3. **公开 API 就是 beta 实际实现**：beta 的 `packages/plugin/src/promise/adapter.ts` 确实提供 `ctx.provider.transform`、`ctx.model.transform`，
    与已发布的 `.d.ts` 一致。
 
-## 5. 仍待验证（首个变更的 spike 范围）
+## 5. 仍待验证（在首个变更的实施与验收阶段确认）
 
 1. 一个 integration 能否挂多个 provider（`Provider.Info.integrationID` 指向同一个 `litellm` integration），使 chat / responses / messages 三类 provider 共用一次连接。
 2. **协议选择**：`@ai-sdk/openai` 的 `languageModel()` 默认走 Responses；走 Chat 需要 `.chat()`，可用 `ctx.aisdk.hook("language")` 覆盖，或统一改用 `@ai-sdk/openai-compatible`。

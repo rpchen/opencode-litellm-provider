@@ -29,7 +29,7 @@
 ## Impact
 
 - **新代码**：`src/` 下的插件实现与 `test/` 下的单元测试；`test/fixtures/` 新增脱敏后的 LiteLLM `/v1/model/info` 与 models.dev 响应样本。
-- **运行时依赖**：仅 `@opencode/plugin`（peer，`>=2.0.15 <2.1`）。协议实现使用宿主的原生协议包 `@opencode/ai/providers/*`，插件本身不打包任何 SDK。具体用哪三个包取决于 spike 1.1：首选 `openai-compatible` / `openai-compatible-responses` / `anthropic-compatible`，其中后两者不在宿主内置包表中；若打包后的宿主无法加载，则改用内置的 `openai/responses` / `anthropic`（见 design D3）。
+- **运行时依赖**：仅 `@opencode/plugin`（peer，`>=2.0.15 <2.1`）。协议实现使用宿主的原生协议包 `@opencode/ai/providers/*`，插件本身不打包任何 SDK。默认使用 `openai-compatible` / `openai-compatible-responses` / `anthropic-compatible`；其中后两者不在宿主内置包表中，若验收时发现无法加载，则改用内置的 `openai/responses` / `anthropic`（见 design D3）。
 - **依赖的 OpenCode v2 插件 API**（Promise 版，`@opencode/plugin`）：
   - `ctx.integration.transform`：注册 key 认证方式及表单地址字段（字段 key 为 `url`），并注册 integration。
   - `ctx.integration.connection.active / resolve`：读取当前连接的 Key 与表单答案，用于发现请求。
@@ -40,5 +40,5 @@
 - **API 风险**：
   - v2 插件 API 来自上游 `anomalyco/opencode` 的 `beta` 分支，处于 2.0.x 快速迭代期，没有稳定性承诺；本变更把宿主版本范围固定为 `>=2.0.15 <2.1`，并在适配层集中封装对宿主 API 的调用。
   - 凭据投影行为（表单答案 `configuration` 合并进 settings、key 注入为 `apiKey`）是宿主内部实现（`model-resolver.ts`），不在公开类型中声明，将来可能变化。插件只依赖 `apiKey` 注入这一项；地址由插件自己规范化后写入 `settings.baseURL`，表单字段刻意不叫 `baseURL`，避免被投影覆盖。
-  - 原生协议包路径（`@opencode/ai/providers/*`）属于宿主内置实现，不是公开的插件契约；其中两个首选包不在宿主内置包表中，能否加载必须由 spike 证实。
+  - 原生协议包路径（`@opencode/ai/providers/*`）属于宿主内置实现，不是公开的插件契约；其中两个首选包不在宿主内置包表中，能否加载在验收阶段确认，不行则换备选包。
 - **对用户的影响**：已用 `opencode-litellm-config-sync` 生成静态配置的用户，迁移时需要从 opencode 配置中删除 `litellm*` 这几个 provider 块，改用本插件（见 design.md 的 Migration Plan）。

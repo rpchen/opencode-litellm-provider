@@ -67,7 +67,7 @@ integration 与 provider 的 id 固定为 `litellm`，显示名固定为 `LiteLL
 调用时依赖宿主投影：`configuration.baseURL` 会合并进 settings 的 `baseURL`，`credential.key` 会成为 `apiKey`。
 
 **地址规范化与投影冲突**：用户可能填写 `.../v1` 或根地址。而原生包需要的 `baseURL` 是带 `/v1` 的地址，投影又会**原样**覆盖 settings。所以插件在注册模型时，要**显式**把规范化后的 `baseURL = <根地址>/v1` 写到 `model.settings`。
-实施的第一步 spike 必须验证合并优先级：宿主的合并顺序是 `settings ← credential.metadata ← configuration`，也就是 configuration 最后覆盖、优先级最高。如果确实如此，用户填的原始地址会覆盖插件写入的规范化地址。
+宿主源码（`model-resolver.ts`）中的合并顺序是 `settings ← credential.metadata ← configuration`，也就是 configuration 最后覆盖、优先级最高。所以如果表单字段也叫 `baseURL`，用户填的原始地址会覆盖插件写入的规范化地址。
 - 方案 A（首选）：表单字段 key 不叫 `baseURL`，改叫 `url`，避免投影覆盖；插件自己把规范化结果写进 `settings.baseURL`。这样行为确定，也不依赖投影这个内部实现。
 - 方案 B：仍叫 `baseURL`，并要求用户填写带 `/v1` 的完整地址。放弃原因：用户容易填错。
 
@@ -83,7 +83,7 @@ integration 与 provider 的 id 固定为 `litellm`，显示名固定为 `LiteLL
 `add` 不补默认值，所以每个模型都要构造**完整的** `Model.Info`：`id`、`modelID`、`providerID`、`name`（= `model_name`）、`package`（按协议）、`capabilities`、`variants`、`time.released`（models.dev `release_date`，缺失为 0）、`cost`、`status = "active"`、`enabled = true`、`limit`。`core/` 输出的 `ModelSpec` 在 `host/register.ts` 中以 `Model.Info.default` 为底合成，避免漏字段。
 没有活动连接或首次发现未成功时，transform 不写入 provider 记录。
 
-**协议包选择（待 spike 1.1 定案）：**
+**协议包选择：**
 
 | 协议 | 首选（A） | 备选（B，内置包表中存在） |
 |---|---|---|
@@ -91,7 +91,7 @@ integration 与 provider 的 id 固定为 `litellm`，显示名固定为 `LiteLL
 | Responses | `@opencode/ai/providers/openai-compatible-responses`（非内置） | `@opencode/ai/providers/openai/responses` |
 | Messages | `@opencode/ai/providers/anthropic-compatible`（非内置） | `@opencode/ai/providers/anthropic` |
 
-A 是面向“兼容网关”的通用包，请求体最贴近 LiteLLM 的期望；但两个包不在宿主内置表中，打包后的宿主可能无法动态加载。spike 1.1 先验证 A；A 不可加载时改用 B，并比较 B 对 LiteLLM 的请求体差异（B 是面向官方服务的包，可能附带 OpenAI / Anthropic 专属默认项）。包名集中在 `core/protocol.ts` 的映射表中，切换只改一处。
+A 是面向“兼容网关”的通用包，请求体最贴近 LiteLLM 的期望；但两个包不在宿主内置表中，打包后的宿主可能无法动态加载。实施时先用 A；验收中发现 A 不可加载时改用 B（B 是面向官方服务的包，可能附带 OpenAI / Anthropic 专属默认项，但 LiteLLM 仍可接收）。包名集中在 `core/protocol.ts` 的映射表中，切换只改一处。
 - 备选：按协议拆成三个 provider（与旧脚本一致）。放弃原因：用户需要连接三次或理解三个入口；而 `Model.Info.package` 本来就支持按模型选择协议。
 
 ### D4. 协议判定与 variants 写入字段
@@ -102,7 +102,7 @@ A 是面向“兼容网关”的通用包，请求体最贴近 LiteLLM 的期望
   - Chat 与 Responses 协议：`{ reasoningEffort: v }`。协议层分别翻译为请求体的 `reasoning_effort` 与 `reasoning.effort`（`protocols/openai-chat.js`、`protocols/open-responses.js` 的 `lowerOptions`）。
   - Messages 协议：effort 类档位写 `{ effort: v }`；budget 类档位写 `{ thinking: { type: "enabled", budgetTokens: n } }`（`protocols/anthropic-messages.js` 的 Options）。
 
-  tasks 1.4 用真实请求抓包，确认请求体中出现对应的 wire 字段。映射表集中在 `core/modelsdev.ts`，改键名只动一处，不影响 spec（spec 只规定档位集合与语义）。
+  验收（tasks 4.2）时确认切换档位后请求中带上了对应参数。映射表集中在 `core/modelsdev.ts`，改键名只动一处，不影响 spec（spec 只规定档位集合与语义）。
 
 ### D5. 家族 → 原厂识别
 
@@ -138,7 +138,7 @@ A 是面向“兼容网关”的通用包，请求体最贴近 LiteLLM 的期望
 ### D7. 刷新、指纹与缓存
 
 - **发现循环**：启动时执行一次 → 之后每隔 `pollInterval` 执行一次（默认 300s，下限 30s）。
-- **连接变更**：通过 `ctx.event.subscribe()` 订阅 `credential.switched`（按 `data.integrationID === "litellm"` 过滤）与 `credential.updated`；收到后调用 `connection.active("litellm")` 复核连接是否变化（比较连接 key），变化则立即发现并重置计时，无连接则停止轮询。spike 1.5 只需确认事件到达与 `connection.active` 更新的先后顺序。
+- **连接变更**：通过 `ctx.event.subscribe()` 订阅 `credential.switched`（按 `data.integrationID === "litellm"` 过滤）与 `credential.updated`；收到后调用 `connection.active("litellm")` 复核连接是否变化（比较连接 key），变化则立即发现并重置计时，无连接则停止轮询。事件与 `connection.active` 更新的先后顺序在实施与验收中按实际情况处理；事件不可用时由轮询兜底。
 - **指纹**：对 `ModelSpec[]` 做稳定序列化（键排序）后比较字符串，不同才写入缓存并调用 `ctx.provider.reload()`。
 - **并发**：同时最多只有一个发现在进行，新触发的发现合并到正在进行的那次。
 - **models.dev**：进程内缓存 6 小时。获取失败时按 60 秒退避，下次刷新时重试。插件不在磁盘上写任何缓存。
@@ -184,7 +184,7 @@ A 是面向“兼容网关”的通用包，请求体最贴近 LiteLLM 的期望
 | 模型清单只取 `/v1/model/info` 中的真实部署 | `/v1/models` 会列出团队白名单中已无部署的残留名字 |
 | 协议按 `supported_endpoints` > `mode` 判定，不再“GPT 即 Responses” | 与 LiteLLM 管理员的声明一致，对任意部署通用；用户已确认。不对模型发试探请求，判错时用 `protocolOverrides` 兜底 |
 | 单个 provider、按模型选择协议包，取代三个 provider 拆分 | v2 支持模型级 `package`，用户只需连接一次 |
-| 使用宿主原生包 `@opencode/ai/providers/*`，不再使用 `@ai-sdk/*` | v2 宿主自带，与上游官方插件（lmstudio 等）一致；具体用哪几个包由 spike 1.1 定（D3） |
+| 使用宿主原生包 `@opencode/ai/providers/*`，不再使用 `@ai-sdk/*` | v2 宿主自带，与上游官方插件（lmstudio 等）一致；默认包与备选包见 D3 |
 | 上下文窗口按阶梯价字段截断，不再读取 Codex `models_cache.json` | 通用插件不能假设本地装有 Codex；目的相同，都是避开高价区间；用户已确认 |
 | 推理档位来源顺序为：原厂 → OpenCode Zen → 唯一 provider（与基线一致），但写入键按原生包选项名调整 | 包由 `@ai-sdk/*` 换为原生包，选项键不同 |
 | Messages 判定增加 `litellm_provider` / `custom_llm_provider` 与 Claude 家族 | 基线只看 `anthropic/` 前缀，会漏判 DB 方式配置、以及经 Bedrock / Vertex 部署的 Claude |
@@ -195,13 +195,13 @@ A 是面向“兼容网关”的通用包，请求体最贴近 LiteLLM 的期望
 
 ## Risks / Trade-offs
 
-- [v2 插件 API 在 2.0.x 期间变化] → 宿主调用集中在 `host/`；`peerDependencies` 固定 `>=2.0.15 <2.1`（tasks 2.4）；每次升级宿主时跑 spike 清单（tasks 第 1 组）。
-- [两个首选协议包不在宿主内置包表中，打包后的宿主无法加载] → spike 1.1 作为前置门槛最先验证；不可加载时改用内置的 `openai/responses` / `anthropic`（D3 备选 B）。
-- [LiteLLM 不接受 Messages 协议的 `x-api-key` 头] → spike 1.1 验证；插件不能把 Key 写进 `headers` 改用 Bearer（会持久化泄露）。若不通过，Messages 协议不可用，Claude 家族改走 Chat，并同步修改 spec。
-- [原生包的推理选项键与假设不一致，导致档位静默不生效] → tasks 1.4 逐协议抓包验证；映射表集中在一处。
+- [v2 插件 API 在 2.0.x 期间变化] → 宿主调用集中在 `host/`；`peerDependencies` 固定 `>=2.0.15 <2.1`（tasks 1.4）；每次升级宿主时重跑验收（tasks 第 4 组）。
+- [两个首选协议包不在宿主内置包表中，打包后的宿主无法加载] → 验收时确认；不可加载时改用内置的 `openai/responses` / `anthropic`（D3 备选 B）。
+- [LiteLLM 不接受 Messages 协议的 `x-api-key` 头] → 验收时确认；插件不能把 Key 写进 `headers` 改用 Bearer（会持久化泄露）。若不通过，Claude 家族改走 Chat（LiteLLM 会做协议转换，仍可调用），并与用户确认后同步修改 spec。
+- [原生包的推理选项键与假设不一致，导致档位静默不生效] → 验收时确认；映射表集中在一处，改键名只动一处。
 - [实测环境没有 `supported_endpoints`，协议完全由 `mode` 决定；经 `openai/` 网关转发的非 OpenAI 模型被标为 `responses` 时，LiteLLM 的 Responses 桥接未必可用] → 按用户确认的规则执行，不发试探请求；遇到个别模型不可用时用 `protocolOverrides` 覆盖。
 - [连接变更事件与 `connection.active` 更新存在先后顺序问题] → 收到事件后以 `connection.active` 的结果为准；即使事件漏收，轮询也会在一个间隔内发现（换号瞬间旧模型已由 `sourceConnection` 隐藏，不会误用旧凭据）。
-- [表单答案 `url` 随 configuration 进入原生包选项] → 目前被 Schema 静默丢弃；spike 1.2 确认请求体中不出现 `url`。
+- [表单答案 `url` 随 configuration 进入原生包选项] → 目前被 Schema 静默丢弃；验收时留意请求体中是否出现 `url`。
 - [阶梯截断让用户无法使用超过阶梯点的长上下文] → 默认开启是用户的明确选择；可以关闭。
 - [models.dev 模型 id 与 LiteLLM 模型名不一致，匹配不到] → 优先使用 `base_model`；匹配不到时只是缺少档位和补缺字段，不影响可用性。
 - [大量模型时 transform 全量重写的开销] → 只在指纹变化时 reload；模型数在百级以内，可以接受。
