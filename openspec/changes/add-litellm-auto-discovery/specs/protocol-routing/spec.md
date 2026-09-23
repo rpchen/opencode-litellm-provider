@@ -7,7 +7,7 @@
 ### Requirement: 协议判定顺序
 插件 SHALL 对每个模型按以下顺序判定协议，第一条命中即采用：
 1. 插件配置中该模型的协议覆盖；
-2. 上游为 Anthropic（部署的 `litellm_provider` 或 `custom_llm_provider` 为 `anthropic`，或 `litellm_params.model` 以 `anthropic/` 开头）→ Messages；
+2. 上游为 Anthropic 或模型属于 Claude 家族（部署的 `litellm_provider` 或 `custom_llm_provider` 为 `anthropic`，或 `litellm_params.model` 以 `anthropic/` 开头，或 `base_model` / 模型名去掉路由前缀后以 `claude-` 开头）→ Messages；
 3. 部署声明了 `supported_endpoints`：包含 `/v1/responses` → Responses；否则包含 `/v1/chat/completions` → Chat；
 4. `mode` 为 `responses` → Responses；
 5. 其余情况 → Chat。
@@ -22,6 +22,10 @@
 
 #### Scenario: Anthropic 上游
 - **WHEN** 部署的 `litellm_params.model` 为 `anthropic/claude-sonnet-4-5`
+- **THEN** 该模型使用 Messages 协议
+
+#### Scenario: 经 Bedrock 部署的 Claude
+- **WHEN** 部署的 `litellm_params.model` 为 `bedrock/anthropic.claude-sonnet-4-5`，`base_model` 为 `claude-sonnet-4-5`，`litellm_provider` 为 `bedrock`
 - **THEN** 该模型使用 Messages 协议
 
 ### Requirement: 多协议时 Responses 优先

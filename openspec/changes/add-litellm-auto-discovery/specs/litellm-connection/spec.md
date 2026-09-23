@@ -11,6 +11,10 @@
 - **WHEN** 用户执行 `/connect`，选择 LiteLLM，填写地址 `http://litellm.example:4000` 与 API Key 并提交
 - **THEN** 插件使用该地址与 Key 发现模型，模型出现在 OpenCode 模型选择器的 LiteLLM provider 下
 
+#### Scenario: 非 http(s) 地址
+- **WHEN** 用户填写 `file:///etc/passwd` 或 `ftp://litellm.example`
+- **THEN** 插件不使用该地址，不发起发现请求，不注册任何模型，并记录错误，提示地址必须是 http 或 https
+
 #### Scenario: 地址未填写
 - **WHEN** 用户只填写 API Key、未填写地址即提交
 - **THEN** 宿主的表单校验拒绝提交，不创建凭据
@@ -30,7 +34,7 @@
 - **THEN** 注册的模型集合不超出 A 中实际存在部署的模型
 
 ### Requirement: 凭据保密
-插件 MUST NOT 把 API Key 写入日志、错误信息、插件缓存文件或任何 OpenCode 配置文件；错误信息中出现的 Key MUST 被脱敏。
+插件 MUST NOT 把 API Key 写入日志、错误信息、插件缓存文件、任何 OpenCode 配置文件，或注册的 provider / 模型定义（包括 `settings`、`headers`、`body`）；Key 只能由宿主在调用时注入。错误信息中出现的 Key MUST 被脱敏。插件 MUST NOT 把 LiteLLM 或 models.dev 的响应体写入日志。
 
 #### Scenario: 发现请求失败
 - **WHEN** 发现请求返回 401
