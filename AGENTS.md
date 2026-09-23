@@ -20,5 +20,6 @@
 1. **临时文件**放 `.tmp/`（已 gitignore，可随时清空）。
 2. **密钥**：不得在仓库任何文件（含 fixtures、文档示例）写入明文 key 或内网真实地址；用 `sk-xxx`、`http://litellm.example:4000` 之类占位。
 3. **依赖**：运行时只允许依赖 `@opencode/plugin`（peer）；新增运行时依赖须在 openspec design.md 说明理由。
-4. **验证**：`bun run typecheck && bun test` 必须通过后再提交。
-5. **提交**：conventional commits（`feat:` / `fix:` / `chore:` / `docs:`）；openspec 在途变更随实施一起提交，完成后 archive。
+4. **真实环境测试凭据**：凡需连接真实 LiteLLM 的验证，统一使用 `~/.agents/skills/opencode-litellm-config-sync/.env` 中的 `LITELLM_BASE_URL` / `LITELLM_API_KEY`。只在运行时读取、只在内存中使用；地址与 Key 不得写入仓库、fixtures、日志或文档。**不要**读取 `~/.config/opencode` 下用户自己的 Key。
+5. **验证**：`bun run typecheck && bun test` 必须通过后再提交。
+6. **提交**：conventional commits（`feat:` / `fix:` / `chore:` / `docs:`）；openspec 在途变更随实施一起提交，完成后 archive。

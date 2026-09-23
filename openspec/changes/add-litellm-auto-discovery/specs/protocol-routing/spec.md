@@ -50,7 +50,7 @@
 - **THEN** 该模型使用 Chat 协议
 
 ### Requirement: 用户覆盖
-插件 SHALL 允许用户在插件配置中按实例、按模型名指定协议（`chat` / `responses` / `messages`）；覆盖 SHALL 优先于所有自动判定。覆盖指向的模型不存在时 SHALL 被忽略，不报错。
+插件 SHALL 允许用户在插件配置中按模型名指定协议（`chat` / `responses` / `messages`）；覆盖 SHALL 优先于所有自动判定。覆盖指向的模型不存在时 SHALL 被忽略，不报错。
 
 #### Scenario: 覆盖为 chat
 - **WHEN** 插件配置把 `glm-5.3` 覆盖为 `chat`，而其部署 `mode: responses`

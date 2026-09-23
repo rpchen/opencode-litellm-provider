@@ -35,8 +35,8 @@
 
 ```
 src/
-  index.ts            插件入口：读取 options，为每个实例创建 Instance
-  options.ts          插件配置的解析与校验（实例、轮询间隔、协议覆盖、阶梯截断开关）
+  index.ts            插件入口：读取 options，创建发现循环，返回 cleanup
+  options.ts          可选插件配置的解析与校验（轮询间隔、协议覆盖、阶梯截断开关）
   core/
     litellm.ts        LiteLLM 响应类型、地址规范化、部署聚合
     protocol.ts       协议判定（纯函数）
@@ -44,7 +44,7 @@ src/
     modelsdev.ts      models.dev 记录选择、家族 → 原厂映射、variants 生成
     build.ts          组合以上模块：deployments + catalog + options → ModelSpec[]
   host/
-    instance.ts       单实例生命周期：连接读取、轮询、缓存、指纹比较、reload
+    sync.ts           发现循环：连接读取、轮询、缓存、指纹比较、reload
     register.ts       ModelSpec[] → ProviderEditor 写入；integration 注册
   net/
     fetch.ts          带超时的 HTTP 获取、错误分类、Key 脱敏
@@ -55,11 +55,11 @@ src/
 
 ### D2. 连接：key 方式 + 表单 `baseURL`
 
-`ctx.integration.transform` 中为每个实例执行：
-- `update(id, i => i.name = 显示名)`；
-- `method.update({ integrationID: id, method: { type: "key", label: "API Key", form: [{ key: "baseURL", type: "string", format: "uri", required: true, title: "LiteLLM 地址", placeholder: "http://litellm.example:4000" }] } })`。
+integration 与 provider 的 id 固定为 `litellm`，显示名固定为 `LiteLLM`；地址完全来自用户在 `/connect` 中的填写，插件不内置任何地址。`ctx.integration.transform` 中执行：
+- `update("litellm", i => i.name = "LiteLLM")`；
+- `method.update({ integrationID: "litellm", method: { type: "key", label: "API Key", form: [{ key: "baseURL", type: "string", format: "uri", required: true, title: "LiteLLM 地址", placeholder: "http://litellm.example:4000" }] } })`。
 
-发现时用 `ctx.integration.connection.active(id)` 取得连接，再用 `resolve` 取得 `{ key, configuration.baseURL }`。
+发现时用 `ctx.integration.connection.active("litellm")` 取得连接，再用 `resolve` 取得 `{ key, configuration.baseURL }`。
 调用时依赖宿主投影：`configuration.baseURL` 会合并进 settings 的 `baseURL`，`credential.key` 会成为 `apiKey`。
 
 **地址规范化与投影冲突**：用户可能填写 `.../v1` 或根地址。而原生包需要的 `baseURL` 是带 `/v1` 的地址，投影又会**原样**覆盖 settings。所以插件在注册模型时，要**显式**把规范化后的 `baseURL = <根地址>/v1` 写到 `model.settings`。
@@ -71,7 +71,7 @@ src/
 
 ### D3. Provider 与模型写入
 
-每个实例对应一个 provider：`id = 实例 id`，`integrationID = 实例 id`，`name = 显示名`，`activation = "auto"`，`package = "@opencode/ai/providers/openai-compatible"`（缺省值），并绑定 `sourceConnection = 本次发现所用的连接`，由宿主负责隐藏换号前的旧结果（对应 spec“切换连接时不混用旧结果”）。
+注册一个 provider：`id = "litellm"`，`integrationID = "litellm"`，`name = "LiteLLM"`，`activation = "auto"`，`package = "@opencode/ai/providers/openai-compatible"`（缺省值），并绑定 `sourceConnection = 本次发现所用的连接`，由宿主负责隐藏换号前的旧结果（对应 spec“切换连接时不混用旧结果”）。
 
 每个模型写入：`modelID = model_name`；`package` 按协议取三个原生包之一；`settings.baseURL`；`capabilities`、`limit`、`cost`、`variants`、`name`。
 每次 transform 先删除该 provider 下不在本次结果中的模型，再逐个 upsert，保证删除的模型会消失。
@@ -102,11 +102,11 @@ src/
 
 ### D7. 刷新、指纹与缓存
 
-- **每个实例一个循环**：启动时执行一次 → 之后每隔 `pollInterval` 执行一次（默认 300s，下限 30s）。同时订阅连接变更事件，变更时立即执行，并重置计时。
+- **发现循环**：启动时执行一次 → 之后每隔 `pollInterval` 执行一次（默认 300s，下限 30s）。同时订阅连接变更事件，变更时立即执行，并重置计时。
   事件名以宿主导出的 `Integration.Event`（或 `Credential.Event.Switched`）为准，在 spike 中确认 Promise API 的订阅方式；如果无法订阅，退化为轮询时比较连接 key（credential id + 答案哈希），发现变化即重新发现。
 - **指纹**：对 `ModelSpec[]` 做稳定序列化（键排序）后比较字符串，不同才写入缓存并调用 `ctx.provider.reload()`。
-- **并发**：同一实例同时最多只有一个发现在进行，新触发的发现合并到正在进行的那次。
-- **models.dev**：进程内缓存 6 小时，所有实例共享。获取失败时按 60 秒退避，下次刷新时重试。插件不在磁盘上写任何缓存。
+- **并发**：同时最多只有一个发现在进行，新触发的发现合并到正在进行的那次。
+- **models.dev**：进程内缓存 6 小时。获取失败时按 60 秒退避，下次刷新时重试。插件不在磁盘上写任何缓存。
 - **超时**：LiteLLM 请求 15 秒，models.dev 请求 20 秒。
 
 ### D8. 失败分类（对应 specs/change-sync）
@@ -114,7 +114,7 @@ src/
 | 情况 | 行为 |
 |---|---|
 | 网络错误 / 超时 / 5xx / 响应无法解析 | 保留上次结果，记录 warn，等下个周期 |
-| 401 / 403 | 清空该实例结果并 reload，记录 error“Key 无效或无权限” |
+| 401 / 403 | 清空结果并 reload，记录 error“Key 无效或无权限” |
 | 404（`/v1/model/info` 不存在，LiteLLM 过旧或地址错误） | 按认证失败处理：清空结果并报错，提示检查地址 |
 | models.dev 失败 | 按“无记录”继续构建 |
 
@@ -127,16 +127,15 @@ src/
   "plugins": [{
     "package": "opencode-litellm-provider",
     "options": {
-      "instances": [{ "id": "litellm", "name": "LiteLLM" }],   // 可省略，默认单实例
       "pollInterval": 300,                                   // 秒
       "contextTierCap": true,                                // 阶梯截断
-      "protocolOverrides": { "litellm": { "glm-5.3": "chat" } }
+      "protocolOverrides": { "glm-5.3": "chat" }
     }
   }]
 }
 ```
 
-不合法的配置项记录 warn，并回退到默认值，不阻止插件加载。
+所有配置项都是可选的，不配置即使用默认值。不合法的配置项记录 warn，并回退到默认值，不阻止插件加载。
 
 ### 与 opencode-litellm-config-sync 行为基线的差异
 

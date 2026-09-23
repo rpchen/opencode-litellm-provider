@@ -4,7 +4,7 @@
 
 ## What Changes
 
-- 新增 OpenCode v2 插件 `opencode-litellm-provider`（npm 包），注册名为 “LiteLLM” 的 integration：用户在 OpenCode 的连接界面填写 **LiteLLM 地址** 与 **API Key** 即完成接入；支持多个 LiteLLM 实例并存（每个实例独立命名）。
+- 新增 OpenCode v2 插件 `opencode-litellm-provider`（npm 包），注册名为 “LiteLLM” 的 integration：用户通过 `/connect` 选择 LiteLLM，填写**自己的 LiteLLM 地址**与 **API Key** 即完成接入。插件不内置、不假设任何特定的 LiteLLM 地址。
 - 使用**用户自己的 API Key** 调用 LiteLLM `/v1/model/info` 发现该 Key 实际可调用的模型部署；不注册缺少元数据的模型名（例如团队白名单中残留、但已无部署的模型名），也不注册 embedding、图像生成等非对话模型。
 - 为每个模型自动判定原生协议：Anthropic Messages / OpenAI Responses / OpenAI Chat Completions。判定依据是 LiteLLM 的 `supported_endpoints`、`mode` 和上游 provider；声明了多个协议时取 responses 优先于 chat；支持用户按模型覆盖。
 - 自动填充模型能力：上下文 / 输入 / 输出上限、输入输出模态、工具调用、推理。LiteLLM 有的值优先使用，models.dev 只补缺。
@@ -17,7 +17,7 @@
 
 ### New Capabilities
 
-- `litellm-connection`：用户如何把一个 LiteLLM 实例接入 OpenCode（地址、Key、多实例、凭据的使用范围与保密）。
+- `litellm-connection`：用户如何通过 `/connect` 把自己的 LiteLLM 接入 OpenCode（地址、Key、凭据的使用范围与保密、换 Key 与断开）。
 - `model-discovery`：从 LiteLLM 发现哪些模型、如何过滤、如何填充能力与上限（含阶梯价上下文截断），以及 models.dev 补缺规则与推理档位来源。
 - `protocol-routing`：每个模型使用哪种调用协议的判定规则与用户覆盖。
 - `change-sync`：发现结果的刷新触发、变更检测、失败降级与缓存。
@@ -36,7 +36,7 @@
   - `ctx.provider.transform`：通过 `ProviderEditor.update` / `models.update` / `models.remove` 注册 provider 与模型。
   - `ctx.provider.reload`、`ctx.integration.reload`：发现结果变化后触发重载。
   - `ctx.event`：订阅连接变更事件。
-  - `ctx.options`：读取插件配置（轮询间隔、协议覆盖、阶梯截断开关）。
+  - `ctx.options`：读取可选的插件配置（轮询间隔、协议覆盖、阶梯截断开关），不配置时全部使用默认值。
 - **API 风险**：
   - v2 插件 API 来自上游 `anomalyco/opencode` 的 `beta` 分支，处于 2.0.x 快速迭代期，没有稳定性承诺；本变更把宿主版本下限固定为 2.0.15，并在适配层集中封装对宿主 API 的调用。
   - 凭据投影行为（表单答案 `configuration` 合并进模型 `settings`）是宿主内部实现（`model-resolver.ts`），不在公开类型中声明，将来可能变化；设计中保留插件显式写入 `settings.baseURL` 的后备路径。
