@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.tgz
+.env
+.env.*
+!.env.example
+.tmp/
+*.log
+.DS_Store
+Thumbs.db

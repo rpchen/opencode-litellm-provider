@@ -1,0 +1,36 @@
+{
+  "name": "opencode-litellm-provider",
+  "version": "0.0.0",
+  "description": "OpenCode v2 plugin that auto-discovers providers, protocols, models and reasoning variants from a LiteLLM proxy",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rpchen/opencode-litellm-provider.git"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": "^2.0.15"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "2.0.15",
+    "@types/bun": "1.3.14",
+    "typescript": "5.8.2"
+  },
+  "engines": {
+    "opencode": ">=2.0.15"
+  }
+}

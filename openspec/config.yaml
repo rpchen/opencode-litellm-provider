@@ -1,0 +1,36 @@
+schema: spec-driven
+
+# Project context — shown to AI when creating artifacts for EVERY change.
+context: |
+  Language: zh-CN
+  All artifacts must be written in zh-CN.
+  Keep OpenSpec structural headings and SHALL/MUST keywords in English.
+
+  项目：opencode-litellm-provider —— OpenCode v2 插件（npm 包），让用户像配置普通 provider 一样
+  只填 LiteLLM 地址 + API Key，即自动发现并注册 provider / 协议 / 模型 / 能力 / 推理档位，并跟随 LiteLLM 端变更。
+  目标替代手工脚本 `opencode-litellm-config-sync`（~/.agents/skills/opencode-litellm-config-sync），
+  其既有的元数据规则（LiteLLM 优先、models.dev 仅补缺且只取一方记录、Codex models_cache 覆盖 GPT 上下文窗、
+  variants 映射规则、reasoning 无 variants 为合法终态）是本项目的行为基线，偏离必须在 design.md 说明理由。
+
+  Tech stack: TypeScript（ESM）+ Bun（测试/包管理）；运行时依赖仅 `@opencode/plugin`（peer，v2 Promise API）。
+  目标宿主：OpenCode v2（>= 2.0.15）。v2 插件接口参考 docs/research/opencode-v2-plugin-api.md，
+  以及上游 anomalyco/opencode 分支 dev 下 packages/core/src/plugin/provider/*.ts 中的官方 provider 插件。
+  仓库：https://github.com/rpchen/opencode-litellm-provider（独立 git 仓库，嵌套在 LiteLLM 部署仓库目录下但不属于它）。
+
+# Per-artifact rules — injected into the corresponding artifact instructions.
+rules:
+  proposal:
+    - 必须写明对 OpenCode v2 插件 API 的依赖面（用到哪些 ctx 域 / hook），以及对上游未公开或 experimental 接口的风险
+  design:
+    - 与 opencode-litellm-config-sync 行为基线的任何差异必须列表说明（差异 → 理由）
+    - 涉及网络发现的设计必须说明：失败降级（LiteLLM / models.dev 不可达时的行为）、缓存策略、刷新触发方式
+  tasks:
+    - 每个变更必须包含针对 LiteLLM /v1/model/info 固定样本（test/fixtures）的单元测试任务
+    - 涉及宿主集成的变更必须包含在真实 opencode v2 中手动加载验证的任务
+
+# Per-operation guidance.
+operations:
+  apply:
+    guidance:
+      - 密钥一律不写入仓库与测试 fixtures；fixtures 中的 key / 内网地址需脱敏
+      - 提交使用 conventional commits
