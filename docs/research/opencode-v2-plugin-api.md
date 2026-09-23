@@ -1,7 +1,11 @@
 # OpenCode v2 插件 API 调研（基于 2.0.15）
 
 调研日期：2026-09-23。来源：npm 包 `@opencode/plugin@2.0.15` 的 `.d.ts`、`@opencode/schema@2.0.15`，
-以及上游 `anomalyco/opencode` 分支 `dev` 下 `packages/core/src/plugin/`。
+以及上游源码仓库 `github.com/anomalyco/opencode` 的 **`beta` 分支**。
+
+> **“上游”指什么**：OpenCode 的官方源码仓库 `anomalyco/opencode`。其中：
+> - `beta` 分支：发布 v2 包（`@opencode/plugin`、`@opencode/core`、`@opencode/cli` 2.x），与本机 opencode v2.0.15 对应，**以它为准**。
+> - `dev` 分支：仍是 v1 线（`@opencode-ai/plugin` 1.18.x），里面的 `ctx.catalog.transform` 等写法属于 v1 线内部实验，**不适用**于本项目。
 
 ## 1. 包与加载
 
@@ -42,19 +46,29 @@
 `time.released`、`cost[]`（USD/百万 token，可按上下文分档）、`status`、`enabled`、
 `limit: { context, input?, output }`。`Model.Info.default(providerID, id)` 给出默认值。
 
-## 4. 待验证的开放问题（首个变更的 spike 范围）
+## 4. 已确认的结论（beta 源码）
 
-1. **baseURL 放哪**：公开 `Provider.Info` 无 `url` 字段；上游内部 `catalog` 使用 `provider.api = { type: "aisdk", package, url }`。
-   需确认 Promise API 下是通过 `body.baseURL` / `settings` 传给 AI SDK 工厂，还是需 `aisdk.hook("sdk")` 自建实例。
-2. **公开 API 与上游内部 API 的差异**：上游官方插件用 `ctx.catalog.transform`（内部），公开包暴露的是
-   `ctx.provider.transform` + `ctx.model.transform`，语义映射需在真实 v2 中验证。
-3. **key 表单能否带 baseURL**：`IntegrationKeyMethod.form` 的字段类型（`@opencode/schema/form`）及其值在
-   `Credential` 中的落点（`metadata`?）。
-4. **变更检测方式**：LiteLLM 无推送；候选为定时轮询 `/v1/model/info` 做内容哈希比较 + 连接变更事件 + 手动命令（`ctx.command`）。
-5. **协议判定依据**：LiteLLM `/v1/model/info` 中的 `litellm_params.model` 路由前缀、`model_info.mode`、
+1. **baseURL 走 `settings`**：`Provider.Info.settings` / `Model.Info.settings` 是开放记录（`StructWithRest`，可加任意键）。
+   `packages/core/src/aisdk.ts` 的 `prepareOptions` 把 `model.settings` 原样展开进 AI SDK 工厂参数
+   （`createOpenAI(options)` / `createAnthropic(options)` / `createOpenAICompatible(options)`），因此
+   `settings.baseURL` 即为请求地址。无需扩展 schema，也无需自建 SDK。
+2. **key 表单可带自定义字段，且自动投影**：`IntegrationKeyMethod.form` 支持 string（含 `format: "uri"`、`placeholder`、`default`、`pattern`）、
+   number、boolean、select（`options`）、multiselect 等字段。用户提交的答案存为 `Credential.Key.configuration`。
+   `packages/core/src/model-resolver.ts` 在调用时合并：`settings ← { apiKey: credential.key, ...credential.metadata, ...configuration }`。
+   → 表单字段 key 取名 `baseURL`，就会**自动**成为每个模型请求的 `settings.baseURL`；API Key 自动成为 `apiKey`。
+   插件在发现阶段通过 `ctx.integration.connection.active/resolve` 读到同样的 key 和 `configuration.baseURL`。
+3. **公开 API 就是 beta 实际实现**：beta 的 `packages/plugin/src/promise/adapter.ts` 确实提供 `ctx.provider.transform`、`ctx.model.transform`，
+   与已发布的 `.d.ts` 一致。
+
+## 5. 仍待验证（首个变更的 spike 范围）
+
+1. 一个 integration 能否挂多个 provider（`Provider.Info.integrationID` 指向同一个 `litellm` integration），使 chat / responses / messages 三类 provider 共用一次连接。
+2. **协议选择**：`@ai-sdk/openai` 的 `languageModel()` 默认走 Responses；走 Chat 需要 `.chat()`，可用 `ctx.aisdk.hook("language")` 覆盖，或统一改用 `@ai-sdk/openai-compatible`。
+3. **变更检测方式**：LiteLLM 无推送；候选为定时轮询 `/v1/model/info` 做内容哈希比较 + 连接变更事件 + 手动命令（`ctx.command`）。
+4. **协议判定依据**：LiteLLM `/v1/model/info` 中的 `litellm_params.model` 路由前缀、`model_info.mode`、
    以及 LiteLLM 是否对该模型开放 `/v1/responses`、`/v1/messages` 透传。
 
-## 5. 行为基线：opencode-litellm-config-sync（v1 静态生成脚本）
+## 6. 行为基线：opencode-litellm-config-sync（v1 静态生成脚本）
 
 位置：`~/.agents/skills/opencode-litellm-config-sync/`（Python，~750 行）。要点：
 
