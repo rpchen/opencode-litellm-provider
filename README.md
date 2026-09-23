@@ -1,20 +1,21 @@
 # opencode-litellm-provider
 
-> 状态：初始化阶段（尚无功能），功能按 openspec 变更逐步交付。
+> 状态：方案已定稿（openspec 变更 `add-litellm-auto-discovery`），待实施。
 
-OpenCode v2 插件：像配置其他 provider 一样，只需填写 **LiteLLM 地址** 和 **API Key**，即可自动：
+OpenCode v2 插件：用户通过 `/connect` 选择 LiteLLM，填写**自己的 LiteLLM 地址**和 **API Key**，插件即自动：
 
-- 发现应注册哪些 provider，以及每个 provider 使用的协议（OpenAI Chat Completions / OpenAI Responses / Anthropic Messages）
-- 为每个 provider 注册模型，并填充能力参数（上下文 / 输出上限、模态、工具调用、推理）
-- 生成可选的推理档位（variants）
-- 跟随 LiteLLM 端的模型增删改自动刷新
+- 用这把 Key 从 LiteLLM 发现它实际可调用的对话模型，注册到 OpenCode 的 `LiteLLM` provider 下
+- 为每个模型判定原生协议（OpenAI Chat Completions / OpenAI Responses / Anthropic Messages）
+- 填充能力参数（上下文 / 输出上限、输入输出模态、工具调用、价格），并按阶梯价截断上下文窗口，避开高价区间
+- 按 models.dev 生成可选的推理档位（variants）
+- 定时刷新，跟随 LiteLLM 端的模型增删改
 
-目标是取代手工运行的 `opencode-litellm-config-sync` 脚本。
+插件不内置任何 LiteLLM 地址，适用于任意 LiteLLM 部署。目标是取代手工运行的 `opencode-litellm-config-sync` 脚本。
 
 ## 开发
 
 ```bash
-bun install
+npm install          # 本项目 .npmrc 固定使用公网 npm registry
 bun run typecheck
 bun test
 bun run build
@@ -23,4 +24,7 @@ bun run build
 ## 迭代方式
 
 使用 [OpenSpec](https://github.com/Fission-AI/OpenSpec)：`openspec/changes/` 下是在途变更，`openspec/specs/` 是已落地的能力规格。
-宿主接口调研见 `docs/research/opencode-v2-plugin-api.md`。
+
+- 在途变更：`openspec/changes/add-litellm-auto-discovery/`（proposal / specs / design / tasks）
+- 宿主接口调研：`docs/research/opencode-v2-plugin-api.md`
+- 方案讨论过程中的决策记录：`docs/decisions.md`

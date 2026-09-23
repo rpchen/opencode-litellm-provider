@@ -11,7 +11,7 @@
 |---|---|
 | `src/` | 插件源码（TypeScript ESM），入口 `src/index.ts` 默认导出 v2 Promise 插件 |
 | `test/` | Bun 单元测试；`test/fixtures/` 放脱敏后的 LiteLLM / models.dev 响应样本 |
-| `docs/` | 文档；`docs/research/` 放宿主 API、上游行为等调研笔记 |
+| `docs/` | 文档；`docs/research/` 放宿主 API、上游行为等调研笔记；`docs/decisions.md` 记录用户拍板的方案决策（实施前必读） |
 | `openspec/` | 变更提案、能力规格、归档 |
 | `.opencode/`、`.claude/` | openspec 生成的代理 skills（入库，保证协作者可复现） |
 
