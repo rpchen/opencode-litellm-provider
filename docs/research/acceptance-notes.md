@@ -107,4 +107,7 @@ opencode plugin add github:rpchen/opencode-litellm-provider
 - 已发布的 `v0.1.1` 固定 tag 在原 OpenCode 2.0.16 后台服务中导出成功、报告文件生成且 RPC `latest` 更新，但已打开的 TUI 不即时显示卡片；重进同一会话后才显示路径及操作。其 Release 已注明此限制，tag 保持不变。
 - 在 `v0.1.1` TUI 增加 `latest` 短间隔读取并由原服务加载本地 Git 提交 `3d78066` 后，仍未即时显示卡片。OpenTUI 的 runtime plugin 只将 `solid-js` 裸模块重写为宿主共享实例，未重写插件原来导入的 `solid-js/dist/solid.js`；换成裸模块导入后再测试。
 - 原后台服务加载本地 Git 提交 `aa2c0ab`，两个新建的空会话分别验证：（1）TUI 已打开时以 RPC 导出；（2）在 TUI 输入并执行 `/litellm-audit-export`。两者都无需重进即可即时显示成功卡片、完整路径与“打开报告／复制路径”；独立导出 RPC 返回成功。没有调用模型或读取用户保存的 Key。OpenTUI 测试渲染器还覆盖了模拟鼠标操作、失败反馈和最新结果收敛。
-- 上述视觉与命令验收**不是**真实鼠标点击验收：为免未经确认就打开桌面应用或覆盖用户剪贴板，未在原 TUI 自动点击。`v0.1.2` 的默认／固定 Git 安装、Release、OpenCode 2.0.15 兼容、真实连接 stale／空清单／切换及独立代理端点抓证仍应分别标明结果，不以模拟测试替代。
+- 上述视觉与命令验收**不是**真实鼠标点击验收：为免未经确认就打开桌面应用或覆盖用户剪贴板，未在原 TUI 自动点击。另以 OpenCode 2.0.15 TUI 客户端连接原 2.0.16 服务，活跃卡片也即时显示；这**不证明**完整的 2.0.15 服务端兼容。
+- PR #8 的 required CI 和合并后主分支 CI 通过；合并提交 `0dbb78c1c4cbea4dd42d36bf95564c9633b93bc3`。默认 Git spec 首次安装可复用旧提交缓存，经 `plugin update`／`reload` 后确认原后台服务只加载 `0dbb78c`；Responses 默认／`#low` 和 Chat 代表实际调用均返回成功，已打开的 TUI 中 `/litellm-audit-export` 命令即时显示完整路径与操作。
+- `v0.1.2` 指向同一合并提交，Release 工作流成功；Release 含 tarball 和 SHA-256，下载后校验为 `OK`。原服务切换到唯一的固定 `github:rpchen/opencode-litellm-provider#v0.1.2` 后，再次通过相同三个代表调用和活跃 TUI 命令；RPC 报告 `schemaVersion: 1`、`plugin-submitted`、`ready`，18 个导出模型 ID 与 18 个宿主 LiteLLM 模型 ID **集合**一致，目标模型协议为 Responses，未见禁止字段。宿主模型列表另有自己的排序，不能以列表显示顺序不一致推断插件提交的审查顺序错误。
+- 对独立 OpenCode 2.0.15 `serve` 再测：`GET /api/info` 返回 401，2.0.15 CLI `models --server` 退出码 1、未取得模型列表；因此不能宣称其服务端已兼容。真实桌面点击、完整 2.0.15 服务端兼容、真实连接的 stale／空清单／切换及独立代理端点抓证仍未完成；不能以这些部分结果替代它们。
