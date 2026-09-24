@@ -44,7 +44,7 @@ OpenCode v2 插件：通过 `/connect` 填写 LiteLLM 地址和自己的 API Key
 opencode plugin add github:rpchen/opencode-litellm-provider
 ```
 
-OpenCode 会取得 `main` 上最新的稳定构建；仓库已经包含 `dist`，用户无需 clone、安装依赖或本地编译。
+OpenCode 会取得 `main` 上的构建；仓库已经包含 `dist`，用户无需 clone、安装依赖或本地编译。**已有相同 Git package spec 时，`plugin add` 可能复用旧缓存**：运行 `opencode plugin check github:rpchen/opencode-litellm-provider` 查看当前提交和更新提示；若显示更新可用，执行 `opencode plugin update github:rpchen/opencode-litellm-provider`，再运行 `opencode reload`。使用 `opencode plugin list` 核对实际加载的版本，确认是 `v0.1.1` 对应的新提交后再验证真实模型调用。不要同时保留本地 `file://.../dist` 和 Git spec 的活动 LiteLLM 插件。
 
 若需要配置插件选项，请在 OpenCode 配置文件中把插件条目改成对象形式，并保留同一个 GitHub package spec：
 
