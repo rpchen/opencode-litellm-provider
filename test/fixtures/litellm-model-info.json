@@ -1,0 +1,166 @@
+{
+  "data": [
+    {
+      "model_name": "gpt-5.5",
+      "litellm_params": { "model": "openai/gpt-5.5" },
+      "model_info": {
+        "mode": "responses",
+        "base_model": "gpt-5.5",
+        "litellm_provider": "openai",
+        "max_input_tokens": 1050000,
+        "max_output_tokens": 128000,
+        "supports_function_calling": true,
+        "supports_vision": true,
+        "supports_pdf_input": true,
+        "input_cost_per_token": 0.0000025,
+        "output_cost_per_token": 0.00001,
+        "cache_read_input_token_cost": 2.5e-7,
+        "cache_creation_input_token_cost": 0.000003,
+        "input_cost_per_token_above_272k_tokens": 0.000005
+      }
+    },
+    {
+      "model_name": "gpt-5.5",
+      "litellm_params": { "model": "openai/gpt-5.5" },
+      "model_info": {
+        "mode": "responses",
+        "base_model": "gpt-5.5",
+        "max_input_tokens": 900000,
+        "max_output_tokens": 64000,
+        "supports_function_calling": true,
+        "supports_vision": true,
+        "input_cost_per_token_above_272k_tokens": 0.000006
+      }
+    },
+    {
+      "model_name": "glm-5.3",
+      "litellm_params": { "model": "openai/glm-5.3" },
+      "model_info": {
+        "mode": "chat",
+        "base_model": "glm-5.3",
+        "models_dev_provider": "zai",
+        "max_input_tokens": 200000,
+        "max_output_tokens": 32000,
+        "supports_function_calling": true
+      }
+    },
+    {
+      "model_name": "text-embedding-v4",
+      "litellm_params": { "model": "openai/text-embedding-v4" },
+      "model_info": { "mode": "embedding", "max_input_tokens": 8192 }
+    },
+    {
+      "model_name": "gpt-image-2",
+      "litellm_params": { "model": "openai/gpt-image-2" },
+      "model_info": { "mode": "image_generation" }
+    },
+    {
+      "model_name": "claude-db",
+      "litellm_params": {
+        "model": "claude-sonnet-4-5",
+        "custom_llm_provider": "anthropic"
+      },
+      "model_info": {
+        "mode": "chat",
+        "base_model": "claude-sonnet-4-5",
+        "max_input_tokens": 200000,
+        "max_output_tokens": 64000,
+        "supports_function_calling": true,
+        "supports_vision": true
+      }
+    },
+    {
+      "model_name": "claude-bedrock",
+      "litellm_params": { "model": "bedrock/anthropic.claude-sonnet-4-5" },
+      "model_info": {
+        "mode": "chat",
+        "base_model": "claude-sonnet-4-5",
+        "litellm_provider": "bedrock",
+        "max_input_tokens": 200000,
+        "max_output_tokens": 64000
+      }
+    },
+    {
+      "model_name": "multi-endpoint-model",
+      "litellm_params": { "model": "openai/multi-endpoint-model" },
+      "model_info": {
+        "mode": "chat",
+        "supported_endpoints": [
+          "/v1/chat/completions",
+          "/v1/batch",
+          "/v1/responses"
+        ],
+        "max_input_tokens": 128000,
+        "max_output_tokens": 16000
+      }
+    },
+    {
+      "model_name": "qwen3.7-plus",
+      "litellm_params": { "model": "openai/qwen3.7-plus" },
+      "model_info": {
+        "base_model": "qwen3.7-plus",
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 64000,
+        "supports_vision": false,
+        "tiered_pricing": [
+          { "range": [0, 256000], "input_cost_per_token": 0.000001 },
+          { "range": [256000, 1000000], "input_cost_per_token": 0.000002 }
+        ]
+      }
+    },
+    {
+      "model_name": "dall-e-3",
+      "litellm_params": { "model": "openai/dall-e-3" },
+      "model_info": { "max_input_tokens": 4096 }
+    },
+    {
+      "model_name": "shared-route",
+      "litellm_params": { "model": "anthropic/claude-haiku-4-5" },
+      "model_info": { "mode": "chat", "max_input_tokens": 200000 }
+    },
+    {
+      "model_name": "shared-route",
+      "litellm_params": { "model": "openai/gpt-5.5" },
+      "model_info": { "mode": "responses", "max_input_tokens": 128000 }
+    },
+    {
+      "model_name": "minimax-m3",
+      "litellm_params": { "model": "openai/MiniMax-M3" },
+      "model_info": {
+        "mode": "chat",
+        "base_model": "MiniMax-M3",
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 131072,
+        "supports_function_calling": true,
+        "input_cost_per_token_above_512k_tokens": 0.000002
+      }
+    },
+    {
+      "model_name": "invalid-fields",
+      "litellm_params": { "model": "openai/invalid-fields" },
+      "model_info": {
+        "mode": "chat",
+        "max_input_tokens": "abc",
+        "max_output_tokens": null,
+        "supports_function_calling": "yes",
+        "supports_vision": 1,
+        "input_cost_per_token": "secret"
+      }
+    },
+    {
+      "model_name": "anthropic-direct",
+      "litellm_params": { "model": "anthropic/claude-opus-4-1" },
+      "model_info": {
+        "mode": "chat",
+        "base_model": "claude-opus-4-1",
+        "litellm_provider": "anthropic",
+        "max_input_tokens": 200000,
+        "max_output_tokens": 32000
+      }
+    },
+    {
+      "litellm_params": { "model": "openai/missing-name" },
+      "model_info": { "mode": "chat" }
+    }
+  ]
+}

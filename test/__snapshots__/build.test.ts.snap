@@ -1,0 +1,425 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
+[
+  {
+    "capabilities": {
+      "input": [
+        "text",
+      ],
+      "output": [
+        "text",
+      ],
+      "tools": true,
+    },
+    "cost": {
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "input": 0,
+      "output": 0,
+    },
+    "id": "anthropic-direct",
+    "limit": {
+      "context": 200000,
+      "input": 200000,
+      "output": 32000,
+    },
+    "name": "anthropic-direct",
+    "package": "@opencode/ai/providers/anthropic-compatible",
+    "protocol": "messages",
+    "released": 1754352000000,
+    "variants": [
+      {
+        "id": "high",
+        "settings": {
+          "thinking": {
+            "budgetTokens": 16000,
+            "type": "enabled",
+          },
+        },
+      },
+    ],
+  },
+  {
+    "capabilities": {
+      "input": [
+        "text",
+        "image",
+        "pdf",
+      ],
+      "output": [
+        "text",
+      ],
+      "tools": true,
+    },
+    "cost": {
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "input": 3,
+      "output": 15,
+    },
+    "id": "claude-bedrock",
+    "limit": {
+      "context": 200000,
+      "input": 200000,
+      "output": 64000,
+    },
+    "name": "claude-bedrock",
+    "package": "@opencode/ai/providers/anthropic-compatible",
+    "protocol": "messages",
+    "released": 1759104000000,
+    "variants": [
+      {
+        "id": "high",
+        "settings": {
+          "thinking": {
+            "budgetTokens": 16000,
+            "type": "enabled",
+          },
+        },
+      },
+      {
+        "id": "max",
+        "settings": {
+          "thinking": {
+            "budgetTokens": 64000,
+            "type": "enabled",
+          },
+        },
+      },
+    ],
+  },
+  {
+    "capabilities": {
+      "input": [
+        "text",
+        "image",
+        "pdf",
+      ],
+      "output": [
+        "text",
+      ],
+      "tools": true,
+    },
+    "cost": {
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "input": 3,
+      "output": 15,
+    },
+    "id": "claude-db",
+    "limit": {
+      "context": 200000,
+      "input": 200000,
+      "output": 64000,
+    },
+    "name": "claude-db",
+    "package": "@opencode/ai/providers/anthropic-compatible",
+    "protocol": "messages",
+    "released": 1759104000000,
+    "variants": [
+      {
+        "id": "high",
+        "settings": {
+          "thinking": {
+            "budgetTokens": 16000,
+            "type": "enabled",
+          },
+        },
+      },
+      {
+        "id": "max",
+        "settings": {
+          "thinking": {
+            "budgetTokens": 64000,
+            "type": "enabled",
+          },
+        },
+      },
+    ],
+  },
+  {
+    "capabilities": {
+      "input": [
+        "text",
+      ],
+      "output": [
+        "text",
+      ],
+      "tools": true,
+    },
+    "cost": {
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "input": 0,
+      "output": 0,
+    },
+    "id": "glm-5.3",
+    "limit": {
+      "context": 200000,
+      "input": 200000,
+      "output": 32000,
+    },
+    "name": "glm-5.3",
+    "package": "@opencode/ai/providers/openai-compatible",
+    "protocol": "chat",
+    "released": 1770854400000,
+    "variants": [],
+  },
+  {
+    "capabilities": {
+      "input": [
+        "text",
+        "image",
+        "pdf",
+      ],
+      "output": [
+        "text",
+      ],
+      "tools": true,
+    },
+    "cost": {
+      "cacheRead": 0.25,
+      "cacheWrite": 3,
+      "input": 2.5,
+      "output": 10,
+    },
+    "id": "gpt-5.5",
+    "limit": {
+      "context": 272000,
+      "input": 272000,
+      "output": 64000,
+    },
+    "name": "gpt-5.5",
+    "package": "@opencode/ai/providers/openai-compatible-responses",
+    "protocol": "responses",
+    "released": 1772323200000,
+    "variants": [
+      {
+        "id": "none",
+        "settings": {
+          "reasoningEffort": "none",
+        },
+      },
+      {
+        "id": "low",
+        "settings": {
+          "reasoningEffort": "low",
+        },
+      },
+      {
+        "id": "medium",
+        "settings": {
+          "reasoningEffort": "medium",
+        },
+      },
+      {
+        "id": "high",
+        "settings": {
+          "reasoningEffort": "high",
+        },
+      },
+      {
+        "id": "xhigh",
+        "settings": {
+          "reasoningEffort": "xhigh",
+        },
+      },
+    ],
+  },
+  {
+    "capabilities": {
+      "input": [
+        "text",
+      ],
+      "output": [
+        "text",
+      ],
+      "tools": true,
+    },
+    "cost": {
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "input": 0,
+      "output": 0,
+    },
+    "id": "invalid-fields",
+    "limit": {
+      "context": 0,
+      "input": 0,
+      "output": 0,
+    },
+    "name": "invalid-fields",
+    "package": "@opencode/ai/providers/openai-compatible",
+    "protocol": "chat",
+    "released": 0,
+    "variants": [],
+  },
+  {
+    "capabilities": {
+      "input": [
+        "text",
+      ],
+      "output": [
+        "text",
+      ],
+      "tools": true,
+    },
+    "cost": {
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "input": 1,
+      "output": 4,
+    },
+    "id": "minimax-m3",
+    "limit": {
+      "context": 512000,
+      "input": 512000,
+      "output": 131072,
+    },
+    "name": "minimax-m3",
+    "package": "@opencode/ai/providers/openai-compatible",
+    "protocol": "chat",
+    "released": 1768003200000,
+    "variants": [
+      {
+        "id": "low",
+        "settings": {
+          "reasoningEffort": "low",
+        },
+      },
+      {
+        "id": "medium",
+        "settings": {
+          "reasoningEffort": "medium",
+        },
+      },
+      {
+        "id": "high",
+        "settings": {
+          "reasoningEffort": "high",
+        },
+      },
+    ],
+  },
+  {
+    "capabilities": {
+      "input": [
+        "text",
+      ],
+      "output": [
+        "text",
+      ],
+      "tools": true,
+    },
+    "cost": {
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "input": 0,
+      "output": 0,
+    },
+    "id": "multi-endpoint-model",
+    "limit": {
+      "context": 128000,
+      "input": 128000,
+      "output": 16000,
+    },
+    "name": "multi-endpoint-model",
+    "package": "@opencode/ai/providers/openai-compatible-responses",
+    "protocol": "responses",
+    "released": 0,
+    "variants": [],
+  },
+  {
+    "capabilities": {
+      "input": [
+        "text",
+        "image",
+        "video",
+      ],
+      "output": [
+        "text",
+      ],
+      "tools": true,
+    },
+    "cost": {
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "input": 0,
+      "output": 0,
+    },
+    "id": "qwen3.7-plus",
+    "limit": {
+      "context": 256000,
+      "input": 256000,
+      "output": 64000,
+    },
+    "name": "qwen3.7-plus",
+    "package": "@opencode/ai/providers/openai-compatible",
+    "protocol": "chat",
+    "released": 1769904000000,
+    "variants": [],
+  },
+  {
+    "capabilities": {
+      "input": [
+        "text",
+        "image",
+        "pdf",
+      ],
+      "output": [
+        "text",
+      ],
+      "tools": true,
+    },
+    "cost": {
+      "cacheRead": 0.25,
+      "cacheWrite": 3,
+      "input": 2.5,
+      "output": 10,
+    },
+    "id": "shared-route",
+    "limit": {
+      "context": 128000,
+      "input": 128000,
+      "output": 128000,
+    },
+    "name": "shared-route",
+    "package": "@opencode/ai/providers/openai-compatible",
+    "protocol": "chat",
+    "released": 1772323200000,
+    "variants": [
+      {
+        "id": "none",
+        "settings": {
+          "reasoningEffort": "none",
+        },
+      },
+      {
+        "id": "low",
+        "settings": {
+          "reasoningEffort": "low",
+        },
+      },
+      {
+        "id": "medium",
+        "settings": {
+          "reasoningEffort": "medium",
+        },
+      },
+      {
+        "id": "high",
+        "settings": {
+          "reasoningEffort": "high",
+        },
+      },
+      {
+        "id": "xhigh",
+        "settings": {
+          "reasoningEffort": "xhigh",
+        },
+      },
+    ],
+  },
+]
+`;

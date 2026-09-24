@@ -1,5 +1,5 @@
 node_modules/
-dist/
+.claude/worktrees/
 *.tgz
 .env
 .env.*

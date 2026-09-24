@@ -12,6 +12,9 @@
 - 推理档位（variants）来源：优先取 models.dev 中模型原厂的记录，其次取 OpenCode Zen（models.dev id `opencode`）的记录，都没有则不生成。**不使用** LiteLLM 的 `supports_*_reasoning_effort` 字段。
 - 自动跟随 LiteLLM 端变更：定时轮询 + 连接变更时立即刷新，内容无变化则不触发重载；LiteLLM 或 models.dev 不可达时保留上次成功的结果。
 - 所有模型挂在同一个 LiteLLM provider 下，每个模型各自使用对应的协议包；原先拆成 `litellm` / `litellm-openai` / `litellm-anthropic` 三个 provider 的方式不再需要。
+- 插件只通过公开 GitHub 仓库分发：`github:rpchen/opencode-litellm-provider` 安装默认分支 `main` 上最新稳定内容，`#vX.Y.Z` 用于锁定版本和回滚；本变更不发布到 npm registry。
+- `main` 与发布 tag 提交预构建 `dist`，不依赖安装 lifecycle scripts；PR/main CI 校验源码、测试、OpenSpec、构建产物和无脚本安装，GitHub 分支规则强制 PR + required CI。
+- `vX.Y.Z` tag 经完整验证后创建带 `.tgz` 与 SHA-256 checksum 的 GitHub Release。
 
 ## Capabilities
 
@@ -21,6 +24,7 @@
 - `model-discovery`：从 LiteLLM 发现哪些模型、如何过滤、如何填充能力与上限（含阶梯价上下文截断），以及 models.dev 补缺规则与推理档位来源。
 - `protocol-routing`：每个模型使用哪种调用协议的判定规则与用户覆盖。
 - `change-sync`：发现结果的刷新触发、变更检测、失败降级与缓存。
+- `distribution`：公开 GitHub 安装、稳定 `main`、预构建产物、PR/CI 门禁、版本 tag 与 GitHub Release。
 
 ### Modified Capabilities
 
@@ -29,7 +33,7 @@
 ## Impact
 
 - **新代码**：`src/` 下的插件实现与 `test/` 下的单元测试；`test/fixtures/` 新增脱敏后的 LiteLLM `/v1/model/info` 与 models.dev 响应样本。
-- **运行时依赖**：仅 `@opencode/plugin`（peer，`>=2.0.15 <2.1`）。协议实现使用宿主的原生协议包 `@opencode/ai/providers/*`，插件本身不打包任何 SDK。默认使用 `openai-compatible` / `openai-compatible-responses` / `anthropic-compatible`；其中后两者不在宿主内置包表中，若验收时发现无法加载，则改用内置的 `openai/responses` / `anthropic`（见 design D3）。
+- **运行时依赖**：仅 `@opencode/plugin`（peer，`>=2.0.15 <2.1`）。协议实现使用宿主的原生协议包 `@opencode/ai/providers/*`，插件本身不打包任何 SDK。默认使用 `openai-compatible` / `openai-compatible-responses` / `anthropic-compatible`；真实验收已确认前两者，当前环境没有 Messages 部署，`anthropic-compatible` 留待首次真实使用时复核（见 design D3）。
 - **依赖的 OpenCode v2 插件 API**（Promise 版，`@opencode/plugin`）：
   - `ctx.integration.transform`：注册 key 认证方式及表单地址字段（字段 key 为 `url`），并注册 integration。
   - `ctx.integration.connection.active / resolve`：读取当前连接的 Key 与表单答案，用于发现请求。
@@ -37,8 +41,11 @@
   - `ctx.provider.reload`、`ctx.integration.reload`：发现结果变化后触发重载。
   - `ctx.event`：订阅 `credential.switched` / `credential.updated` 事件。
   - `ctx.options`：读取可选的插件配置（轮询间隔、协议覆盖、阶梯截断开关），不配置时全部使用默认值。
+- **发行与仓库**：仓库改为 Public 以允许无凭据 Git 安装；`main` 和 tag 跟踪 `dist`，新增 PR/main CI、tag Release workflow、贡献指南与 PR 模板。包版本从 `0.0.0` 进入首个 `0.1.0` GitHub Release；不执行 `npm publish`。
+- **安装器约束**：OpenCode 2.0.15 的 Git package 安装使用 Arborist 且设置 `ignoreScripts: true`，所以不能用 `prepare` 补建 `dist`；CI 必须从源码干净重建并校验提交产物一致。
+- **分支治理**：公开后为 `main` 配置无管理员绕过的 GitHub ruleset/branch protection，强制 pull request、required `CI` check、禁止 force-push 与删除。单维护者不要求 approval，避免提交者无法自我批准。
 - **API 风险**：
   - v2 插件 API 来自上游 `anomalyco/opencode` 的 `beta` 分支，处于 2.0.x 快速迭代期，没有稳定性承诺；本变更把宿主版本范围固定为 `>=2.0.15 <2.1`，并在适配层集中封装对宿主 API 的调用。
   - 凭据投影行为（表单答案 `configuration` 合并进 settings、key 注入为 `apiKey`）是宿主内部实现（`model-resolver.ts`），不在公开类型中声明，将来可能变化。插件只依赖 `apiKey` 注入这一项；地址由插件自己规范化后写入 `settings.baseURL`，表单字段刻意不叫 `baseURL`，避免被投影覆盖。
-  - 原生协议包路径（`@opencode/ai/providers/*`）属于宿主内置实现，不是公开的插件契约；其中两个首选包不在宿主内置包表中，能否加载在验收阶段确认，不行则换备选包。
+  - 原生协议包路径（`@opencode/ai/providers/*`）属于宿主内置实现，不是公开的插件契约；Responses 首选包虽不在内置包表中，但已在 OpenCode 2.0.15 真实验收通过。Messages 首选包尚无真实部署可验收，首次使用失败时按 design D3 切换备选包。
 - **对用户的影响**：已用 `opencode-litellm-config-sync` 生成静态配置的用户，迁移时需要从 opencode 配置中删除 `litellm*` 这几个 provider 块，改用本插件（见 design.md 的 Migration Plan）。
