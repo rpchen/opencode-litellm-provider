@@ -1,4 +1,5 @@
 import { Plugin } from "@opencode/plugin"
+import { registerAudit } from "./host/audit-command.js"
 import { registerIntegration, registerProvider, type ProviderSnapshot } from "./host/register.js"
 import {
   createDiscoveryLoop,
@@ -14,17 +15,19 @@ export async function setupLiteLLM(
   dependencies: DiscoveryDependencies = {},
 ): Promise<() => Promise<void>> {
   const options = parseOptions(context.options)
-  const snapshot: ProviderSnapshot = { ready: false, models: [] }
+  const snapshot: ProviderSnapshot = { ready: false, models: [], audit: { status: "disconnected" } }
   const [integrationRegistration, providerRegistration] = await Promise.all([
     registerIntegration(context),
     registerProvider(context, snapshot),
   ])
+  const auditRegistration = await registerAudit(context, snapshot)
   const loop = createDiscoveryLoop(context as unknown as SyncContext, snapshot, options, dependencies)
   const startup = loop.start()
 
   return async () => {
     await loop.dispose()
     await startup
+    await auditRegistration.dispose()
     await providerRegistration.dispose()
     await integrationRegistration.dispose()
   }

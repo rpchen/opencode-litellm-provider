@@ -1,8 +1,8 @@
 import { optionalString, stripRoutePrefix, } from "./litellm.js";
 export const PROTOCOL_PACKAGES = {
     chat: "@opencode/ai/providers/openai-compatible",
-    responses: "@opencode/ai/providers/openai-compatible-responses",
-    messages: "@opencode/ai/providers/anthropic-compatible",
+    responses: "@opencode/ai/providers/openai/responses",
+    messages: "@opencode/ai/providers/anthropic",
 };
 function isClaudeName(value) {
     const model = optionalString(value);

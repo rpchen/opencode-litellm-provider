@@ -52,10 +52,22 @@ function toModelInfo(spec) {
         limit: spec.limit,
     };
 }
-export function applyProvider(editor, snapshot) {
-    if (!snapshot.ready || !snapshot.connection || !snapshot.apiBaseURL)
-        return;
-    editor.add({
+function freezeDeep(value, seen = new WeakSet()) {
+    if (typeof value !== "object" || value === null || seen.has(value))
+        return value;
+    seen.add(value);
+    for (const item of Object.values(value))
+        freezeDeep(item, seen);
+    return Object.freeze(value);
+}
+export function createRegistrationView(models, apiBaseURL) {
+    const specs = structuredClone(models);
+    const protocols = Object.fromEntries(specs.map((spec) => [spec.id, spec.protocol]));
+    const releaseUnits = Object.fromEntries(specs.map((spec) => [
+        spec.id,
+        spec.releaseUnit ?? (spec.released === 0 ? "none" : "unknown"),
+    ]));
+    return freezeDeep({
         info: {
             ...Provider.Info.empty(PROVIDER_ID),
             id: PROVIDER_ID,
@@ -63,9 +75,20 @@ export function applyProvider(editor, snapshot) {
             name: "LiteLLM",
             activation: "auto",
             package: PROTOCOL_PACKAGES.chat,
-            settings: { baseURL: snapshot.apiBaseURL },
+            settings: { baseURL: apiBaseURL },
         },
-        models: snapshot.models.map(toModelInfo),
+        models: specs.map(toModelInfo),
+        protocols,
+        releaseUnits,
+    });
+}
+export function applyProvider(editor, snapshot) {
+    if (!snapshot.ready || !snapshot.connection || !snapshot.apiBaseURL)
+        return;
+    const view = snapshot.registrationView ?? snapshot.audit?.view ?? createRegistrationView(snapshot.models, snapshot.apiBaseURL);
+    editor.add({
+        info: view.info,
+        models: view.models,
         sourceConnection: snapshot.connection,
     });
 }

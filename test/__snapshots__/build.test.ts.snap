@@ -25,8 +25,9 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
       "output": 32000,
     },
     "name": "anthropic-direct",
-    "package": "@opencode/ai/providers/anthropic-compatible",
+    "package": "@opencode/ai/providers/anthropic",
     "protocol": "messages",
+    "releaseUnit": "unix-ms",
     "released": 1754352000000,
     "variants": [
       {
@@ -65,8 +66,9 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
       "output": 64000,
     },
     "name": "claude-bedrock",
-    "package": "@opencode/ai/providers/anthropic-compatible",
+    "package": "@opencode/ai/providers/anthropic",
     "protocol": "messages",
+    "releaseUnit": "unix-ms",
     "released": 1759104000000,
     "variants": [
       {
@@ -114,8 +116,9 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
       "output": 64000,
     },
     "name": "claude-db",
-    "package": "@opencode/ai/providers/anthropic-compatible",
+    "package": "@opencode/ai/providers/anthropic",
     "protocol": "messages",
+    "releaseUnit": "unix-ms",
     "released": 1759104000000,
     "variants": [
       {
@@ -163,6 +166,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "name": "glm-5.3",
     "package": "@opencode/ai/providers/openai-compatible",
     "protocol": "chat",
+    "releaseUnit": "unix-ms",
     "released": 1770854400000,
     "variants": [],
   },
@@ -191,8 +195,9 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
       "output": 64000,
     },
     "name": "gpt-5.5",
-    "package": "@opencode/ai/providers/openai-compatible-responses",
+    "package": "@opencode/ai/providers/openai/responses",
     "protocol": "responses",
+    "releaseUnit": "unix-ms",
     "released": 1772323200000,
     "variants": [
       {
@@ -252,6 +257,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "name": "invalid-fields",
     "package": "@opencode/ai/providers/openai-compatible",
     "protocol": "chat",
+    "releaseUnit": "none",
     "released": 0,
     "variants": [],
   },
@@ -280,6 +286,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "name": "minimax-m3",
     "package": "@opencode/ai/providers/openai-compatible",
     "protocol": "chat",
+    "releaseUnit": "unix-ms",
     "released": 1768003200000,
     "variants": [
       {
@@ -325,8 +332,9 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
       "output": 16000,
     },
     "name": "multi-endpoint-model",
-    "package": "@opencode/ai/providers/openai-compatible-responses",
+    "package": "@opencode/ai/providers/openai/responses",
     "protocol": "responses",
+    "releaseUnit": "none",
     "released": 0,
     "variants": [],
   },
@@ -357,6 +365,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "name": "qwen3.7-plus",
     "package": "@opencode/ai/providers/openai-compatible",
     "protocol": "chat",
+    "releaseUnit": "unix-ms",
     "released": 1769904000000,
     "variants": [],
   },
@@ -387,6 +396,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "name": "shared-route",
     "package": "@opencode/ai/providers/openai-compatible",
     "protocol": "chat",
+    "releaseUnit": "unix-ms",
     "released": 1772323200000,
     "variants": [
       {

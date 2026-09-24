@@ -39,11 +39,36 @@ export interface ProviderEditorLike {
 export const INTEGRATION_ID = "litellm"
 export const PROVIDER_ID = "litellm"
 
+export type DiscoveryStatus =
+  | "disconnected"
+  | "pending"
+  | "switching"
+  | "ready"
+  | "empty"
+  | "stale"
+  | "cleared-auth"
+  | "cleared-notfound"
+
+export interface RegistrationView {
+  readonly info: Provider.Info
+  readonly models: readonly Model.Info[]
+  readonly protocols: Readonly<Record<string, ModelSpec["protocol"]>>
+  readonly releaseUnits: Readonly<Record<string, NonNullable<ModelSpec["releaseUnit"]>>>
+}
+
+export interface AuditSnapshot {
+  readonly status: DiscoveryStatus
+  readonly lastSuccessfulDiscoveryAt?: string
+  readonly view?: RegistrationView
+}
+
 export interface ProviderSnapshot {
   ready: boolean
   connection?: ConnectionInfo
   apiBaseURL?: string
   models: ModelSpec[]
+  registrationView?: RegistrationView
+  audit?: AuditSnapshot
 }
 
 export function applyIntegration(editor: IntegrationEditorLike): void {
@@ -98,10 +123,21 @@ function toModelInfo(spec: ModelSpec): Model.Info {
   } as unknown as Model.Info
 }
 
-export function applyProvider(editor: ProviderEditorLike, snapshot: ProviderSnapshot): void {
-  if (!snapshot.ready || !snapshot.connection || !snapshot.apiBaseURL) return
+function freezeDeep<T>(value: T, seen = new WeakSet<object>()): T {
+  if (typeof value !== "object" || value === null || seen.has(value)) return value
+  seen.add(value)
+  for (const item of Object.values(value)) freezeDeep(item, seen)
+  return Object.freeze(value)
+}
 
-  editor.add({
+export function createRegistrationView(models: readonly ModelSpec[], apiBaseURL: string): RegistrationView {
+  const specs = structuredClone(models) as ModelSpec[]
+  const protocols = Object.fromEntries(specs.map((spec) => [spec.id, spec.protocol]))
+  const releaseUnits = Object.fromEntries(specs.map((spec) => [
+    spec.id,
+    spec.releaseUnit ?? (spec.released === 0 ? "none" : "unknown"),
+  ]))
+  return freezeDeep({
     info: {
       ...Provider.Info.empty(PROVIDER_ID as Provider.ID),
       id: PROVIDER_ID as Provider.ID,
@@ -109,9 +145,21 @@ export function applyProvider(editor: ProviderEditorLike, snapshot: ProviderSnap
       name: "LiteLLM",
       activation: "auto",
       package: PROTOCOL_PACKAGES.chat,
-      settings: { baseURL: snapshot.apiBaseURL },
+      settings: { baseURL: apiBaseURL },
     } as unknown as Provider.Info,
-    models: snapshot.models.map(toModelInfo),
+    models: specs.map(toModelInfo),
+    protocols,
+    releaseUnits,
+  })
+}
+
+export function applyProvider(editor: ProviderEditorLike, snapshot: ProviderSnapshot): void {
+  if (!snapshot.ready || !snapshot.connection || !snapshot.apiBaseURL) return
+  const view = snapshot.registrationView ?? snapshot.audit?.view ?? createRegistrationView(snapshot.models, snapshot.apiBaseURL)
+
+  editor.add({
+    info: view.info,
+    models: view.models,
     sourceConnection: snapshot.connection,
   })
 }

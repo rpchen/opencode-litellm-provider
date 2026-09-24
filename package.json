@@ -1,6 +1,6 @@
 {
   "name": "opencode-litellm-provider",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "OpenCode v2 plugin that auto-discovers providers, protocols, models and reasoning variants from a LiteLLM proxy",
   "type": "module",
   "license": "MIT",
@@ -12,6 +12,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./tui": {
+      "types": "./dist/tui.d.ts",
+      "import": "./dist/tui.js"
     }
   },
   "files": [
@@ -22,6 +26,7 @@
     "build:dist": "npm run clean && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "test:tui-render": "bun --conditions=browser scripts/test-tui-render.ts",
     "test:package": "bun scripts/test-package.ts",
     "validate:spec": "openspec validate --all --strict --no-interactive"
   },
@@ -32,6 +37,11 @@
     "@fission-ai/openspec": "1.13.2",
     "@opencode/plugin": "2.0.15",
     "@types/bun": "1.3.14",
+    "@types/node": "24.4.0",
     "typescript": "5.8.2"
+  },
+  "dependencies": {
+    "@opentui/solid": "^0.5.10",
+    "solid-js": "^1.9.12"
   }
 }
