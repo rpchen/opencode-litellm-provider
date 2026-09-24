@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { Context } from "@opencode/plugin/tui/plugin"
-import tui from "../src/tui.js"
+import tui, { setupAuditTui } from "../src/tui.js"
 import { createAuditCardController, createAuditResultStore, type AuditResult } from "../src/tui-card.js"
 import { copyAuditPath, openAuditReport } from "../src/tui-actions.js"
 
@@ -39,6 +39,65 @@ describe("TUI 会话卡片", () => {
     h.emit(success(2, "session-2", "C:/audit/other.json"))
     if (cleanup) await cleanup()
     expect(h.stopped).toBe(2)
+  })
+
+  test("完成事件丢失后 latest 收敛，查询失败可重试且卸载停止轮询", async () => {
+    let tick!: () => void
+    let latest = success(0, "current", "C:/initial.json")
+    let requests = 0
+    let fail = false
+    let stopped = 0
+    const h = harness(async () => {
+      requests++
+      if (fail) throw new Error("unavailable")
+      return latest
+    })
+    const cleanup = await setupAuditTui(h.context, (callback) => {
+      tick = callback
+      return () => { stopped++ }
+    })
+    expect(requests).toBe(1)
+    fail = true
+    tick()
+    await Bun.sleep(0)
+    expect(requests).toBe(2)
+    fail = false
+    latest = success(1, "current", "C:/later.json")
+    tick()
+    await Bun.sleep(0)
+    expect(requests).toBe(3)
+    if (cleanup) await cleanup()
+    expect(stopped).toBe(1)
+    tick()
+    await Bun.sleep(0)
+    expect(requests).toBe(3)
+    expect(h.stopped).toBe(2)
+  })
+
+  test("慢查询不堆叠，卸载后迟到结果不再提交", async () => {
+    let finish!: (value: AuditResult) => void
+    let requests = 0
+    let tick!: () => void
+    const h = harness(() => {
+      requests++
+      return new Promise<AuditResult>((resolve) => { finish = resolve })
+    })
+    const setup = setupAuditTui(h.context, (callback) => {
+      tick = callback
+      return () => {}
+    })
+    tick()
+    expect(requests).toBe(1)
+    finish(success(1, "current", "C:/initial.json"))
+    const cleanup = await setup
+    tick()
+    tick()
+    expect(requests).toBe(2)
+    if (cleanup) await cleanup()
+    finish(success(2, "current", "C:/late.json"))
+    await Bun.sleep(0)
+    tick()
+    expect(requests).toBe(2)
   })
 
   test("最新查询与事件乱序时去重，多会话路径互不串联", async () => {

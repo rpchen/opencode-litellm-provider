@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import { testRender } from "@opentui/solid"
-import { AuditCard, createAuditResultStore } from "../src/tui-card.js"
+import type { Context } from "@opencode/plugin/tui/plugin"
+import { setupAuditTui } from "../src/tui.js"
+import { AuditCard, createAuditResultStore, type AuditResult } from "../src/tui-card.js"
 
 const store = createAuditResultStore()
 const actions: string[] = []
@@ -67,4 +69,47 @@ try {
   console.log("TUI rendering and mouse actions passed")
 } finally {
   ui.renderer.destroy()
+}
+
+let latest: AuditResult = { sequence: 0, sessionID: "", ok: false, path: "", error: "" }
+let tick!: () => void
+let render!: (input: { sessionID: string }) => ReturnType<typeof AuditCard>
+let stopped = 0
+const context = {
+  client: { rpc: () => ({
+    latest: async () => latest,
+    events: { on: () => () => { stopped++ } },
+  }) },
+  ui: {
+    slot: (claim: { render: typeof render }) => {
+      render = claim.render
+      return () => { stopped++ }
+    },
+    dialog: { prompt: async () => undefined },
+  },
+} as unknown as Context
+const cleanup = await setupAuditTui(context, (callback) => {
+  tick = callback
+  return () => { stopped++ }
+})
+const live = await testRender(() => render({ sessionID: "current" }), { width: 110, height: 12 })
+try {
+  await live.renderOnce()
+  assert.doesNotMatch(live.captureCharFrame(), /审查报告/)
+  latest = { sequence: 1, sessionID: "other", ok: true, path: "C:/other.json", error: "" }
+  tick()
+  await Bun.sleep(0)
+  await live.renderOnce()
+  assert.doesNotMatch(live.captureCharFrame(), /C:\/other\.json/)
+  latest = { sequence: 2, sessionID: "current", ok: true, path: report, error: "" }
+  tick()
+  await Bun.sleep(0)
+  await live.renderOnce()
+  assert.match(live.captureCharFrame(), /审查报告已导出/)
+  assert.ok(live.captureCharFrame().includes(report), "polling must update the mounted card")
+  console.log("TUI latest recovery and live polling passed")
+} finally {
+  live.renderer.destroy()
+  cleanup()
+  assert.equal(stopped, 3, "polling, events and slot must be cleaned up")
 }
