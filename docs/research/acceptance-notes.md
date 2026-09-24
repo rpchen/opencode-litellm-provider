@@ -65,3 +65,39 @@ Responses 模型成功使用 `@opencode/ai/providers/openai-compatible-responses
 ### 结论
 
 本轮已验证构建产物加载、连接表单对应 API、模型集合一致性、Chat/Responses 路由、reasoning variant 参数、阶梯截断，以及断网、无效 Key 和连接恢复行为。当前环境不具备 Messages 部署，管理员模型增删也按用户决定延期；两项均未伪报为已实测。
+
+## 2026-09-24：GitHub-only 发行
+
+### 仓库与合并门禁
+
+- 仓库已公开：<https://github.com/rpchen/opencode-litellm-provider>，默认分支为 `main`。
+- GitHub ruleset `Protect main` 处于 active 状态，无 bypass actor，当前用户不可绕过。
+- ruleset 要求 pull request、最新 `main` 上的 required `CI`，只允许 squash merge，并禁止删除及 non-fast-forward push；单维护者 approval 数量为 0。
+- 首次发行 PR #1 的 required `CI` 与合并后的 main CI 均通过。
+- Windows Git 安装修复 PR #2 的 required `CI` 通过后 squash merge 为 `e9b654771daed021e4c611f577ef2e3ec6d02589`；对应 main push CI <https://github.com/rpchen/opencode-litellm-provider/actions/runs/35955265220> 通过，包括远端 commit Git package smoke。
+
+### Windows 无 ref Git 安装
+
+首次合并版本在 Linux CI 的普通 Git package smoke 中通过，但真实 Windows OpenCode 2.0.15 安装失败。诊断确认 Pacote 会把精确的 `scripts.build` 当作 Git dependency preparation 触发器，并在 OpenCode 直接调用 Arborist 的路径中尝试启动嵌套 `npm`，最终报 `spawn npm` ENOENT。
+
+修复先更新 OpenSpec，再把构建命令改名为 `build:dist`，并在 package smoke 中拒绝 `scripts.build`、相关 lifecycle scripts 和 workspaces。修复合并后使用全新的 XDG config/data/cache/state 目录执行：
+
+```bash
+opencode plugin add github:rpchen/opencode-litellm-provider
+```
+
+结果：
+
+- 安装成功，配置中写入无 ref GitHub spec；
+- OpenCode 日志确认从隔离 Git cache 的 `dist/index.js` 加载插件；
+- `opencode plugin list` 显示 `litellm`、提交版本 `e9b6547` 与 GitHub source；
+- 验收未配置或读取 LiteLLM 地址与 API Key。
+
+### `v0.1.0` 与 GitHub Release
+
+- `v0.1.0` 指向已通过 main CI 的提交 `e9b654771daed021e4c611f577ef2e3ec6d02589`。
+- Release workflow <https://github.com/rpchen/opencode-litellm-provider/actions/runs/35960033086> 成功完成版本匹配、全部本地门禁、tag Git package smoke、打包、checksum 与 Release 创建。
+- GitHub Release：<https://github.com/rpchen/opencode-litellm-provider/releases/tag/v0.1.0>，状态为已发布且不是 prerelease。
+- Release 含 `opencode-litellm-provider-0.1.0.tgz` 与对应 `.sha256`；下载后的 tarball SHA-256 与附件记录一致。
+- 在另一组全新隔离目录中执行 `opencode plugin add github:rpchen/opencode-litellm-provider#v0.1.0` 成功，OpenCode 日志确认加载 tag package，`plugin list` 显示提交版本 `e9b6547`。
+- npm registry 查询确认该 package 未发布；发行流程没有使用 npm token、PAT 或 LiteLLM 凭据。
