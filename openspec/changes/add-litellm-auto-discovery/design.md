@@ -9,7 +9,7 @@
 - `Model.Info.package` 可以覆盖 `Provider.Info.package`，所以同一个 provider 下的不同模型可以使用不同的协议包。provider 级 `settings` 会与模型级 `settings` 合并（`model.ts` 的 `mergeOverlay`）。
 - `sourceConnection` 只能通过 `ProviderEditor.add({ info, models, sourceConnection })` 设置；`update` / `models.update` 不能设置它。`add` 写入的是完整记录，不会用 `Model.Info.default` 补默认值。
 - 原生协议包 `@opencode/ai/providers/*` 的 settings 都接受 `baseURL`（需带 `/v1`，端点为 `baseURL + /chat/completions | /responses | /messages`）与 `apiKey`。Chat / Responses 以 `Authorization: Bearer` 发送 Key，Messages 类包以 `x-api-key` 发送。
-- 宿主 `provider.ts` 的内置包表（`builtins`）包含 `openai-compatible`、`openai/responses`、`anthropic` 等，**不包含** `openai-compatible-responses` 与 `anthropic-compatible`；非内置的 `@opencode/ai/*` 走动态 `import()`，打包后的宿主能否加载未经证实。
+- 宿主 `provider.ts` 的内置包表（`builtins`）包含 `openai-compatible`、`openai/responses`、`anthropic` 等，**不包含** `openai-compatible-responses` 与 `anthropic-compatible`；非内置的 `@opencode/ai/*` 走动态 `import()`。真实验收已确认 `openai-compatible-responses` 可在 OpenCode 2.0.15 的实际构建中加载和调用；验收环境没有 Messages 部署，`anthropic-compatible` 留待首次真实使用时复核。
 - 连接变更事件：Promise 版 `ctx.event.subscribe()` 透传宿主全部事件，其中 `credential.switched`（`data: { integrationID, credentialID | null }`）在创建、激活、删除活动凭据时发出，`credential.updated` 在凭据增删改时发出。
 
 实测过的 LiteLLM 事实（v1.97.0）：
@@ -91,7 +91,7 @@ integration 与 provider 的 id 固定为 `litellm`，显示名固定为 `LiteLL
 | Responses | `@opencode/ai/providers/openai-compatible-responses`（非内置） | `@opencode/ai/providers/openai/responses` |
 | Messages | `@opencode/ai/providers/anthropic-compatible`（非内置） | `@opencode/ai/providers/anthropic` |
 
-A 是面向“兼容网关”的通用包，请求体最贴近 LiteLLM 的期望；但两个包不在宿主内置表中，打包后的宿主可能无法动态加载。实施时先用 A；验收中发现 A 不可加载时改用 B（B 是面向官方服务的包，可能附带 OpenAI / Anthropic 专属默认项，但 LiteLLM 仍可接收）。包名集中在 `core/protocol.ts` 的映射表中，切换只改一处。
+A 是面向“兼容网关”的通用包，请求体最贴近 LiteLLM 的期望。2026-09-24 真实验收已确认 Responses 的 A 包可加载并成功调用；当时没有 Messages 部署，因此 Messages 的 A 包仍在首次真实使用时复核。若 Messages 验收发现无法加载，则改用 B（B 是面向官方服务的包，可能附带 Anthropic 专属默认项，但 LiteLLM 仍可接收）。包名集中在 `core/protocol.ts` 的映射表中，切换只改一处。
 - 备选：按协议拆成三个 provider（与旧脚本一致）。放弃原因：用户需要连接三次或理解三个入口；而 `Model.Info.package` 本来就支持按模型选择协议。
 
 ### D4. 协议判定与 variants 写入字段
@@ -193,11 +193,55 @@ A 是面向“兼容网关”的通用包，请求体最贴近 LiteLLM 的期望
 | models.dev 匹配：候选 id `base_model` → 去前缀路由名 → `model_name`，大小写不敏感 | 与基线一致（基线同样小写比较并包含去前缀路由名）；显式列出以免实现时遗漏 |
 | 家族表、`-cn` 备选、`models_dev_provider` 覆盖、DeepSeek/Kimi/MiMo/Qwen 模态信任名单、mode 缺失时按名字排除图像模型 | 与基线一致，全部保留（用户已确认） |
 
+### D10. GitHub-only 分发与预构建产物
+
+默认安装入口为：
+
+```bash
+opencode plugin add github:rpchen/opencode-litellm-provider
+```
+
+未指定 ref 的 Git package 解析仓库默认分支，因此 `main` 代表最新稳定版。需要可复现安装或回滚时使用 `#vX.Y.Z`。本变更不发布到 npm registry；`package.json` 仍采用 npm package 格式，是因为 OpenCode 的 Git package 安装与 GitHub Release tarball 都使用相同的 package metadata 和 exports。
+
+`package.json` exports 指向 `dist/index.js` 与 `dist/index.d.ts`。OpenCode 2.0.15 的 Npm service 通过 Arborist 安装 registry/Git package，并明确设置 `ignoreScripts: true`；所以 Git 安装不会运行 `prepare`，把构建留给用户会得到缺少入口的包。决定：
+
+- `main` 与每个发布 tag 都提交完整、预构建的 `dist/**`；
+- `.gitignore` 不再排除 `dist`；
+- `build` 先跨平台清空 `dist` 再运行 `tsc -p tsconfig.build.json`，避免删除或重命名源码后残留旧文件；
+- CI 干净构建后同时检查 tracked diff 与 untracked 文件，任何差异都失败；
+- 不增加 `prepare`、`postinstall` 等安装期脚本，也不增加运行时依赖。
+
+本地 package smoke 先 `npm pack`，检查 tarball 至少包含 package metadata、README、LICENSE 和 exports 所需入口，再在隔离 consumer 中用 `npm install --ignore-scripts` 安装 tarball并 import package。它不连接 LiteLLM，也不读取任何凭据。进入 `main` 后再用公开 GitHub spec 对远端提交做同类 smoke，以覆盖 Git 安装路径。
+
+### D11. CI、分支规则与开发流程
+
+所有开发从 `main` 创建功能/修复分支，通过 pull request 合并。`.github/workflows/ci.yml` 在面向 `main` 的 PR、`push main` 和手工触发时运行单个稳定命名为 `CI` 的 job：
+
+1. `npm ci` 按 `package-lock.json` 安装依赖；
+2. TypeScript typecheck；
+3. 全部 Bun tests；
+4. clean build 与 `dist` 一致性检查；
+5. `openspec validate --all --strict --no-interactive`；
+6. pack/install/import smoke；
+7. `push main` 时追加远端 Git package commit smoke。
+
+CI 仅授予 `contents: read`，不加载 repository secrets；第三方 Actions 固定到完整 commit SHA。OpenSpec CLI 作为锁定版本的 devDependency，避免 CI 依赖 runner 上的全局工具。
+
+仓库在公开前检查当前工作树和完整 Git 历史，不得含真实 Key、LiteLLM 地址、PAT、npm token 或其他秘密。公开后用 GitHub ruleset 或 branch protection 对默认分支强制：必须经 PR、required check 为 `CI`、合并前基于最新 `main`、禁止 force-push 和删除，且管理员不能绕过。仓库只有一名维护者，所以 required approval 数量为 0；否则提交者无法批准自己的 PR。通过 API 读取规则与分支状态复核，不通过尝试破坏性 push 来验证。
+
+### D12. 版本 tag 与 GitHub Release
+
+首个版本为 `0.1.0`，`package.json` 与 lockfile 根包版本保持一致。发布 tag 固定使用 `vX.Y.Z`；`.github/workflows/release.yml` 只响应该格式，并先验证 tag 去掉 `v` 后与 package version 完全相等。
+
+Release job 使用与 CI 相同的门禁，随后生成 npm tarball 和 SHA-256 checksum，使用 GitHub Actions 自动提供的 `GITHUB_TOKEN` 创建 GitHub Release 并上传附件。它只授予 `contents: write`，不执行 `npm publish`，不要求 npm token、个人 PAT 或 LiteLLM 凭据。tag 指向的提交已经包含 `dist`，因此 Git spec `#vX.Y.Z` 与 Release 附件都能在禁用 lifecycle scripts 时工作。
+
+发行验收分两阶段：第一轮 PR 合并后验证无 tag 的公开 `main` 安装，再在已通过 main CI 的提交上创建 `v0.1.0`；Release 成功后验证 tag 安装与 checksum。最终结果由第二轮 PR 写入验收记录、勾选剩余任务并归档 change，避免把尚未实际发生的远端行为提前标为完成。
+
 ## Risks / Trade-offs
 
 - [v2 插件 API 在 2.0.x 期间变化] → 宿主调用集中在 `host/`；`peerDependencies` 固定 `>=2.0.15 <2.1`（tasks 1.4）；每次升级宿主时重跑验收（tasks 第 4 组）。
-- [两个首选协议包不在宿主内置包表中，打包后的宿主无法加载] → 验收时确认；不可加载时改用内置的 `openai/responses` / `anthropic`（D3 备选 B）。
-- [LiteLLM 不接受 Messages 协议的 `x-api-key` 头] → 验收时确认；插件不能把 Key 写进 `headers` 改用 Bearer（会持久化泄露）。若不通过，Claude 家族改走 Chat（LiteLLM 会做协议转换，仍可调用），并与用户确认后同步修改 spec。
+- [`anthropic-compatible` 不在宿主内置包表中，打包后的宿主可能无法加载] → 当前环境没有 Messages 部署，首次真实使用时确认；不可加载时改用内置的 `anthropic`（D3 备选 B）。Responses 的 `openai-compatible-responses` 已在 OpenCode 2.0.15 真实验收通过。
+- [LiteLLM 不接受 Messages 协议的 `x-api-key` 头] → 当前环境没有 Messages 部署，首次真实使用时确认；插件不能把 Key 写进 `headers` 改用 Bearer（会持久化泄露）。若不通过，Claude 家族改走 Chat（LiteLLM 会做协议转换，仍可调用），并与用户确认后同步修改 spec。
 - [原生包的推理选项键与假设不一致，导致档位静默不生效] → 验收时确认；映射表集中在一处，改键名只动一处。
 - [实测环境没有 `supported_endpoints`，协议完全由 `mode` 决定；经 `openai/` 网关转发的非 OpenAI 模型被标为 `responses` 时，LiteLLM 的 Responses 桥接未必可用] → 按用户确认的规则执行，不发试探请求；遇到个别模型不可用时用 `protocolOverrides` 覆盖。
 - [连接变更事件与 `connection.active` 更新存在先后顺序问题] → 收到事件后以 `connection.active` 的结果为准；即使事件漏收，轮询也会在一个间隔内发现（换号瞬间旧模型已由 `sourceConnection` 隐藏，不会误用旧凭据）。
@@ -205,14 +249,18 @@ A 是面向“兼容网关”的通用包，请求体最贴近 LiteLLM 的期望
 - [阶梯截断让用户无法使用超过阶梯点的长上下文] → 默认开启是用户的明确选择；可以关闭。
 - [models.dev 模型 id 与 LiteLLM 模型名不一致，匹配不到] → 优先使用 `base_model`；匹配不到时只是缺少档位和补缺字段，不影响可用性。
 - [大量模型时 transform 全量重写的开销] → 只在指纹变化时 reload；模型数在百级以内，可以接受。
+- [预构建 `dist` 与源码漂移或残留旧模块] → build 先清理，CI 从源码重建后检查 tracked/untracked 差异，PR 不一致即失败。
+- [裸 GitHub spec 跟随可变 `main`] → GitHub 规则只允许通过 required CI 的 PR 进入 `main`；生产或回滚场景文档建议固定 `#vX.Y.Z`。
+- [公开仓库意外暴露历史中的秘密] → 改变可见性前扫描完整历史与当前工作树；发现秘密则先暂停公开并清理/轮换，不以简单删除当前文件代替历史修复。
+- [Release tag 与包版本不一致] → workflow 在任何打包或发布动作前精确比较版本并失败退出；tag 只从通过 main CI 的提交创建。
 
 ## Migration Plan
 
-1. 安装：在 opencode v2 配置的 `plugins` 中加入 `opencode-litellm-provider`（未发布到 npm 前，用 `file://` 指向本地构建产物）。
+1. 安装：运行 `opencode plugin add github:rpchen/opencode-litellm-provider` 使用 `main` 最新稳定版；需要固定或回滚时追加 `#vX.Y.Z`。本地开发仍可用 `file://` 指向构建产物的 `dist` 目录，OpenCode 的本地目录加载器要求入口位于所配目录根部。
 2. 在 OpenCode 连接界面连接 LiteLLM：填写地址与 Key。
 3. 确认新 provider 下的模型正常后，从 `~/.config/opencode/opencode.jsonc` 中删除 `litellm`、`litellm-openai`、`litellm-anthropic` 三个静态 provider 块，停止使用 `opencode-litellm-config-sync`。
 4. 回滚：从 `plugins` 中移除插件，恢复备份的静态 provider 块即可。插件不修改任何配置文件，所以无需清理。
 
 ## Open Questions
 
-- npm 包的发布名与发布时机（`opencode-litellm-provider` 是否已被占用），不影响本变更的实现，发布前确认即可。
+（无；发行渠道确定为公开 GitHub 仓库，npm registry 发布不在本变更范围内。）

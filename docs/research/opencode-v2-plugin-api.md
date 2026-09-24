@@ -60,13 +60,12 @@
 3. **公开 API 就是 beta 实际实现**：beta 的 `packages/plugin/src/promise/adapter.ts` 确实提供 `ctx.provider.transform`、`ctx.model.transform`，
    与已发布的 `.d.ts` 一致。
 
-## 5. 仍待验证（在首个变更的实施与验收阶段确认）
+## 5. 实施与验收结论
 
-1. 一个 integration 能否挂多个 provider（`Provider.Info.integrationID` 指向同一个 `litellm` integration），使 chat / responses / messages 三类 provider 共用一次连接。
-2. **协议选择**：`@ai-sdk/openai` 的 `languageModel()` 默认走 Responses；走 Chat 需要 `.chat()`，可用 `ctx.aisdk.hook("language")` 覆盖，或统一改用 `@ai-sdk/openai-compatible`。
-3. **变更检测方式**：LiteLLM 无推送；候选为定时轮询 `/v1/model/info` 做内容哈希比较 + 连接变更事件 + 手动命令（`ctx.command`）。
-4. **协议判定依据**：LiteLLM `/v1/model/info` 中的 `litellm_params.model` 路由前缀、`model_info.mode`、
-   以及 LiteLLM 是否对该模型开放 `/v1/responses`、`/v1/messages` 透传。
+1. 一个 `litellm` integration 可以绑定一个 provider，并通过模型级 `package` 在同一 provider 内选择 Chat / Responses / Messages；用户只需连接一次。
+2. Chat 使用 `@opencode/ai/providers/openai-compatible`；Responses 使用 `@opencode/ai/providers/openai-compatible-responses`，后者已在 OpenCode 2.0.15 真实调用成功。当前验收环境没有 Messages 部署，`anthropic-compatible` 留待首次真实使用时复核。
+3. LiteLLM 没有推送模型清单；实现采用启动发现、连接变更事件和定时轮询，并以稳定指纹避免无变化时重复 reload。
+4. 协议依次依据用户覆盖、Anthropic/Claude 识别、`supported_endpoints`、`mode` 判定；不向每个模型发探测请求。完整验收结果见 `docs/research/acceptance-notes.md`。
 
 ## 6. 行为基线：opencode-litellm-config-sync（v1 静态生成脚本）
 
