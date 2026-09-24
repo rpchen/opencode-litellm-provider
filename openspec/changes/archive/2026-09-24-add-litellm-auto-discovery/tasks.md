@@ -55,4 +55,4 @@
 - [x] 7.2 将仓库改为 Public，推送功能分支并创建 PR；等待 `CI` 通过后配置无管理员绕过的默认分支 ruleset（必须 PR、required `CI`、最新 main、禁止 force-push/删除，approval=0）。验证：API 显示 Public、ruleset active、main protected，PR 受 required check 约束
 - [x] 7.3 required CI 通过后 squash merge；确认 `push main` CI 通过，并在隔离 consumer/隔离 OpenCode 配置中用无 ref GitHub spec 安装和加载插件。验证：`github:rpchen/opencode-litellm-provider` 在禁用 lifecycle scripts 时可用，不读取 LiteLLM 凭据
 - [x] 7.4 在通过 main CI 的提交上创建 `v0.1.0`，确认 Release workflow 成功、`.tgz` 与 checksum 正确，并以 `#v0.1.0` 安装/import。验证：GitHub Release 实际存在，tag 安装可用，npm registry 未发布
-- [ ] 7.5 将 CI、ruleset、无 ref 安装、tag 安装和 Release 实测结果写入 `docs/research/acceptance-notes.md`，确认新增任务无延期或伪报后再归档 change。验证：第二轮收尾 PR 通过相同 required CI，OpenSpec strict validation 通过
+- [x] 7.5 将 CI、ruleset、无 ref 安装、tag 安装和 Release 实测结果写入 `docs/research/acceptance-notes.md`，确认新增任务无延期或伪报后再归档 change。验证：第二轮收尾 PR 通过相同 required CI，OpenSpec strict validation 通过

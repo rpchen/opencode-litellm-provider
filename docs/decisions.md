@@ -1,6 +1,6 @@
 # 方案决策记录
 
-记录 `add-litellm-auto-discovery` 方案讨论中由用户拍板的决策与背景（2026-09-23 ~ 09-24）。规格本身以 `openspec/changes/add-litellm-auto-discovery/` 为准；本文件说明“为什么这样定”，供实施时参考，避免重新讨论。
+记录 `add-litellm-auto-discovery` 方案讨论中由用户拍板的决策与背景（2026-09-23 ~ 09-24）。落地规格以 `openspec/specs/` 为准，原 change 已归档到 `openspec/changes/archive/2026-09-24-add-litellm-auto-discovery/`；本文件说明“为什么这样定”，供后续维护时参考，避免重新讨论。
 
 ## 已确认的决策
 
