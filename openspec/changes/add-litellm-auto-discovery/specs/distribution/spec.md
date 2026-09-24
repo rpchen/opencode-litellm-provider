@@ -16,11 +16,15 @@
 - **THEN** OpenCode 安装 `v0.1.0` tag 对应的不可变版本，后续 `main` 变化不影响该安装目标
 
 ### Requirement: 仓库包含预构建产物
-项目 SHALL 把 package exports 所需的 `dist` 构建产物提交到 Git，并确保 `main` 与每个发布 tag 都包含与当前 TypeScript 源码一致的完整产物。安装 MUST NOT 依赖 `prepare`、`preinstall`、`postinstall` 或其他 lifecycle script；安装器禁用脚本时，包入口仍 SHALL 可导入。干净重建改变已提交产物或产生额外未跟踪产物时，CI SHALL 失败。
+项目 SHALL 把 package exports 所需的 `dist` 构建产物提交到 Git，并确保 `main` 与每个发布 tag 都包含与当前 TypeScript 源码一致的完整产物。安装 MUST NOT 依赖 `prepare`、`preinstall`、`postinstall` 或其他 lifecycle script；package manifest MUST NOT 声明会让 Pacote 触发 Git dependency preparation 的精确 `build` script（构建命令使用 `build:dist`）。安装器禁用脚本时，包入口仍 SHALL 可导入。干净重建改变已提交产物或产生额外未跟踪产物时，CI SHALL 失败。
 
 #### Scenario: 禁用安装脚本
 - **WHEN** 隔离 consumer 使用 `--ignore-scripts` 安装打包产物
 - **THEN** `dist/index.js` 与 `dist/index.d.ts` 已存在，package exports 可直接解析并导入
+
+#### Scenario: Git 安装不触发 preparation
+- **WHEN** OpenCode 在 Windows 上通过直接 Arborist 调用安装 Git package
+- **THEN** package manifest 不含 Pacote 识别为 preparation 触发器的 `scripts.build` 或 lifecycle scripts，安装过程无需启动嵌套的 npm 进程
 
 #### Scenario: 构建产物过期
 - **WHEN** CI 清理 `dist`、从源码重新构建后发现 tracked 或 untracked 文件与提交内容不一致

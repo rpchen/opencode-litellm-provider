@@ -14,12 +14,12 @@
 npm ci
 bun run typecheck
 bun test
-bun run build
+bun run build:dist
 bun run test:package
 npm run validate:spec
 ```
 
-`dist/` 是 GitHub Git package 的组成部分，必须与 `src/` 一起提交。`bun run build` 会先清理再生成 `dist`；提交前确认重新构建不会改变已暂存的产物，也不会产生遗漏的未跟踪文件。
+`dist/` 是 GitHub Git package 的组成部分，必须与 `src/` 一起提交。`bun run build:dist` 会先清理再生成 `dist`；提交前确认重新构建不会改变已暂存的产物，也不会产生遗漏的未跟踪文件。
 
 ## 安全要求
 

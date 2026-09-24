@@ -64,7 +64,7 @@ opencode plugin add github:rpchen/opencode-litellm-provider#v0.1.0
 
 ```bash
 npm ci
-bun run build
+bun run build:dist
 ```
 
 然后在 OpenCode 配置文件的 `plugins` 中使用指向 `dist` 目录的绝对 `file://` URL：
@@ -95,7 +95,7 @@ Windows 示例：
 }
 ```
 
-本地路径必须指向含有 `index.js` 的 `dist` 目录，而不是仓库根目录。修改源码后重新执行 `bun run build`；OpenCode 会监视本地插件构建产物的变化。
+本地路径必须指向含有 `index.js` 的 `dist` 目录，而不是仓库根目录。修改源码后重新执行 `bun run build:dist`；OpenCode 会监视本地插件构建产物的变化。
 
 ## 连接 LiteLLM
 
@@ -173,7 +173,7 @@ Windows 示例：
 npm ci              # 本项目 .npmrc 固定使用公网 npm registry
 bun run typecheck
 bun test
-bun run build        # clean build；生成的 dist 必须随源码提交
+bun run build:dist        # clean build；生成的 dist 必须随源码提交
 bun run test:package # 验证 tarball 在禁用 lifecycle scripts 时可安装并导入
 npm run validate:spec
 ```
