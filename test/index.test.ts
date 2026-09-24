@@ -55,6 +55,13 @@ test("cleanup 停止发现并释放注册", async () => {
       },
       reload: async () => {},
     },
+    rpc: { register: async () => ({ ...registration, events: { emit: async () => {} } }) },
+    command: {
+      transform: async (callback: (editor: { add: () => void }) => void) => {
+        callback({ add: () => {} })
+        return registration
+      },
+    },
     event: {
       subscribe: ({ signal }: { signal?: AbortSignal } = {}) => ({
         [Symbol.asyncIterator]: () => ({
@@ -80,7 +87,7 @@ test("cleanup 停止发现并释放注册", async () => {
   const scheduled = scheduler.all[0]!
 
   await cleanup()
-  expect(disposed).toBe(2)
+  expect(disposed).toBe(4)
   expect(scheduler.active).toHaveLength(0)
 
   scheduled()

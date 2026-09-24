@@ -10,7 +10,7 @@ import {
   redact,
   type FetchLike,
 } from "../net/fetch.js"
-import { INTEGRATION_ID, type ProviderSnapshot } from "./register.js"
+import { createRegistrationView, INTEGRATION_ID, type ProviderSnapshot, type DiscoveryStatus } from "./register.js"
 
 interface KeyCredential {
   type: "key"
@@ -98,6 +98,7 @@ export function createDiscoveryLoop(
   const buildModels = dependencies.buildModels ?? buildModelSpecs
   const fingerprint = dependencies.fingerprint ?? modelFingerprint
   const abortEvents = new AbortController()
+  snapshot.audit ??= { status: "disconnected" }
 
   let timer: unknown
   let disposed = false
@@ -105,7 +106,14 @@ export function createDiscoveryLoop(
   let queued = false
   let identity: string | undefined
   let lastFingerprint: string | undefined
+  let reloadPending = false
   let eventTask: Promise<void> | undefined
+
+  const reload = async () => {
+    reloadPending = true
+    await context.provider.reload()
+    reloadPending = false
+  }
 
   const cancelTimer = () => {
     if (timer !== undefined) scheduler.clearTimeout(timer)
@@ -114,33 +122,42 @@ export function createDiscoveryLoop(
 
   const schedule = () => {
     cancelTimer()
-    if (disposed || !snapshot.connection) return
+    if (disposed || (!snapshot.connection && !reloadPending)) return
     timer = scheduler.setTimeout(() => {
       timer = undefined
       void trigger()
     }, options.pollInterval * 1000)
   }
 
-  const removeProvider = async () => {
-    const hadRegistration = snapshot.ready && snapshot.connection !== undefined
+  const removeProvider = async (status: DiscoveryStatus = "disconnected") => {
+    const hadRegistration = (snapshot.ready && snapshot.connection !== undefined) || reloadPending
     snapshot.ready = false
     snapshot.connection = undefined
     snapshot.apiBaseURL = undefined
     snapshot.models = []
+    snapshot.registrationView = undefined
+    snapshot.audit = { status }
     identity = undefined
     lastFingerprint = undefined
-    if (hadRegistration) await context.provider.reload()
+    if (hadRegistration) await reload()
   }
 
-  const clearModels = async (connection: ConnectionInfo, apiBaseURL: string) => {
+  const clearModels = async (
+    connection: ConnectionInfo,
+    apiBaseURL: string,
+    status: "cleared-auth" | "cleared-notfound",
+  ) => {
     const emptyFingerprint = fingerprint([])
-    const changed = !snapshot.ready || lastFingerprint !== emptyFingerprint
+    const changed = !snapshot.ready || lastFingerprint !== emptyFingerprint || reloadPending
+    const view = createRegistrationView([], apiBaseURL)
     snapshot.ready = true
     snapshot.connection = connection
     snapshot.apiBaseURL = apiBaseURL
     snapshot.models = []
+    snapshot.registrationView = view
+    snapshot.audit = { status }
+    if (changed) await reload()
     lastFingerprint = emptyFingerprint
-    if (changed) await context.provider.reload()
   }
 
   const refreshOnce = async () => {
@@ -149,6 +166,26 @@ export function createDiscoveryLoop(
       cancelTimer()
       await removeProvider()
       return
+    }
+
+    const previous = snapshot.connection
+    const differentConnection = previous && (
+      previous.type !== connection.type ||
+      (previous.type === "credential" ? previous.id : previous.name) !==
+        (connection.type === "credential" ? connection.id : connection.name)
+    )
+    if (differentConnection) {
+      const hadRegistration = snapshot.ready
+      snapshot.ready = false
+      snapshot.connection = connection
+      snapshot.apiBaseURL = undefined
+      snapshot.models = []
+      snapshot.registrationView = undefined
+      snapshot.audit = { status: "switching" }
+      lastFingerprint = undefined
+      if (hadRegistration) await reload()
+    } else if (!snapshot.ready && snapshot.audit?.status === "disconnected") {
+      snapshot.audit = { status: "pending" }
     }
 
     const resolved = await context.integration.connection.resolve(connection)
@@ -182,8 +219,10 @@ export function createDiscoveryLoop(
       snapshot.connection = connection
       snapshot.apiBaseURL = addresses.apiBaseURL
       snapshot.models = []
+      snapshot.registrationView = undefined
+      snapshot.audit = { status: "switching" }
       lastFingerprint = undefined
-      if (hadRegistration) await context.provider.reload()
+      if (hadRegistration) await reload()
     }
     identity = nextIdentity
 
@@ -197,21 +236,35 @@ export function createDiscoveryLoop(
 
       const models = buildModels(response, catalog, options)
       const nextFingerprint = fingerprint(models)
-      const changed = !snapshot.ready || lastFingerprint !== nextFingerprint
+      const changed = !snapshot.ready || lastFingerprint !== nextFingerprint || reloadPending
+      const view = changed || !snapshot.registrationView
+        ? createRegistrationView(models, addresses.apiBaseURL)
+        : snapshot.registrationView
       snapshot.ready = true
       snapshot.connection = connection
       snapshot.apiBaseURL = addresses.apiBaseURL
       snapshot.models = models
+      snapshot.registrationView = view
+      if (changed) await reload()
       lastFingerprint = nextFingerprint
-      if (changed) await context.provider.reload()
+      snapshot.audit = {
+        status: models.length === 0 ? "empty" : "ready",
+        lastSuccessfulDiscoveryAt: new Date().toISOString(),
+        view,
+      }
     } catch (error) {
       if (disposed || identity !== nextIdentity) return
       if (error instanceof DiscoveryError && (error.kind === "auth" || error.kind === "notfound")) {
         logger.error(redact(error.message, resolved.key))
-        await clearModels(connection, addresses.apiBaseURL)
+        await clearModels(
+          connection,
+          addresses.apiBaseURL,
+          error.kind === "auth" ? "cleared-auth" : "cleared-notfound",
+        )
       } else {
         const message = error instanceof Error ? error.message : String(error)
         logger.warn(`LiteLLM 发现失败，保留上次结果：${redact(message, resolved.key)}`)
+        if (snapshot.audit?.view) snapshot.audit = { ...snapshot.audit, status: "stale" }
       }
     } finally {
       schedule()

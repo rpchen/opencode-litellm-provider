@@ -41,6 +41,9 @@ jobs:
       - name: Run tests
         run: bun test
 
+      - name: Render TUI card and exercise mouse actions
+        run: bun run test:tui-render
+
       - name: Build clean distribution
         run: bun run build:dist
 

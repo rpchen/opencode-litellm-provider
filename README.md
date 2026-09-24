@@ -12,6 +12,20 @@ OpenCode v2 插件：通过 `/connect` 填写 LiteLLM 地址和自己的 API Key
 - 在启动、连接变更和定时轮询时同步模型清单
 - 在短暂网络故障、429 或服务端错误时保留上次成功结果；Key 无效或模型接口不存在时撤下旧结果
 
+## 在途修复与审查导出
+
+旧版 `v0.1.0` 尚未包含此处实现的修复：该版本在某些宿主安装路径中，Responses 模型可能可见却因 SDK package 解析失败而无法调用。切勿将模型可见误认为已修复；请在新版本 `v0.1.1` 完成发行和真实 Git 安装验收后，按下文升级。本节的导出命令也仅在安装包含该功能的新构建后可用。
+
+在已连接的 OpenCode TUI 中输入 `/litellm-audit-export`，插件会将当前内存中的注册视图写成独立 JSON，并在该会话的消息区下方、输入框上方显示结果卡片：完整绝对路径可点击打开，旁边的“复制路径”可复制到剪贴板；点击失败时仍保留完整路径，并提供手动复制入口或简短失败原因。卡片不是可保存在历史中的对话消息，服务端重启后不承诺恢复旧卡片；同一服务下 TUI 晚加载可取回最近一次结果。命令不请求大模型，不上传内容，也不修改 `opencode.jsonc`。无 TUI 的客户端可使用插件的 `litellm-audit-export` RPC `export({ sessionID })` 主动导出并取得包含 `ok`、`path` 或 `error` 的结果；`latest({})` 只查询本进程最近的导出结果，不会再次写文件。
+
+默认目录是 Unix 的 `${XDG_STATE_HOME:-~/.local/state}/opencode/litellm-audit/`，或 Windows 的 `%LOCALAPPDATA%\\opencode\\litellm-audit\\`（未配置时回退到当前用户的 `AppData\\Local`）。每次导出使用 UTC 时间与随机后缀生成新的 `litellm-audit-*.json`，不覆盖已有报告；先排他创建私有临时文件，写入同步后以同目录硬链接原子提交，最后清理临时文件。目录创建模式为 `0700`、文件为 `0600`（在支持 POSIX mode 的平台适用）；Windows 创建时额外撤销报告目录和文件的继承 ACL，仅授予当前用户完全访问权限。分享前请检查实际权限和路径。目录不可写或空间不足时，命令只反馈简短错误，不破坏此前完整的报告。
+
+报告 `schemaVersion: 1`、`scope: "plugin-submitted"`：只表示插件提交给 `ProviderEditor.add` 的 provider／模型允许字段及其协议选择，不表示宿主其后变更的完整运行时配置。模型按注册顺序列出 ID、名称、package、`protocol`（插件自有的选择结果）、模态／工具能力、variant id／已知 settings、价格、上下文／输入／输出上限、状态、enabled 和发布日期。`exportedAt` 与 `lastSuccessfulDiscoveryAt` 为 ISO 8601 UTC；价格单位为 USD／百万 token；每个 `time.released` 保留提交给宿主的数值，其 `unit` 为 `unix-ms`（日期字符串经 `Date.parse`）、`unknown`（上游直接给出的数值，未规范化）或 `none`（没有可用日期，注册值为 0）。零价格／零上限是缺失时的注册默认值，并非上游确认不支持；空 variants 仅表示未取得可用推理档位。
+
+`status` 区分 `disconnected`（无连接）、`pending`（首次待发现）、`switching`（连接切换待发现）、`ready`、`empty`（成功但无对话模型）、`stale`（临时故障，保留旧结果）、`cleared-auth` 和 `cleared-notfound`（认证失败或接口不存在，已清空）。`stale` 的最近成功时间不是此次失败的时间。连接切换或断开不会把旧连接模型导出为当前模型。模型名、variant id 与推理等级是审查目标，按注册值保留，**不会**作为秘密检测或过滤；报告不包含连接 Key、地址、凭据 ID、路由和源响应等非导出字段，但模型命名及价格仍可能是内部信息，分享前请自行检查文件。
+
+升级时先按“安装最新稳定版”获取新构建，并在本机选一个实际存在的模型发起真实消息验证；若出现初始化错误，记录宿主版本与包解析类别而不要复制 Key、完整请求或响应。回滚为 `#v0.1.0` 会恢复该版本已有的模型初始化问题，不能把回滚当作修复。
+
 插件不内置 LiteLLM 地址，也不需要管理员 Key。它用于替代手工生成静态 provider 配置的 `opencode-litellm-config-sync`。
 
 ## 要求
@@ -53,10 +67,10 @@ OpenCode 会取得 `main` 上最新的稳定构建；仓库已经包含 `dist`�
 使用 GitHub Release 对应的 tag：
 
 ```bash
-opencode plugin add github:rpchen/opencode-litellm-provider#v0.1.0
+opencode plugin add github:rpchen/opencode-litellm-provider#v0.1.1
 ```
 
-固定 tag 不会随 `main` 后续变化。遇到兼容性问题时，也可以把配置中的 tag 改回此前版本。项目当前不发布到 npm registry；GitHub Release 的 `.tgz` 与 SHA-256 文件用于审计和归档，默认安装入口仍是 Git package spec。
+固定 tag 不会随 `main` 后续变化。遇到兼容性问题时，也可以把配置中的 tag 改回此前版本；但回滚到 `v0.1.0` 会恢复该版本的模型初始化缺陷。项目当前不发布到 npm registry；GitHub Release 的 `.tgz` 与 SHA-256 文件用于审计和归档，默认安装入口仍是 Git package spec。
 
 ### 从本地构建产物加载
 
@@ -173,6 +187,7 @@ Windows 示例：
 npm ci              # 本项目 .npmrc 固定使用公网 npm registry
 bun run typecheck
 bun test
+bun run test:tui-render # 在 OpenTUI 测试渲染器中检查卡片及鼠标操作
 bun run build:dist        # clean build；生成的 dist 必须随源码提交
 bun run test:package # 验证 tarball 在禁用 lifecycle scripts 时可安装并导入
 npm run validate:spec

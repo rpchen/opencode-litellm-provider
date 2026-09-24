@@ -3,6 +3,7 @@ import type { ModelSpec } from "../src/core/build.js"
 import {
   applyIntegration,
   applyProvider,
+  createRegistrationView,
   type IntegrationEditorLike,
   type ProviderEditorLike,
   type ProviderSnapshot,
@@ -13,7 +14,7 @@ function model(id: string): ModelSpec {
     id,
     name: id,
     protocol: "responses",
-    package: "@opencode/ai/providers/openai-compatible-responses",
+    package: "@opencode/ai/providers/openai/responses",
     capabilities: { tools: true, input: ["text"], output: ["text"] },
     variants: [{ id: "high", settings: { reasoningEffort: "high" } }],
     released: 123,
@@ -95,7 +96,7 @@ describe("provider 注册", () => {
       modelID: "gpt-5.5",
       providerID: "litellm",
       name: "gpt-5.5",
-      package: "@opencode/ai/providers/openai-compatible-responses",
+      package: "@opencode/ai/providers/openai/responses",
       capabilities: { tools: true, input: ["text"], output: ["text"] },
       variants: [{ id: "high", settings: { reasoningEffort: "high" } }],
       time: { released: 123 },
@@ -105,6 +106,31 @@ describe("provider 注册", () => {
     })
     expect(JSON.stringify(fake.value)).not.toContain("apiKey")
     expect(JSON.stringify(fake.value)).not.toContain("secret")
+  })
+
+  test("同一次映射产生不可变视图，注册与审查同序共享 ID、package、variants、价格和协议", () => {
+    const specs = [model("model-b"), { ...model("model-a"), protocol: "chat" as const, package: "@opencode/ai/providers/openai-compatible" }]
+    const view = createRegistrationView(specs, "https://litellm.example/v1")
+    const current = { ...snapshot(specs), registrationView: view, audit: { status: "ready" as const, view } }
+    const editor = fakeProvider()
+    applyProvider(editor.editor, current)
+    expect(Object.isFrozen(view)).toBeTrue()
+    expect(Object.isFrozen(view.models[0]?.variants)).toBeTrue()
+    expect(editor.value?.models.map((item) => String(item.id))).toEqual(specs.map((item) => item.id))
+    for (const [index, submitted] of editor.value!.models.entries()) {
+      expect(submitted).toEqual(view.models[index]!)
+      expect(submitted.package).toBe(specs[index]!.package)
+      expect(submitted.variants.map((variant) => ({ id: String(variant.id), settings: variant.settings }))).toEqual(specs[index]!.variants)
+      expect(submitted.cost[0]).toMatchObject({
+        input: specs[index]!.cost.input,
+        output: specs[index]!.cost.output,
+        cache: { read: specs[index]!.cost.cacheRead, write: specs[index]!.cost.cacheWrite },
+      })
+      expect(submitted.limit).toEqual(specs[index]!.limit)
+      expect(view.protocols[String(submitted.id)]).toBe(specs[index]!.protocol)
+    }
+    specs[0]!.name = "mutated later"
+    expect(view.models[0]?.name).toBe("model-b")
   })
 
   test("下一次 add 整体替换旧模型", () => {

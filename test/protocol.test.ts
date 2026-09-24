@@ -71,8 +71,8 @@ describe("协议判定", () => {
   test("协议包映射集中且完整", () => {
     expect(PROTOCOL_PACKAGES).toEqual({
       chat: "@opencode/ai/providers/openai-compatible",
-      responses: "@opencode/ai/providers/openai-compatible-responses",
-      messages: "@opencode/ai/providers/anthropic-compatible",
+      responses: "@opencode/ai/providers/openai/responses",
+      messages: "@opencode/ai/providers/anthropic",
     })
   })
 })

@@ -8,8 +8,8 @@ import {
 
 export const PROTOCOL_PACKAGES: Record<Protocol, string> = {
   chat: "@opencode/ai/providers/openai-compatible",
-  responses: "@opencode/ai/providers/openai-compatible-responses",
-  messages: "@opencode/ai/providers/anthropic-compatible",
+  responses: "@opencode/ai/providers/openai/responses",
+  messages: "@opencode/ai/providers/anthropic",
 }
 
 function isClaudeName(value: unknown): boolean {

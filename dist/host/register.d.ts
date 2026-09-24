@@ -36,13 +36,28 @@ export interface ProviderEditorLike {
 }
 export declare const INTEGRATION_ID = "litellm";
 export declare const PROVIDER_ID = "litellm";
+export type DiscoveryStatus = "disconnected" | "pending" | "switching" | "ready" | "empty" | "stale" | "cleared-auth" | "cleared-notfound";
+export interface RegistrationView {
+    readonly info: Provider.Info;
+    readonly models: readonly Model.Info[];
+    readonly protocols: Readonly<Record<string, ModelSpec["protocol"]>>;
+    readonly releaseUnits: Readonly<Record<string, NonNullable<ModelSpec["releaseUnit"]>>>;
+}
+export interface AuditSnapshot {
+    readonly status: DiscoveryStatus;
+    readonly lastSuccessfulDiscoveryAt?: string;
+    readonly view?: RegistrationView;
+}
 export interface ProviderSnapshot {
     ready: boolean;
     connection?: ConnectionInfo;
     apiBaseURL?: string;
     models: ModelSpec[];
+    registrationView?: RegistrationView;
+    audit?: AuditSnapshot;
 }
 export declare function applyIntegration(editor: IntegrationEditorLike): void;
+export declare function createRegistrationView(models: readonly ModelSpec[], apiBaseURL: string): RegistrationView;
 export declare function applyProvider(editor: ProviderEditorLike, snapshot: ProviderSnapshot): void;
 export declare function registerIntegration(context: Pick<Plugin.Context, "integration">): Promise<Registration>;
 export declare function registerProvider(context: Pick<Plugin.Context, "provider">, snapshot: ProviderSnapshot): Promise<Registration>;

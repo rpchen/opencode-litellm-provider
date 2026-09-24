@@ -13,6 +13,7 @@ export interface ModelSpec {
     capabilities: ModelCapabilities;
     variants: ModelVariant[];
     released: number;
+    releaseUnit?: "unix-ms" | "unknown" | "none";
     cost: ModelCost;
     limit: ModelLimits;
 }

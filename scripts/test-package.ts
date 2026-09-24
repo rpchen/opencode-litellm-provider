@@ -57,7 +57,10 @@ try {
   if (!result) throw new Error("npm pack did not report an artifact")
 
   const files = new Set(result.files.map((file) => file.path.replaceAll("\\", "/")))
-  const required = ["package.json", "README.md", "LICENSE", "dist/index.js", "dist/index.d.ts"]
+  const required = [
+    "package.json", "README.md", "LICENSE", "dist/index.js", "dist/index.d.ts",
+    "dist/tui.js", "dist/tui.d.ts", "dist/tui-card.js", "dist/tui-actions.js",
+  ]
   const missing = required.filter((file) => !files.has(file))
   if (missing.length > 0) throw new Error(`package is missing required files: ${missing.join(", ")}`)
 
@@ -82,8 +85,39 @@ try {
       throw new Error("installed version mismatch")
     }
     const plugin = await import(${JSON.stringify(manifest.name)})
-    if (plugin.PLUGIN_ID !== "litellm" || !plugin.default) {
+    const tui = await import(${JSON.stringify(`${manifest.name}/tui`)})
+    if (plugin.PLUGIN_ID !== "litellm" || !plugin.default || tui.default?.id !== "litellm") {
       throw new Error("package exports are invalid")
+    }
+    const { createAuditResultStore } = await import(new URL(
+      "./node_modules/${manifest.name}/dist/tui-card.js", import.meta.url,
+    ))
+    const store = createAuditResultStore()
+    store.accept({ sequence: 1, sessionID: "smoke", ok: true, path: "C:/audit/report.json", error: "" })
+    if (store.forSession("smoke")?.path !== "C:/audit/report.json") {
+      throw new Error("TUI result card did not load")
+    }
+    const { PROTOCOL_PACKAGES } = await import(new URL(
+      "./node_modules/${manifest.name}/dist/core/protocol.js", import.meta.url,
+    ))
+    const expected = {
+      chat: "@opencode/ai/providers/openai-compatible",
+      responses: "@opencode/ai/providers/openai/responses",
+      messages: "@opencode/ai/providers/anthropic",
+    }
+    if (JSON.stringify(PROTOCOL_PACKAGES) !== JSON.stringify(expected)) {
+      throw new Error("model SDK packages do not match host built-ins")
+    }
+    for (const sdkPackage of Object.values(expected)) {
+      const implementation = await import(sdkPackage)
+      if (!implementation) throw new Error("SDK entry point did not load")
+    }
+    const { createRegistrationView } = await import(new URL(
+      "./node_modules/${manifest.name}/dist/host/register.js", import.meta.url,
+    ))
+    const provider = createRegistrationView([], "https://example.invalid/v1")
+    if (provider.info.package !== expected.chat) {
+      throw new Error("provider SDK package does not match host built-in")
     }
   `
   run(process.execPath, ["--input-type=module", "--eval", probe], consumer)

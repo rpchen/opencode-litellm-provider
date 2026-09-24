@@ -8,6 +8,8 @@ export function buildModelSpecs(litellmResponse, modelsDevCatalog, options) {
         const protocol = resolveProtocol(group, options.protocolOverrides);
         const selected = selectModelsDevRecord(group, modelsDevCatalog);
         const mapped = mapCapabilities(group, selected, options.contextTierCap);
+        const released = releaseTimestamp(selected);
+        const sourceDate = selected?.record.release_date;
         return {
             id: group.modelName,
             name: group.modelName,
@@ -15,7 +17,10 @@ export function buildModelSpecs(litellmResponse, modelsDevCatalog, options) {
             package: PROTOCOL_PACKAGES[protocol],
             capabilities: mapped.capabilities,
             variants: buildVariants(selected, protocol),
-            released: releaseTimestamp(selected),
+            released,
+            releaseUnit: typeof sourceDate === "number" && Number.isFinite(sourceDate)
+                ? "unknown"
+                : typeof sourceDate === "string" && Number.isFinite(Date.parse(sourceDate)) ? "unix-ms" : "none",
             cost: mapped.cost,
             limit: mapped.limit,
         };
