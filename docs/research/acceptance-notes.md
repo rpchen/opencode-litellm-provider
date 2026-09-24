@@ -101,3 +101,10 @@ opencode plugin add github:rpchen/opencode-litellm-provider
 - Release 含 `opencode-litellm-provider-0.1.0.tgz` 与对应 `.sha256`；下载后的 tarball SHA-256 与附件记录一致。
 - 在另一组全新隔离目录中执行 `opencode plugin add github:rpchen/opencode-litellm-provider#v0.1.0` 成功，OpenCode 日志确认加载 tag package，`plugin list` 显示提交版本 `e9b6547`。
 - npm registry 查询确认该 package 未发布；发行流程没有使用 npm token、PAT 或 LiteLLM 凭据。
+
+## 2026-09-25：活跃 TUI 导出卡片修复
+
+- 已发布的 `v0.1.1` 固定 tag 在原 OpenCode 2.0.16 后台服务中导出成功、报告文件生成且 RPC `latest` 更新，但已打开的 TUI 不即时显示卡片；重进同一会话后才显示路径及操作。其 Release 已注明此限制，tag 保持不变。
+- 在 `v0.1.1` TUI 增加 `latest` 短间隔读取并由原服务加载本地 Git 提交 `3d78066` 后，仍未即时显示卡片。OpenTUI 的 runtime plugin 只将 `solid-js` 裸模块重写为宿主共享实例，未重写插件原来导入的 `solid-js/dist/solid.js`；换成裸模块导入后再测试。
+- 原后台服务加载本地 Git 提交 `aa2c0ab`，两个新建的空会话分别验证：（1）TUI 已打开时以 RPC 导出；（2）在 TUI 输入并执行 `/litellm-audit-export`。两者都无需重进即可即时显示成功卡片、完整路径与“打开报告／复制路径”；独立导出 RPC 返回成功。没有调用模型或读取用户保存的 Key。OpenTUI 测试渲染器还覆盖了模拟鼠标操作、失败反馈和最新结果收敛。
+- 上述视觉与命令验收**不是**真实鼠标点击验收：为免未经确认就打开桌面应用或覆盖用户剪贴板，未在原 TUI 自动点击。`v0.1.2` 的默认／固定 Git 安装、Release、OpenCode 2.0.15 兼容、真实连接 stale／空清单／切换及独立代理端点抓证仍应分别标明结果，不以模拟测试替代。

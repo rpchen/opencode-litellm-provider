@@ -1,4 +1,4 @@
-import { createEffect, createSignal, Show } from "solid-js/dist/solid.js"
+import { createEffect, createSignal, Show } from "solid-js"
 import type { Context } from "@opencode/plugin/tui/plugin"
 import { copyAuditPath, openAuditReport } from "./tui-actions.js"
 

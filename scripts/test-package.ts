@@ -63,6 +63,10 @@ try {
   ]
   const missing = required.filter((file) => !files.has(file))
   if (missing.length > 0) throw new Error(`package is missing required files: ${missing.join(", ")}`)
+  const cardSource = readFileSync(path.join(root, "dist", "tui-card.js"), "utf8")
+  if (!cardSource.includes('from "solid-js"') || cardSource.includes("solid-js/dist/")) {
+    throw new Error("TUI must share the host's Solid runtime through the bare module specifier")
+  }
 
   const tarball = path.join(packages, result.filename)
   writeFileSync(

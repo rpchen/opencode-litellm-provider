@@ -1,5 +1,5 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "@opentui/solid/jsx-runtime";
-import { createEffect, createSignal, Show } from "solid-js/dist/solid.js";
+import { createEffect, createSignal, Show } from "solid-js";
 import { copyAuditPath, openAuditReport } from "./tui-actions.js";
 export function createAuditResultStore() {
     const [results, setResults] = createSignal({});

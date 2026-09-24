@@ -14,7 +14,7 @@ OpenCode v2 插件：通过 `/connect` 填写 LiteLLM 地址和自己的 API Key
 
 ## 模型调用修复与审查导出
 
-旧版 `v0.1.0` 不包含模型初始化修复或审查导出：该版本在某些宿主安装路径中，Responses 模型可能可见却因 SDK package 解析失败而无法调用。请安装 `v0.1.1` 或更新的构建，并通过真实消息验证；不要仅凭模型可见或插件列表判断修复已生效。
+旧版 `v0.1.0` 不包含模型初始化修复或审查导出：该版本在某些宿主安装路径中，Responses 模型可能可见却因 SDK package 解析失败而无法调用。`v0.1.1` 修复了模型调用，但有已知的 TUI 问题：在已打开的会话中执行导出，文件会写入，结果卡片可能要退出并重新进入同一会话才显示。请升级到 `v0.1.2`：修复后卡片无需重进即可显示，且在事件丢失时会读取本地最近结果。升级后分别通过真实消息和已打开 TUI 中的导出命令验收；不要仅凭模型可见或插件列表判断。
 
 在已连接的 OpenCode TUI 中输入 `/litellm-audit-export`，插件会将当前内存中的注册视图写成独立 JSON，并在该会话的消息区下方、输入框上方显示结果卡片：完整绝对路径可点击打开，旁边的“复制路径”可复制到剪贴板；点击失败时仍保留完整路径，并提供手动复制入口或简短失败原因。卡片不是可保存在历史中的对话消息，服务端重启后不承诺恢复旧卡片；同一服务下 TUI 晚加载可取回最近一次结果。命令不请求大模型，不上传内容，也不修改 `opencode.jsonc`。无 TUI 的客户端可使用插件的 `litellm-audit-export` RPC `export({ sessionID })` 主动导出并取得包含 `ok`、`path` 或 `error` 的结果；`latest({})` 只查询本进程最近的导出结果，不会再次写文件。
 
@@ -44,7 +44,7 @@ OpenCode v2 插件：通过 `/connect` 填写 LiteLLM 地址和自己的 API Key
 opencode plugin add github:rpchen/opencode-litellm-provider
 ```
 
-OpenCode 会取得 `main` 上的构建；仓库已经包含 `dist`，用户无需 clone、安装依赖或本地编译。**已有相同 Git package spec 时，`plugin add` 可能复用旧缓存**：运行 `opencode plugin check github:rpchen/opencode-litellm-provider` 查看当前提交和更新提示；若显示更新可用，执行 `opencode plugin update github:rpchen/opencode-litellm-provider`，再运行 `opencode reload`。使用 `opencode plugin list` 核对实际加载的版本，确认是 `v0.1.1` 对应的新提交后再验证真实模型调用。不要同时保留本地 `file://.../dist` 和 Git spec 的活动 LiteLLM 插件。
+OpenCode 会取得 `main` 上的构建；仓库已经包含 `dist`，用户无需 clone、安装依赖或本地编译。**已有相同 Git package spec 时，`plugin add` 可能复用旧缓存**：运行 `opencode plugin check github:rpchen/opencode-litellm-provider` 查看当前提交和更新提示；若显示更新可用，执行 `opencode plugin update github:rpchen/opencode-litellm-provider`，再运行 `opencode reload`。使用 `opencode plugin list` 核对实际加载的提交，确认是 `v0.1.2` 对应的新提交后再验证真实模型调用及活跃 TUI 导出。不要同时保留本地 `file://.../dist` 和 Git spec 的活动 LiteLLM 插件。
 
 若需要配置插件选项，请在 OpenCode 配置文件中把插件条目改成对象形式，并保留同一个 GitHub package spec：
 
@@ -67,10 +67,10 @@ OpenCode 会取得 `main` 上的构建；仓库已经包含 `dist`，用户无�
 使用 GitHub Release 对应的 tag：
 
 ```bash
-opencode plugin add github:rpchen/opencode-litellm-provider#v0.1.1
+opencode plugin add github:rpchen/opencode-litellm-provider#v0.1.2
 ```
 
-固定 tag 不会随 `main` 后续变化。遇到兼容性问题时，也可以把配置中的 tag 改回此前版本；但回滚到 `v0.1.0` 会恢复该版本的模型初始化缺陷。项目当前不发布到 npm registry；GitHub Release 的 `.tgz` 与 SHA-256 文件用于审计和归档，默认安装入口仍是 Git package spec。
+固定 tag 不会随 `main` 后续变化。遇到兼容性问题时，也可以把配置中的 tag 改回此前版本；但回滚到 `v0.1.1` 会恢复活跃 TUI 卡片不即时出现的问题，回滚到 `v0.1.0` 还会恢复模型初始化缺陷。项目当前不发布到 npm registry；GitHub Release 的 `.tgz` 与 SHA-256 文件用于审计和归档，默认安装入口仍是 Git package spec。
 
 ### 从本地构建产物加载
 
