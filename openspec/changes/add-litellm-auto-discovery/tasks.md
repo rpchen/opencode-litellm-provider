@@ -28,7 +28,7 @@
 
 > 2026-09-24 验收范围调整：用户决定本轮不要求管理员实际新增/删除模型，等首次真实发生后如有问题再反馈迭代；本轮以轮询增删单测覆盖该路径，并在真实环境完成断网、无效 Key 与恢复连接验证。验收记录不得把延期项表述为已实测。
 
-- [x] 4.1 `bun run typecheck && bun test && bun run build` 全部通过。验证：命令输出
+- [x] 4.1 `bun run typecheck && bun test && bun run build:dist` 全部通过。验证：命令输出
 - [x] 4.2 在真实 opencode 2.0.15 中加载构建产物，通过 `/connect` 连接 LiteLLM：模型列表与 `/v1/model/info` 中的对话模型一致；chat、responses、messages（若有 Claude 部署）协议各发一条消息成功；带档位的模型能切换档位且请求中带上对应参数；阶梯截断后的上下文在模型信息中可见。验证：结果记录到 `docs/research/acceptance-notes.md`
 - [x] 4.3 验证变更同步：单测覆盖轮询发现模型新增与删除；真实环境临时调短轮询间隔，验证断开网络时模型保留、换成无效 Key 后旧模型撤下、恢复有效连接后模型恢复。管理员实际增删按上述用户决定延期至首次真实发生。验证：记录到 acceptance-notes
 - [x] 4.4 更新 README：安装方式、连接步骤、插件配置项说明（含 `protocolOverrides` 用法）、从 `opencode-litellm-config-sync` 迁移的步骤。验证：README 包含以上各节
@@ -37,19 +37,21 @@
 
 > 2026-09-24 发行范围更新：用户决定不发布 npm，使用公开 GitHub 仓库分发；无 ref 的 Git package 跟随经过 PR/CI 保护的稳定 `main`，版本 tag 用于锁定和回滚。OpenCode 安装 Git package 时禁用 lifecycle scripts，因此 `dist` 必须随源码提交。
 
-- [x] 5.1 更新 package metadata：版本设为 `0.1.0` 并同步 lockfile；增加跨平台 clean build、package smoke 和全量 OpenSpec strict validation 脚本；OpenSpec CLI 固定为 devDependency，不增加运行时依赖或安装 lifecycle scripts。验证：`npm ci` 通过，package 与 lockfile 根版本、peer 范围一致
+> 2026-09-24 发行验收修正：首次合并后的 Linux main CI 通过，但真实 Windows OpenCode 2.0.15 `plugin add` 暴露 Pacote 会因精确 `scripts.build` 触发 Git dependency preparation，并在直接 Arborist 路径中以 `spawn npm` ENOENT 失败。先以修复 PR 改用 `build:dist` 并增加 manifest 回归检查；在真实命令通过前不得创建 `v0.1.0`。
+
+- [x] 5.1 更新 package metadata：版本设为 `0.1.0` 并同步 lockfile；增加跨平台 `build:dist`、package smoke 和全量 OpenSpec strict validation 脚本；不得声明 Pacote preparation 触发器 `scripts.build` 或 lifecycle scripts；OpenSpec CLI 固定为 devDependency，不增加运行时依赖。验证：`npm ci` 通过，package 与 lockfile 根版本、peer 范围一致
 - [x] 5.2 调整 `.gitignore` 并从干净目录构建、跟踪完整 `dist/**`；构建必须先清理旧产物。验证：exports 指向的 JS/d.ts 存在，重复 clean build 后 tracked/untracked `dist` 均无差异
-- [x] 5.3 实现隔离 package smoke：`npm pack` 文件清单含 package metadata、README、LICENSE 和 dist 入口；consumer 以 `--ignore-scripts` 安装 tarball并通过 package exports import。验证：测试不读取凭据、不连接 LiteLLM，`bun run test:package` 通过
+- [x] 5.3 实现隔离 package smoke：断言 manifest 无 Pacote preparation 触发器；`npm pack` 文件清单含 package metadata、README、LICENSE 和 dist 入口；consumer 以 `--ignore-scripts` 安装 tarball并通过 package exports import。验证：测试不读取凭据、不连接 LiteLLM，`bun run test:package` 通过
 
 ## 6. CI、发布与协作文档
 
-- [x] 6.1 新增 PR/main GitHub Actions CI：锁定 Actions SHA 和 Bun 版本，最小 `contents: read` 权限，稳定 job 名 `CI`，执行 typecheck、tests、clean build、dist 一致性、OpenSpec strict validation 与 package smoke；`push main` 追加远端 Git commit 安装 smoke。验证：workflow 静态检查通过，本地等价命令全部通过
-- [x] 6.2 新增 `v*.*.*` Release workflow：tag/package version 必须一致，重跑门禁，生成 `.tgz` 与 SHA-256 并创建 GitHub Release；仅授予 `contents: write`，不执行 `npm publish`、不要求 npm token/PAT/LiteLLM 凭据。验证：workflow 静态检查与本地打包/checksum 等价流程通过
-- [x] 6.3 更新 README、`CONTRIBUTING.md`、PR 模板与决策记录：默认 GitHub 安装、tag 固定/回滚、Public 仓库、分支开发、Conventional Commits、OpenSpec-first、required CI、dist 同步和无密钥要求。验证：所有插件配置示例使用 GitHub spec；LICENSE 保持 MIT 且进入 tarball
+- [x] 6.1 新增 PR/main GitHub Actions CI：锁定 Actions SHA 和 Bun 版本，最小 `contents: read` 权限，稳定 job 名 `CI`，执行 typecheck、tests、`build:dist`、dist 一致性、OpenSpec strict validation 与 package smoke；`push main` 追加远端 Git commit 安装 smoke。验证：workflow 静态检查通过，本地等价命令全部通过
+- [x] 6.2 新增 `v*.*.*` Release workflow：tag/package version 必须一致，重跑门禁（含 `build:dist`），生成 `.tgz` 与 SHA-256 并创建 GitHub Release；仅授予 `contents: write`，不执行 `npm publish`、不要求 npm token/PAT/LiteLLM 凭据。验证：workflow 静态检查与本地打包/checksum 等价流程通过
+- [x] 6.3 更新 README、`CONTRIBUTING.md`、PR 模板与决策记录：默认 GitHub 安装、tag 固定/回滚、Public 仓库、分支开发、Conventional Commits、OpenSpec-first、required CI、`build:dist`/dist 同步和无密钥要求。验证：所有插件配置示例使用 GitHub spec；LICENSE 保持 MIT 且进入 tarball
 
 ## 7. 本地与 GitHub 发行验收
 
-- [x] 7.1 运行全部本地门禁：`npm ci`、typecheck、67+ 单测、clean build、package smoke、OpenSpec `--all --strict`、dist diff、pack dry-run、diff check 与完整历史/工作树敏感信息审计。验证：全部通过且未发现需要在公开前处理的秘密
+- [x] 7.1 运行全部本地门禁：`npm ci`、typecheck、67+ 单测、`build:dist`、package smoke、OpenSpec `--all --strict`、dist diff、pack dry-run、diff check 与完整历史/工作树敏感信息审计。验证：全部通过且未发现需要在公开前处理的秘密
 - [x] 7.2 将仓库改为 Public，推送功能分支并创建 PR；等待 `CI` 通过后配置无管理员绕过的默认分支 ruleset（必须 PR、required `CI`、最新 main、禁止 force-push/删除，approval=0）。验证：API 显示 Public、ruleset active、main protected，PR 受 required check 约束
 - [ ] 7.3 required CI 通过后 squash merge；确认 `push main` CI 通过，并在隔离 consumer/隔离 OpenCode 配置中用无 ref GitHub spec 安装和加载插件。验证：`github:rpchen/opencode-litellm-provider` 在禁用 lifecycle scripts 时可用，不读取 LiteLLM 凭据
 - [ ] 7.4 在通过 main CI 的提交上创建 `v0.1.0`，确认 Release workflow 成功、`.tgz` 与 checksum 正确，并以 `#v0.1.0` 安装/import。验证：GitHub Release 实际存在，tag 安装可用，npm registry 未发布

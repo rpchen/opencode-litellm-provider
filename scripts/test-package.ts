@@ -29,6 +29,27 @@ mkdirSync(packages, { recursive: true })
 mkdirSync(consumer, { recursive: true })
 
 try {
+  const manifest = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as {
+    name: string
+    version: string
+    scripts?: Record<string, string>
+    workspaces?: unknown
+  }
+  const preparationScripts = [
+    "postinstall",
+    "build",
+    "preinstall",
+    "install",
+    "prepack",
+    "prepare",
+  ]
+  const preparationTrigger = preparationScripts.find((name) => manifest.scripts?.[name])
+  if (manifest.workspaces || preparationTrigger) {
+    throw new Error(
+      `package would trigger Git dependency preparation: ${preparationTrigger ?? "workspaces"}`,
+    )
+  }
+
   const packed = JSON.parse(
     run(npm, ["pack", "--json", "--pack-destination", packages], root),
   ) as Array<{ filename: string; files: Array<{ path: string }> }>
@@ -40,10 +61,6 @@ try {
   const missing = required.filter((file) => !files.has(file))
   if (missing.length > 0) throw new Error(`package is missing required files: ${missing.join(", ")}`)
 
-  const manifest = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as {
-    name: string
-    version: string
-  }
   const tarball = path.join(packages, result.filename)
   writeFileSync(
     path.join(consumer, "package.json"),

@@ -20,7 +20,7 @@
 | 真实环境测试凭据 | 使用 `~/.agents/skills/opencode-litellm-config-sync/.env` 的 `LITELLM_BASE_URL` / `LITELLM_API_KEY`，只在内存中使用 | 不读 `~/.config/opencode` 里用户自己的 Key |
 | 发行渠道 | 不发布 npm；公开 GitHub 仓库，默认安装 `github:rpchen/opencode-litellm-provider` | OpenCode 明确支持 Git package；普通用户无需 registry 配置或 GitHub 凭据 |
 | 稳定版本 | 无 ref 安装跟随默认分支 `main`；`main` 只接受通过 required CI 的 PR；`#vX.Y.Z` 用于锁定和回滚 | 同时兼顾最简安装和可复现部署 |
-| 构建产物 | `dist` 随源码提交并由 CI clean build 后校验一致；不依赖 `prepare` | OpenCode 2.0.15 的 Git package 安装设置 `ignoreScripts: true` |
+| 构建产物 | `dist` 随源码提交并由 CI clean build 后校验一致；构建命令为 `build:dist`，不声明精确 `scripts.build`，也不依赖 `prepare` | OpenCode 2.0.15 的 Git package 安装设置 `ignoreScripts: true`；Pacote 仍会因 `scripts.build` 触发 Git preparation，Windows 直接 Arborist 路径会在 `spawn npm` 失败 |
 | GitHub 治理 | 仓库改为 Public；功能分支开发，GitHub 规则强制 PR、required `CI`、禁止 force-push/删除，管理员不绕过 | Public 既满足公众安装，也让 GitHub Free 可启用分支保护；单维护者 approval 设为 0 |
 | Release | 首个版本 `v0.1.0`；tag 校验 package version 后创建 GitHub Release，附 `.tgz` 与 SHA-256，不 `npm publish` | tag 提供固定安装和回滚，附件便于审计与归档 |
 

@@ -207,7 +207,9 @@ opencode plugin add github:rpchen/opencode-litellm-provider
 
 - `main` 与每个发布 tag 都提交完整、预构建的 `dist/**`；
 - `.gitignore` 不再排除 `dist`；
-- `build` 先跨平台清空 `dist` 再运行 `tsc -p tsconfig.build.json`，避免删除或重命名源码后残留旧文件；
+- 构建命令命名为 `build:dist`，先跨平台清空 `dist` 再运行 `tsc -p tsconfig.build.json`，避免删除或重命名源码后残留旧文件；
+- package manifest 不提供精确名为 `build` 的 script：Pacote 21 的 GitFetcher 把 `scripts.build` 也视为 Git dependency preparation 触发器，即使 Arborist 设置了 `ignoreScripts: true`，仍会先启动嵌套的 `npm install`。OpenCode 2.0.15 在 Windows 直接调用 Arborist 时该启动表现为 `spawn npm` ENOENT，导致 `opencode plugin add` 失败；`build:dist` 不触发该路径；
+- package smoke 断言 manifest 不含 Pacote 识别的 preparation scripts，防止以后回归；
 - CI 干净构建后同时检查 tracked diff 与 untracked 文件，任何差异都失败；
 - 不增加 `prepare`、`postinstall` 等安装期脚本，也不增加运行时依赖。
 
