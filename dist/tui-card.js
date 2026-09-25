@@ -1,5 +1,6 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "@opentui/solid/jsx-runtime";
 import { createEffect, createSignal, Show } from "solid-js";
+import { jsx } from "@opentui/solid/jsx-runtime";
 import { copyAuditPath, openAuditReport } from "./tui-actions.js";
 export function createAuditResultStore() {
     const [results, setResults] = createSignal({});
@@ -44,6 +45,11 @@ export function createAuditCardController(actions) {
     };
 }
 export function AuditCard(props) {
+    // 自动 JSX runtime 需要 getter，才能让已挂载文本跟随宿主主题变化。
+    const Text = (text) => jsx("text", {
+        ...text,
+        get fg() { return props.foreground(); },
+    });
     const controller = createAuditCardController(props.actions);
     createEffect(() => {
         props.result()?.sequence;
@@ -52,10 +58,10 @@ export function AuditCard(props) {
     return Show({
         get when() { return props.result(); },
         keyed: true,
-        children: (result) => _jsxs("box", { flexDirection: "column", paddingLeft: 2, paddingRight: 2, marginBottom: 1, children: [_jsx("text", { children: result.ok ? "LiteLLM 审查报告已导出" : "LiteLLM 审查报告导出失败" }), result.ok ? _jsxs(_Fragment, { children: [_jsx("text", { wrapMode: "char", onMouseUp: () => { void controller.act("open", result.path); }, children: _jsx("u", { children: result.path }) }), _jsxs("box", { flexDirection: "row", gap: 2, children: [_jsx("text", { onMouseUp: () => { void controller.act("open", result.path); }, children: "[\u6253\u5F00\u62A5\u544A]" }), _jsx("text", { onMouseUp: () => { void controller.act("copy", result.path); }, children: "[\u590D\u5236\u8DEF\u5F84]" })] })] }) : _jsx("text", { children: result.error }), Show({
+        children: (result) => _jsxs("box", { flexDirection: "column", paddingLeft: 2, paddingRight: 2, marginBottom: 1, children: [_jsx(Text, { children: result.ok ? "LiteLLM 审查报告已导出" : "LiteLLM 审查报告导出失败" }), result.ok ? _jsxs(_Fragment, { children: [_jsx(Text, { wrapMode: "char", onMouseUp: () => { void controller.act("open", result.path); }, children: _jsx("u", { children: result.path }) }), _jsxs("box", { flexDirection: "row", gap: 2, children: [_jsx(Text, { onMouseUp: () => { void controller.act("open", result.path); }, children: "[\u6253\u5F00\u62A5\u544A]" }), _jsx(Text, { onMouseUp: () => { void controller.act("copy", result.path); }, children: "[\u590D\u5236\u8DEF\u5F84]" })] })] }) : _jsx(Text, { children: result.error }), Show({
                     get when() { return controller.feedback() || undefined; },
                     keyed: true,
-                    children: (message) => _jsx("text", { children: message }),
+                    children: (message) => _jsx(Text, { children: message }),
                 })] }),
     });
 }

@@ -1,3 +1,4 @@
+import { type JSX } from "@opentui/solid/jsx-runtime";
 import type { Context } from "@opencode/plugin/tui/plugin";
 export interface AuditResult {
     sequence: number;
@@ -22,6 +23,7 @@ export declare function createAuditCardController(actions: AuditCardActions): {
 };
 export declare function AuditCard(props: {
     result: () => AuditResult | undefined;
+    foreground: () => NonNullable<JSX.IntrinsicElements["text"]["fg"]>;
     actions: AuditCardActions;
 }): import("solid-js").JSX.Element;
 export declare function auditCardActions(context: Pick<Context, "ui">): AuditCardActions;

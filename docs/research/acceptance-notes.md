@@ -102,7 +102,20 @@ opencode plugin add github:rpchen/opencode-litellm-provider
 - 在另一组全新隔离目录中执行 `opencode plugin add github:rpchen/opencode-litellm-provider#v0.1.0` 成功，OpenCode 日志确认加载 tag package，`plugin list` 显示提交版本 `e9b6547`。
 - npm registry 查询确认该 package 未发布；发行流程没有使用 npm token、PAT 或 LiteLLM 凭据。
 
+## 2026-09-25：浅色主题卡片不可见的根因与本地修复
+
+- 原生 Windows Terminal 中，无论先开会话再导出，还是导出后重开同一会话，卡片均不可见。临时诊断构建证明 setup、latest、会话关联与插槽均正常；卡片布局为 104×4，标题、路径与按钮均已创建。所有 TextRenderable 前景均为 RGBA `[255,255,255,255]`、背景透明；宿主 light 主题背景也是白色，而 `theme.text.base` 为 `[26,26,26,255]`。根因是卡片没有显式使用主题色，并非 Windows Terminal 不支持卡片或命令未提交。
+- 伪终端字符断言只证明文字存在；此前的截图脚本进一步统一以黑字绘制，掩盖了白底白字。不能以该图证明真实配色可见。试改 slot sessionID 的响应式读取未解决问题，已撤回该试改，未作为颜色修复的一部分。
+- 修复通过 `context.theme.text.base` 的 getter 将主题色传给全部卡片文本；自动 JSX runtime 也保留 `fg` getter，让已挂载的标题、路径、按钮、失败原因及操作反馈随主题更新。未增加运行依赖、模型请求或新的轮询。
+- 颜色回归先在旧实现失败：实际 `[255,255,255,255]`，预期 `[26,26,26,255]`。修复后浅色／深色、已挂载主题切换、操作反馈／失败颜色、事件连续更新与 latest 收敛均通过；关键颜色与节点断言在 `renderOnce()` 前执行，字符帧不再是唯一判据。
+- 使用当前 OpenCode 2.0.16 和原后台服务，**仅在自建 TUI 测试进程**以 `OPENCODE_CLI_CONFIG_CONTENT` 加载本地 dist（TUI-only 转发入口，不含诊断逻辑）；后台服务保留唯一 `#v0.1.2`。在可见 Windows Terminal 的新会话实际输入并提交命令两次，序号 2→3，每次均看到完整路径及两个操作，第二次路径改变，不重进、不切会话、不强制刷新。另在深色真实窗口重开同会话恢复最新路径；另一空会话不显示此前报告。
+- 原生截图保存在本地忽略目录：`.tmp/windows-terminal-fixed-first.png`、`.tmp/windows-terminal-fixed-second.png`、`.tmp/windows-terminal-fixed-dark-reopen.png`、`.tmp/windows-terminal-fixed-other-session.png`，均已查看。截图包含本机报告路径，不作为公开 fixture 提交。
+- 本地门禁通过：typecheck；89 项单测、304 个 expect 断言；TUI 渲染／模拟鼠标／颜色与主题切换回归；clean build；34 个 dist 文件再次 clean build 的 SHA-256 完全一致；禁用生命周期脚本的 package smoke；OpenSpec 全部 6 项通过；`git diff --check`。这些是本地结果，不代表已运行新的 GitHub CI 或已发布修复。
+- 本次没有读取用户保存的 Key、调用模型、修改全局插件配置、移动 tag 或发布。测试进程外的全局安装仍为 `v0.1.2`，不能说该 tag 已包含此修复；正式发布与默认／固定新版 Git 安装验收仍待进行。真实打开报告／覆盖剪贴板未执行，继续只记录模拟鼠标测试通过。
+
 ## 2026-09-25：活跃 TUI 导出卡片修复
+
+> 验收更正：本节此前的卡片可见／活跃更新通过记录来自 ConPTY／pyte 伪终端，不是可见 Windows Terminal。后续在可见 Windows Terminal 实际提交命令，确认同会话导出成功但卡片未出现；导出后另开伪终端则能恢复结果。v0.1.2 的真实窗口验收未通过，终端差异与启动／更新时序需分别验证。发行与模型调用的已有证据不因此被撤销。
 
 - 已发布的 `v0.1.1` 固定 tag 在原 OpenCode 2.0.16 后台服务中导出成功、报告文件生成且 RPC `latest` 更新，但已打开的 TUI 不即时显示卡片；重进同一会话后才显示路径及操作。其 Release 已注明此限制，tag 保持不变。
 - 在 `v0.1.1` TUI 增加 `latest` 短间隔读取并由原服务加载本地 Git 提交 `3d78066` 后，仍未即时显示卡片。OpenTUI 的 runtime plugin 只将 `solid-js` 裸模块重写为宿主共享实例，未重写插件原来导入的 `solid-js/dist/solid.js`；换成裸模块导入后再测试。
