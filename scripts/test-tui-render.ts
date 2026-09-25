@@ -1,15 +1,33 @@
 import assert from "node:assert/strict"
 import { testRender } from "@opentui/solid"
+import { RGBA, TextRenderable, type Renderable } from "@opentui/core"
+import { createSignal } from "solid-js"
 import type { Context } from "@opencode/plugin/tui/plugin"
 import { setupAuditTui } from "../src/tui.js"
 import { AuditCard, createAuditResultStore, type AuditResult } from "../src/tui-card.js"
 
 const store = createAuditResultStore()
+const lightText = RGBA.fromHex("#1a1a1a")
+const darkText = RGBA.fromHex("#eeeeee")
+const [foreground, setForeground] = createSignal(lightText)
+function assertTextColors(root: Renderable, expected: RGBA) {
+  let count = 0
+  const visit = (node: Renderable) => {
+    if (node instanceof TextRenderable) {
+      assert.deepEqual(node.fg.toInts(), expected.toInts(), "card text must use the current theme, not default white")
+      count++
+    }
+    node.getChildren().forEach(visit)
+  }
+  visit(root)
+  return count
+}
 const actions: string[] = []
 let copyFails = false
 const report = "C:/Users/example/AppData/Local/opencode/litellm-audit/audit report with a long name.json"
 const ui = await testRender(() => AuditCard({
   result: () => store.forSession("current"),
+  foreground,
   actions: {
     open: async (path) => { actions.push(`open:${path}`) },
     copy: async (path) => {
@@ -22,6 +40,7 @@ const ui = await testRender(() => AuditCard({
 
 async function frame() {
   await ui.renderOnce()
+  assertTextColors(ui.renderer.root, foreground())
   return ui.captureCharFrame()
 }
 
@@ -42,12 +61,20 @@ try {
   store.accept({ sequence: 2, sessionID: "current", ok: true, path: report, error: "" })
   assert.match(await frame(), /审查报告已导出/)
   assert.ok((await frame()).includes(report), "full path must be rendered")
+  assert.equal(assertTextColors(ui.renderer.root, lightText), 4, "title, path and both buttons must be visible in light mode")
+  setForeground(darkText)
+  await Bun.sleep(0)
+  assert.equal(assertTextColors(ui.renderer.root, darkText), 4, "mounted text must follow theme changes without renderOnce")
+  setForeground(lightText)
+  await Bun.sleep(0)
+  assert.equal(assertTextColors(ui.renderer.root, lightText), 4)
 
   await click("[打开报告]")
   assert.deepEqual(actions, [`open:${report}`])
   await click("[复制路径]")
   assert.deepEqual(actions, [`open:${report}`, `copy:${report}`])
   assert.match(await frame(), /路径已复制到剪贴板/)
+  assert.equal(assertTextColors(ui.renderer.root, lightText), 5, "operation feedback must also use the theme")
 
   copyFails = true
   await click("[复制路径]")
@@ -66,6 +93,7 @@ try {
   assert.match(await frame(), /报告目录不可写/)
   assert.doesNotMatch(await frame(), /复制失败/)
   assert.doesNotMatch(await frame(), /C:\/other\.json/)
+  assert.equal(assertTextColors(ui.renderer.root, lightText), 2, "failure title and reason must use the theme")
   console.log("TUI rendering and mouse actions passed")
 } finally {
   ui.renderer.destroy()
@@ -73,12 +101,14 @@ try {
 
 let latest: AuditResult = { sequence: 0, sessionID: "", ok: false, path: "", error: "" }
 let tick!: () => void
+let completed!: (event: { data: AuditResult }) => void
 let render!: (input: { sessionID: string }) => ReturnType<typeof AuditCard>
 let stopped = 0
 const context = {
+  get theme() { return { text: { base: foreground() } } },
   client: { rpc: () => ({
     latest: async () => latest,
-    events: { on: () => () => { stopped++ } },
+    events: { on: (_name: string, listener: typeof completed) => { completed = listener; return () => { stopped++ } } },
   }) },
   ui: {
     slot: (claim: { render: typeof render }) => {
@@ -104,9 +134,19 @@ try {
   latest = { sequence: 2, sessionID: "current", ok: true, path: report, error: "" }
   tick()
   await Bun.sleep(0)
+  assert.equal(assertTextColors(live.renderer.root, lightText), 4, "latest must mount themed text before forced painting")
   await live.renderOnce()
   assert.match(live.captureCharFrame(), /审查报告已导出/)
   assert.ok(live.captureCharFrame().includes(report), "polling must update the mounted card")
+  completed({ data: { sequence: 3, sessionID: "current", ok: true, path: "C:/second.json", error: "" } })
+  await Bun.sleep(0)
+  assert.equal(assertTextColors(live.renderer.root, lightText), 4)
+  setForeground(darkText)
+  await Bun.sleep(0)
+  assert.equal(assertTextColors(live.renderer.root, darkText), 4, "setup must forward the live host theme getter")
+  await live.renderOnce()
+  assert.match(live.captureCharFrame(), /C:\/second\.json/)
+  assert.ok(!live.captureCharFrame().includes(report), "the next event must replace the previous path")
   console.log("TUI latest recovery and live polling passed")
 } finally {
   live.renderer.destroy()

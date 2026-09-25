@@ -17,7 +17,11 @@ export async function setupAuditTui(
   const stop = rpc.events.on("completed", (event) => store.accept(event.data as unknown as AuditResult))
   const remove = context.ui.slot({
     before: "session.composer.top",
-    render: ({ sessionID }) => AuditCard({ result: () => sessionID ? store.forSession(sessionID) : undefined, actions }),
+    render: ({ sessionID }) => AuditCard({
+      result: () => sessionID ? store.forSession(sessionID) : undefined,
+      foreground: () => context.theme.text.base,
+      actions,
+    }),
   })
   let refreshing = false
   let disposed = false

@@ -1,4 +1,5 @@
 import { createEffect, createSignal, Show } from "solid-js"
+import { jsx, type JSX } from "@opentui/solid/jsx-runtime"
 import type { Context } from "@opencode/plugin/tui/plugin"
 import { copyAuditPath, openAuditReport } from "./tui-actions.js"
 
@@ -57,8 +58,14 @@ export function createAuditCardController(actions: AuditCardActions) {
 
 export function AuditCard(props: {
   result: () => AuditResult | undefined
+  foreground: () => NonNullable<JSX.IntrinsicElements["text"]["fg"]>
   actions: AuditCardActions
 }) {
+  // 自动 JSX runtime 需要 getter，才能让已挂载文本跟随宿主主题变化。
+  const Text = (text: JSX.IntrinsicElements["text"]) => jsx("text", {
+    ...text,
+    get fg() { return props.foreground() },
+  })
   const controller = createAuditCardController(props.actions)
   createEffect(() => {
     props.result()?.sequence
@@ -69,18 +76,18 @@ export function AuditCard(props: {
     keyed: true,
     children: (result: AuditResult) =>
       <box flexDirection="column" paddingLeft={2} paddingRight={2} marginBottom={1}>
-        <text>{result.ok ? "LiteLLM 审查报告已导出" : "LiteLLM 审查报告导出失败"}</text>
+        <Text>{result.ok ? "LiteLLM 审查报告已导出" : "LiteLLM 审查报告导出失败"}</Text>
         {result.ok ? <>
-          <text wrapMode="char" onMouseUp={() => { void controller.act("open", result.path) }}><u>{result.path}</u></text>
+          <Text wrapMode="char" onMouseUp={() => { void controller.act("open", result.path) }}><u>{result.path}</u></Text>
           <box flexDirection="row" gap={2}>
-            <text onMouseUp={() => { void controller.act("open", result.path) }}>[打开报告]</text>
-            <text onMouseUp={() => { void controller.act("copy", result.path) }}>[复制路径]</text>
+            <Text onMouseUp={() => { void controller.act("open", result.path) }}>[打开报告]</Text>
+            <Text onMouseUp={() => { void controller.act("copy", result.path) }}>[复制路径]</Text>
           </box>
-        </> : <text>{result.error}</text>}
+        </> : <Text>{result.error}</Text>}
         {Show({
           get when() { return controller.feedback() || undefined },
           keyed: true,
-          children: (message: string) => <text>{message}</text>,
+          children: (message: string) => <Text>{message}</Text>,
         })}
       </box>,
   })
