@@ -23,18 +23,57 @@ OpenCode v2 插件：通过 `/connect` 填写 LiteLLM 地址和自己的 API Key
 
 ### 对话反馈（Desktop / Web）
 
-在插件配置中开启 `conversationFeedback`：
+**这一步是必需的。** Desktop / Web 没有 TUI 卡片通道，如果不开启 `conversationFeedback`，执行 `/litellm-audit-export` 后界面不会有任何反应——报告文件其实已经写好了，但你不会知道它在哪里。
+
+#### 第 1 步：找到配置文件
+
+编辑**全局配置**（如果文件不存在就新建）：
+
+| 平台 | 路径 |
+|---|---|
+| Windows | `%USERPROFILE%\.config\opencode\opencode.jsonc`（通常是 `C:\Users\<用户名>\.config\opencode\opencode.jsonc`） |
+| macOS / Linux | `~/.config/opencode/opencode.jsonc`（若设置了 `XDG_CONFIG_HOME`，则为 `$XDG_CONFIG_HOME/opencode/opencode.jsonc`） |
+
+文件名也可以是 `opencode.json`（不带 c）；两者都支持，带 `c` 的可以写注释。
+
+> 项目级配置（`<项目>/opencode.jsonc` 或 `<项目>/.opencode/opencode.jsonc`）也能设置插件，但插件是全局能力，建议写在全局配置里，避免每个项目重复设置。
+
+#### 第 2 步：修改 `plugins` 字段
+
+找到配置里的 `plugins` 数组，把插件从**字符串写法**改成**对象写法**，加上 `options.conversationFeedback`：
 
 ```jsonc
 {
+  "$schema": "https://opencode.ai/config.json",
   "plugins": [
     {
       "package": "github:rpchen/opencode-litellm-provider",
-      "options": { "conversationFeedback": true }
+      "options": {
+        "conversationFeedback": true
+      }
     }
   ]
 }
 ```
+
+要改的只有这一处：
+
+- **改前**（字符串写法，功能可用但没有对话反馈）：
+  `"github:rpchen/opencode-litellm-provider"`
+- **改后**（对象写法，开启对话反馈）：
+  `{ "package": "github:rpchen/opencode-litellm-provider", "options": { "conversationFeedback": true } }`
+
+如果你用的是固定版本 tag，把 `package` 的值换成对应的 `github:rpchen/opencode-litellm-provider#v0.1.4` 即可，其余不变。
+
+#### 第 3 步：重启 OpenCode
+
+保存文件后重启 Desktop，或执行 `opencode reload`。
+
+#### 第 4 步：验证
+
+再次执行 `/litellm-audit-export`，会话里应出现一条以 `[litellm 插件]` 开头的消息，包含导出状态、报告完整路径、发现状态与模型数，随后宿主会照常产生一次模型回复。
+
+想确认开关是否生效，也可以在配置目录执行 `opencode plugin list`，确认插件处于 active。
 
 开启后，导出的结果会以一条会话消息的形式出现，包含导出状态、报告的完整绝对路径、当前发现状态与模型数，随后宿主会照常产生一次模型回复。该消息文本由插件生成，不依赖模型编写；即使模型回复失败，这条消息仍会保留。
 
