@@ -28,10 +28,24 @@
   - **附带实测发现（用户已明确接受）**：开关开启时模型收到含报告路径的消息后，主动打开并读取了报告文件，并在回复中复述报告内容（"已打开并核对报告文件…状态 ready…模型数 18"）。这与 design §2/§4 预判一致——插件无法约束模型后续工具行为。**用户于 2026-09-25 明确表示：模型信息进入上下文可以接受（报告不含密钥），不作阻断性风险处理**。README 只做事实性说明（该消息含报告路径、模型可能据此读取报告），不使用告警措辞
 - [x] 4.5 **能力验收规则**：Desktop e2e（4.4，经 4.3 准备）为完成本能力的必要门禁；仅当 Desktop 安装或运行本身在当前平台失败时，才允许先以"TUI 实测 + 源码级时间线证据"完成其余任务，并在 README/发布说明中如实标注 Desktop 未经实测、能力验收保持未完成、待补做后勾选；不得声称"所有客户端一致可见"直至完成
 
+### 发行与安装验证记录（2026-09-25，v0.1.4）
+
+- PR #14（`feat/conversation-feedback` → `main`）required CI 通过后 **squash 合并**，合并提交 `274b6f5`；合并后 main CI 通过。
+- 打不可变 tag `v0.1.4` 并推送，Release 工作流成功；`gh release view v0.1.4` → `draft=false, prerelease=false`，产物为 `opencode-litellm-provider-0.1.4.tgz` 与 `.sha256`。
+- 产物校验：下载后本地 `sha256sum` 与附件记录均为 `cdece40efdbbd42376bb09e3291ac35a0133f518f9c351315901a3307ab3a521`。
+- 隔离宿主双入口安装验证（新建 XDG 目录，真实 LiteLLM 连接）：
+  - 默认 spec `github:rpchen/opencode-litellm-provider`：命令注册成功、`litellm` 模型 18 个、导出产生 2 条会话消息（含插件标识/路径/模型数）。
+  - 固定 tag `github:rpchen/opencode-litellm-provider#v0.1.4`：`plugin add` 成功、命令注册成功、18 个模型、导出产生 1 条反馈消息。
+- 本机全局升级到 `v0.1.4`（加载提交 `274b6f5`，`plugin.list` 状态 active）后的回归：
+  - 默认（无开关）：导出使报告文件 12→13，会话消息 `messages=0`、无插件标识 —— 与 spec 的默认关闭行为一致；命令注册与 18 个模型正常。
+  - 开启开关（Desktop 2.0.16，CDP 真实按键驱动）：会话时间线渲染出反馈消息（`[litellm 插件] … 路径：…litellm-audit-2026-09-25T15-16-58-423Z-….json / 发现状态：正常 / 模型数：18`），截图见 `.tmp/desktop/regression-v014.png`；同时刻新增对应报告文件。
+  - 连续两次导出：会话得到 2 条插件消息、**2 个不同路径**，序贯正确。
+- 收尾：本机配置恢复为发布的默认形态 `github:rpchen/opencode-litellm-provider#v0.1.4`（不含临时开关），Desktop 重启后仍加载 `v0.1.4`。
+
 ## 5. 文档与门禁
 
 - [x] 5.1 更新 README：开关说明（默认关闭、开启成本、失败降级）、隐私逐项披露（路径进入会话记录、可经宿主同步/会话导出/远端模型日志离开本机、可能暴露用户名与目录结构、assistant 可能复述路径、模型可能经文件工具自行读取报告）
 - [x] 5.2 更新 `docs/research/opencode-v2-plugin-api.md`：修正分支结论（dev 已为 v2 线），补充本变更核查的源码级证据（时间线渲染、synthetic 投影、prompt 通道）与 1.1 实测记录
 - [x] 5.3 运行 OpenSpec strict validation、`bun run typecheck`、`bun test`、TUI 渲染回归、`bun run build:dist`、dist 一致性核对、`bun run test:package`；与在途变更最新基线 rebase 并重跑两变更相关测试、检查两 delta spec 组合无规范冲突（在途"卡片不调模型/路径不进模型"默认条款 + 本变更开关开启例外无矛盾）；经 PR + required CI 合并（在途变更先行），验证合并后 main CI 通过
-- [ ] 5.4 **发行**：按不可变新 tag 发行（版本号在实施时与用户另行确定），核对 Release 工作流版本匹配、全部本地门禁重跑、tag Git package smoke、打包 tarball 与 SHA-256 校验；Release 说明如实记录新开关行为、默认关闭、隐私含义与 4.3 的 Desktop 验收状态（未实测即明示，不伪称）
-- [ ] 5.5 **安装验证**：发布后从两种安装入口各自在真实宿主验证：默认 GitHub spec（`opencode plugin add github:rpchen/opencode-litellm-provider`，必要时 `plugin update/reload` 确认加载新提交）与固定新 tag（`...#<tag>`）；各自验证插件加载（`plugin list` 提交与来源正确、`plugin check` current）、模型发现与注册不回归、开关关闭时导出/卡片/RPC 与在途变更验收基线一致、开关开启时命令导出产生对话反馈消息且无模型请求外泄；对照在途变更 5.4 既有验收记录，不重复其模型调用验收但确认无回归；真实凭据只在宿主内使用，不读取不记录
+- [x] 5.4 **发行**：按不可变新 tag 发行（版本号在实施时与用户另行确定），核对 Release 工作流版本匹配、全部本地门禁重跑、tag Git package smoke、打包 tarball 与 SHA-256 校验；Release 说明如实记录新开关行为、默认关闭、隐私含义与 4.3 的 Desktop 验收状态（未实测即明示，不伪称）
+- [x] 5.5 **安装验证**：发布后从两种安装入口各自在真实宿主验证：默认 GitHub spec（`opencode plugin add github:rpchen/opencode-litellm-provider`，必要时 `plugin update/reload` 确认加载新提交）与固定新 tag（`...#<tag>`）；各自验证插件加载（`plugin list` 提交与来源正确、`plugin check` current）、模型发现与注册不回归、开关关闭时导出/卡片/RPC 与在途变更验收基线一致、开关开启时命令导出产生对话反馈消息且无模型请求外泄；对照在途变更 5.4 既有验收记录，不重复其模型调用验收但确认无回归；真实凭据只在宿主内使用，不读取不记录
