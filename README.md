@@ -160,17 +160,13 @@ Windows 示例：
 
 覆盖键必须与 LiteLLM `/v1/model/info` 返回的 `model_name` 完全一致。插件不会向所有模型发送探测请求；协议声明错误时应使用此选项修正。
 
-## 从 `opencode-litellm-config-sync` 迁移
+## 避免重复的 LiteLLM Provider 配置
 
-旧脚本生成三个静态 provider：`litellm`、`litellm-openai` 和 `litellm-anthropic`。迁移步骤：
+插件根据 OpenCode 中保存的 LiteLLM 连接动态注册 ID 为 `litellm` 的 provider 和可用模型，无需在 `opencode.jsonc` 中再维护同 ID 的静态模型列表。
 
-1. 备份当前 OpenCode 配置文件。
-2. 安装本插件，并通过 `/connect` 连接同一个 LiteLLM。
-3. 确认 `LiteLLM` provider 中的模型可见，并用所需协议的代表模型完成一次调用。
-4. 从 OpenCode 配置的 `provider` 对象中删除旧脚本管理的 `litellm`、`litellm-openai`、`litellm-anthropic` 三个静态块；不要改动其他 provider。
-5. 停止定期运行 `opencode-litellm-config-sync`。其 `.env` 中的高权限发现 Key 不再是本插件所需；若没有其他用途，可在确认迁移成功后自行安全清理。
+如果配置文件的 `provider` 对象中已经定义了 ID 为 `litellm` 的 provider，就与插件要注册的 provider 重复。请先备份配置，再注释或删除这个 `litellm` 配置项；其他 provider 配置无需改动。然后在 OpenCode 中通过 `/connect` 连接 LiteLLM，并确认模型列表中只出现一个 LiteLLM provider。需要恢复时，移除插件并还原备份的配置项。
 
-插件只读取 OpenCode 保存的活动连接，不会修改 OpenCode 配置文件。需要回滚时，从 `plugins` 中移除本插件并恢复之前备份的三个静态 provider 块即可。
+插件只读取 OpenCode 保存的活动连接，不会修改 OpenCode 配置文件。
 
 ## 发现与同步行为
 

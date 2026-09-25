@@ -124,3 +124,12 @@ opencode plugin add github:rpchen/opencode-litellm-provider
 - PR #8 的 required CI 和合并后主分支 CI 通过；合并提交 `0dbb78c1c4cbea4dd42d36bf95564c9633b93bc3`。默认 Git spec 首次安装可复用旧提交缓存，经 `plugin update`／`reload` 后确认原后台服务只加载 `0dbb78c`；Responses 默认／`#low` 和 Chat 代表实际调用均返回成功，已打开的 TUI 中 `/litellm-audit-export` 命令即时显示完整路径与操作。
 - `v0.1.2` 指向同一合并提交，Release 工作流成功；Release 含 tarball 和 SHA-256，下载后校验为 `OK`。原服务切换到唯一的固定 `github:rpchen/opencode-litellm-provider#v0.1.2` 后，再次通过相同三个代表调用和活跃 TUI 命令；RPC 报告 `schemaVersion: 1`、`plugin-submitted`、`ready`，18 个导出模型 ID 与 18 个宿主 LiteLLM 模型 ID **集合**一致，目标模型协议为 Responses，未见禁止字段。宿主模型列表另有自己的排序，不能以列表显示顺序不一致推断插件提交的审查顺序错误。
 - 对独立 OpenCode 2.0.15 `serve` 再测：`GET /api/info` 返回 401，2.0.15 CLI `models --server` 退出码 1、未取得模型列表；因此不能宣称其服务端已兼容。真实桌面点击、完整 2.0.15 服务端兼容、真实连接的 stale／空清单／切换及独立代理端点抓证仍未完成；不能以这些部分结果替代它们。
+
+## 2026-09-25：v0.1.3 默认与固定 tag 安装验收
+
+- 宿主为 OpenCode v2.0.16。验收期间未读取用户配置中的凭据、未记录 LiteLLM 地址、prompt 或原始响应；真实调用由当前 OpenCode 连接处理。
+- 默认 GitHub spec 实际加载提交 `6a1bed0`，`opencode plugin check` 显示 current。通过 `litellm/deepseek-v4.1-flash` 完成一次真实调用，收到预期结果标记。
+- 使用默认 spec 新建的可见 Windows Terminal 窗口中，实际输入 `/litellm-audit-export` 并连续导出两次。卡片在活跃会话中即时显示完整路径和两个操作；RPC 成功序号从 1 更新到 2，第二次路径不同。截图已实际查看。
+- 随后移除默认 spec、添加 `github:rpchen/opencode-litellm-provider#v0.1.3` 并重载。`opencode plugin list` 显示唯一 `litellm` 插件来源为固定 tag、加载提交 `1b774da`；`opencode plugin check` 显示 current。固定 tag 下同样完成一次目标模型真实调用，并在新建的可见 Windows Terminal 窗口中连续导出两次；卡片即时可见，RPC 成功序号从 1 更新到 2，第二次路径改变。
+- 固定 tag 的原生窗口截图保存在本地忽略目录 `.tmp/real-terminal-before.png` 与 `.tmp/real-terminal-capture.png`；截图含本机报告路径，不应提交或公开。
+- 本轮只确认卡片上的“打开报告／复制路径”操作可见；没有实际点击打开文件，也没有覆盖剪贴板。两种安装入口的模型调用与卡片可见性已验收，但真实点击操作仍未验收。
