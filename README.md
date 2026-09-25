@@ -215,9 +215,10 @@ Windows 示例：
         "pollInterval": 120,
         "contextTierCap": true,
         "protocolOverrides": {
+          // 键 = 模型名（LiteLLM /v1/model/info 里的 model_name），值 = 该模型要用的协议
           "glm-5.3": "chat",
-          "my-responses-route": "responses",
-          "claude-via-proxy": "messages"
+          "gpt-5.5": "responses",
+          "claude-sonnet-4-5": "messages"
         }
       }
     }
@@ -225,7 +226,17 @@ Windows 示例：
 }
 ```
 
-覆盖键必须与 LiteLLM `/v1/model/info` 返回的 `model_name` 完全一致。插件不会向所有模型发送探测请求；协议声明错误时应使用此选项修正。
+上面三项是**三个示例**，不是固定配置项：
+
+| 键（模型名） | 值（协议） | 含义 |
+|---|---|---|
+| `glm-5.3` | `chat` | 让这个模型走 OpenAI 兼容的 Chat Completions（`/v1/chat/completions`） |
+| `gpt-5.5` | `responses` | 让这个模型走 OpenAI Responses API（`/v1/responses`） |
+| `claude-sonnet-4-5` | `messages` | 让这个模型走 Anthropic Messages API（`/v1/messages`） |
+
+键必须与 LiteLLM `/v1/model/info` 返回的 `model_name` 完全一致；写成本地不存在的名字不会生效（插件找不到对应模型，会忽略该项）。值只能是 `chat`、`responses`、`messages` 三者之一。
+
+插件默认会按 LiteLLM 返回的 `supported_endpoints`、`mode` 和模型名自动判断协议，只有**自动判断与真实路由不一致**时才需要在这里逐模型覆盖；不需要覆盖的模型不要写进这张表。插件不会向所有模型发送探测请求。
 
 ## 避免重复的 LiteLLM Provider 配置
 
