@@ -3,6 +3,7 @@ export interface PluginOptions {
     pollInterval: number;
     contextTierCap: boolean;
     protocolOverrides: Record<string, Protocol>;
+    conversationFeedback: boolean;
 }
 export interface OptionLogger {
     warn(message: string): void;

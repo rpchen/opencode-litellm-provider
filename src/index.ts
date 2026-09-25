@@ -20,7 +20,9 @@ export async function setupLiteLLM(
     registerIntegration(context),
     registerProvider(context, snapshot),
   ])
-  const auditRegistration = await registerAudit(context, snapshot)
+  const auditRegistration = await registerAudit(context, snapshot, {
+    conversationFeedback: options.conversationFeedback,
+  })
   const loop = createDiscoveryLoop(context as unknown as SyncContext, snapshot, options, dependencies)
   const startup = loop.start()
 

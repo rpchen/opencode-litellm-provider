@@ -113,6 +113,7 @@ function harness() {
     pollInterval: 30,
     contextTierCap: true,
     protocolOverrides: {},
+    conversationFeedback: false,
   }
   const loop = createDiscoveryLoop(context, snapshot, options, {
     scheduler,

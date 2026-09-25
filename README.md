@@ -16,14 +16,42 @@ OpenCode v2 插件：通过 `/connect` 填写 LiteLLM 地址和自己的 API Key
 
 连接 LiteLLM 后，插件会将当前连接可访问的对话模型加入 OpenCode 的模型列表。选择所需模型后，像平常一样发送消息即可。
 
-在已连接的 OpenCode TUI 会话中输入 `/litellm-audit-export`。导出完成后，当前会话会显示报告路径；选择“打开报告”可查看文件，选择“复制路径”可复制位置。每次导出会生成一个新文件，不会覆盖已有报告。导出不会调用大模型或上传报告；若失败，卡片会显示原因。
+在已连接的 OpenCode 会话中输入 `/litellm-audit-export`。每次导出会生成一个新文件，不会覆盖已有报告；导出不会上传报告。反馈方式取决于客户端：
+
+- **终端 TUI**：导出完成后，会话输入框上方显示结果卡片，包含完整路径以及“打开报告”“复制路径”操作。该路径不调用大模型，也不进入模型上下文；若失败，卡片显示原因。
+- **Desktop / Web 等非 TUI 客户端**：这些客户端不加载 TUI 卡片，默认情况下看不到导出反馈（文件仍会正常写入）。如需在会话里看到结果，启用下方的对话反馈开关。
+
+### 对话反馈（Desktop / Web）
+
+在插件配置中开启 `conversationFeedback`：
+
+```jsonc
+{
+  "plugins": [
+    {
+      "package": "github:rpchen/opencode-litellm-provider",
+      "options": { "conversationFeedback": true }
+    }
+  ]
+}
+```
+
+开启后，导出的结果会以一条会话消息的形式出现，包含导出状态、报告的完整绝对路径、当前发现状态与模型数，随后宿主会照常产生一次模型回复。该消息文本由插件生成，不依赖模型编写；即使模型回复失败，这条消息仍会保留。
+
+需要注意的事实：
+
+- 开启后每次导出都会产生**一次模型调用**，并消耗相应 token；默认关闭。
+- 这条消息包含报告的**本地路径**，因此该路径会进入会话记录和模型上下文，也可能随宿主同步、会话导出或模型服务日志离开本机。
+- 收到路径后，模型**可能自行读取该报告文件**并在回复中引用其内容。报告包含模型名、价格与限制等元数据，不包含 API Key 或连接凭据；是否接受这一点由你决定，如不希望模型接触报告内容，请保持该开关关闭。
+- 命令写入报告失败时，消息只显示失败原因，不含路径。
+- 程序化导出接口（RPC）不会触发对话反馈，也不会产生模型调用。
 
 报告默认保存在以下目录：
 
 - Windows：`%LOCALAPPDATA%\opencode\litellm-audit\`
 - macOS/Linux：`${XDG_STATE_HOME:-~/.local/state}/opencode/litellm-audit/`
 
-浅色主题下若看不到结果卡片，请升级至 `v0.1.3` 或更新版本。
+浅色主题下若看不到结果卡片，请升级至 `v0.1.4` 或更新版本。
 
 报告包含当前插件提供给 OpenCode 的 LiteLLM 模型清单及相关模型信息，不包含 LiteLLM 地址或 API Key。模型名称、价格等内容可能是内部信息，分享前请先检查报告。
 
@@ -68,7 +96,7 @@ OpenCode 会取得 `main` 上的构建；仓库已经包含 `dist`，用户无�
 使用 GitHub Release 对应的 tag：
 
 ```bash
-opencode plugin add github:rpchen/opencode-litellm-provider#v0.1.3
+opencode plugin add github:rpchen/opencode-litellm-provider#v0.1.4
 ```
 
 固定 tag 不会随 `main` 后续变化。遇到兼容性问题时，也可以把配置中的 tag 改回此前版本；但回滚到 `v0.1.1` 会恢复活跃 TUI 卡片不即时出现的问题，回滚到 `v0.1.0` 还会恢复模型初始化缺陷。项目当前不发布到 npm registry；GitHub Release 的 `.tgz` 与 SHA-256 文件用于审计和归档，默认安装入口仍是 Git package spec。

@@ -125,6 +125,48 @@ opencode plugin add github:rpchen/opencode-litellm-provider
 - `v0.1.2` 指向同一合并提交，Release 工作流成功；Release 含 tarball 和 SHA-256，下载后校验为 `OK`。原服务切换到唯一的固定 `github:rpchen/opencode-litellm-provider#v0.1.2` 后，再次通过相同三个代表调用和活跃 TUI 命令；RPC 报告 `schemaVersion: 1`、`plugin-submitted`、`ready`，18 个导出模型 ID 与 18 个宿主 LiteLLM 模型 ID **集合**一致，目标模型协议为 Responses，未见禁止字段。宿主模型列表另有自己的排序，不能以列表显示顺序不一致推断插件提交的审查顺序错误。
 - 对独立 OpenCode 2.0.15 `serve` 再测：`GET /api/info` 返回 401，2.0.15 CLI `models --server` 退出码 1、未取得模型列表；因此不能宣称其服务端已兼容。真实桌面点击、完整 2.0.15 服务端兼容、真实连接的 stale／空清单／切换及独立代理端点抓证仍未完成；不能以这些部分结果替代它们。
 
+## 2026-09-25：对话反馈通道（`conversationFeedback`）验收
+
+**范围**：`add-conversation-feedback-channel` 变更的宿主验收（任务 4.1–4.4）。构建产物为本地 `dist`，通过插件配置 `file://` 入口加载；未读取用户保存的 Key、未改写用户配置（临时切换后已恢复）。
+LiteLLM 地址与 Key 仅在运行时从任务指定的 `.env` 读取并保存在进程内，本文不记录其值。
+
+### 协议层探测（任务 1.1，2.0.15 与 2.0.16）
+
+隔离 XDG 四目录 + `config.plugins` 指向本地探测插件目录，`providers.stub` 指向本地假模型服务，`opencode serve` 起私有服务，经 `@opencode/client/promise` 调用 `session.command`。
+
+| 探测 | 命令耗时 | 消息列表 | 模型上下文 | inbox |
+|---|---:|---|---|---|
+| `session.prompt`（默认 delivery） | 17ms / 19ms | 1 条 `type: user` | 可见 | 空 |
+| `session.prompt` + `delivery: queue` | 11ms / 10ms | 同上 | 可见 | 空 |
+| `session.prompt` + `delivery: steer` | 11ms / 10ms | 同上 | 可见 | 空 |
+| `session.synthetic({ resume: false })` | 14ms / 9ms | **0 条** | 不可见 | 1 条 `type: synthetic` |
+
+忙碌会话（模型请求长时间未返回）：命令 55ms / 42ms 内完成，`prompt` 46ms 内 resolve，不阻塞、不拒绝；反馈消息进入 inbox，随后可被消费显示。
+
+**结论：go**。选定默认投递（不显式指定 delivery），命令不等待模型回复。
+
+### TUI 真实宿主（任务 4.1 / 4.2，OpenCode 2.0.16，真实 LiteLLM 连接）
+
+| 开关 | 命令 | 会话消息数 | 反馈标记 | 路径 | 模型数 | 状态 |
+|---|---|---:|---:|---:|---:|---|
+| `false` | 导出 ×2 | **0** | 否 | 否 | — | — |
+| `true` | 导出 1 | 2 | 是 | 是 | 18（与真实连接一致） | 正常 |
+| `true` | 导出 2 | 4（累计） | 是 | 是，**与第一次不同** | 18 | 正常 |
+
+开关关闭时零对话消息、零会话 API 调用，报告文件仍正常写入。开关开启时消息包含插件标识、完整绝对路径、发现状态与模型数，其后跟随 assistant 回复；连续两次导出消息序贯且路径各异。
+
+### Desktop 真实 e2e（任务 4.3 / 4.4，OpenCode Desktop 2.0.16）
+
+- 从官方分发入口下载并静默安装 Desktop v2.0.16（`%LOCALAPPDATA%\Programs\@opencodedesktop`）；安装时后台服务在运行导致安装器提示"OpenCode 无法关闭"，用 `opencode service stop` 解除后完成安装。**安装保留未卸载。**
+- Desktop 内部启动 `opencode-cli.exe serve --service`（`127.0.0.1:49374`），读同一份全局配置；以 `file://` dist 入口加载插件后，`plugin.list` 显示 `litellm` **active**，`command.list` 含 `litellm-audit-export`，`model.list` 中 `litellm` 有 **18** 个模型。
+- 经 CDP（`--remote-debugging-port`）以 **`Input.dispatchKeyEvent` 真实按键事件**驱动 Desktop 窗口：聚焦输入框、键入 `/litellm-audit-export`、Enter 提交。界面截图（`docs/research/desktop-feedback-e2e.png`）显示会话时间线渲染出插件消息气泡，内容为状态／完整路径／发现状态／模型数／插件生成说明，随后出现 assistant 回复；同时刻新增对应报告文件。
+- 开关关闭对照：报告文件数 10→11（命令正常执行），而 `session.context` 返回 `messages=0`、无反馈标记。
+- 说明：早期尝试用全局合成鼠标/键盘事件驱动界面时，前台焦点漂移导致键入内容被送入其他窗口，已立即停止；后续全程改用 CDP 精确注入。**不得以全局合成输入作为验收手段。**
+
+### 附带观察：模型会自行读取报告
+
+开关开启时，模型在收到含路径的消息后**主动打开并读取了报告文件**，并在回复中复述报告内容（状态、模型数等）。这与设计文档预判一致——插件无法约束模型后续的工具使用行为。报告含模型名、价格与限制等元数据，**不含 API Key 或连接凭据**；用户已明确表示该行为可接受，README 对此作事实性说明。
+
 ## 2026-09-25：v0.1.3 默认与固定 tag 安装验收
 
 - 宿主为 OpenCode v2.0.16。验收期间未读取用户配置中的凭据、未记录 LiteLLM 地址、prompt 或原始响应；真实调用由当前 OpenCode 连接处理。
