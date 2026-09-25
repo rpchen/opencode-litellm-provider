@@ -4,8 +4,7 @@
 以及上游源码仓库 `github.com/anomalyco/opencode` 的 **`beta` 分支**。
 
 > **“上游”指什么**：OpenCode 的官方源码仓库 `anomalyco/opencode`。其中：
-> - `beta` 分支：发布 v2 包（`@opencode/plugin`、`@opencode/core`、`@opencode/cli` 2.x），与本机 opencode v2.0.15 对应，**以它为准**。
-> - `dev` 分支：仍是 v1 线（`@opencode-ai/plugin` 1.18.x），里面的 `ctx.catalog.transform` 等写法属于 v1 线内部实验，**不适用**于本项目。
+> **2026-09-25 更正**：本节原先记的“`beta` 分支为 v2 线、`dev` 仍是 v1 线”是 2026-09-23 的快照结论，**现已过时**。当前上游默认分支 `dev` 已包含完整 v2 线代码：`packages/core`（Effect 服务，含 `command.ts`、`session/message-updater.ts`、`session/runner/`）与 `packages/app`（Desktop/Web 前端，含 `components/prompt-input/submit.ts`、`context/global-sync/bootstrap.ts`）；`2.0` 分支反而没有 `packages/core`。核对上游时以**实际 commit** 为准，不要依赖分支名推断版本线。
 
 ## 1. 包与加载
 
@@ -34,6 +33,21 @@
 
 `Transform<T>` 返回 `Registration`（带 `dispose`）；transform 回调是**同步**的，异步发现需先在外部完成、缓存结果，
 再在回调中写入，然后 `reload()` —— 上游 `plugin/provider/opencode.ts` 正是此模式（`load()` 拉取 → 缓存 → `catalog.reload()`）。
+
+### 2.1 会话消息通道与客户端渲染差异（2026-09-25 补充）
+
+对话反馈能力（`add-conversation-feedback-channel`）核查所得，含源码级证据：
+
+| 通道 | TUI 时间线 | Desktop/Web 时间线 | 模型可见 | 证据 |
+|---|---|---|---|---|
+| `ctx.session.prompt` 提交的 user 消息 | 渲染 | 渲染 | 是 | TUI `packages/tui/src/routes/session/index.tsx` 按 `message.role === "user" / "assistant"` 分支渲染；app `packages/app/src/pages/session/message-timeline.tsx` 同样按 role 渲染 |
+| `ctx.session.synthetic` | **不渲染** | **不渲染** | 是（下次运行时） | `SessionMessage.Synthetic`（`@opencode/schema/dist/session-message.d.ts`）无 role 字段；`core/src/session/message-updater.ts` 会把它投影为会话消息，`session/runner/to-llm-message.ts` 将其转为 `role: "user"` 的模型输入，但 UI 渲染层不显示 |
+| TUI 插件插槽卡片 | 渲染 | 不加载 | 否 | Desktop 为 Electron/Chrome 渲染器，不加载 OpenTUI 插件入口 |
+
+其他要点：
+
+- `session.command`（`POST /api/session/:sessionID/command`）对 execute 型命令返回 NoContent，server **不会**自动插入任何可见消息；结果可见性完全由插件自行负责。
+- Desktop 的连接对话框会**过滤掉已有 credential 的 integration**（`packages/app` 前端产物中 `!e.connections.some(e => e.type === "credential")`）。插件连接成功后 `litellm` 不再出现在 connect 列表中，这是预期行为，不代表插件未安装。
 
 ## 3. 数据结构（`@opencode/schema`）
 
@@ -77,3 +91,36 @@
 - provider 拆分：`litellm`（`@ai-sdk/openai-compatible`，chat）、`litellm-openai`（`@ai-sdk/openai`，responses）、`litellm-anthropic`（`@ai-sdk/anthropic`，messages，按 LiteLLM 路由 `anthropic/*` 判定）。
 - variants：OpenAI 兼容路由把 models.dev `type: effort` 映射为 `reasoningEffort`；Anthropic 路由映射为 `effort`；`budget_tokens` 生成 `high`(16000) 与 `max`（models.dev 声明的最大值）；`toggle` 不生成 variant；不把 LiteLLM 内部字段（如 `supports_minimal_reasoning_effort`）直接当 variant；`reasoning: true` 且无 variants 是合法终态。
 - 发现用高权限 key，但写入 opencode 配置的是用户自己的 key（插件形态下需重新审视：发现与调用共用用户 key）。
+
+## 2026-09-25：对话反馈通道（`session.prompt`）投递行为实测（任务 1.1 go/no-go）
+
+**方法**：隔离 XDG 四目录 + `config/plugins` 指向本地探测插件目录（`file:///...plugin/`），
+配置 `providers.stub`（`@opencode/ai/providers/openai-compatible`）指向本地假模型服务，
+以 `opencode serve` 起私有服务，通过 `@opencode/client/promise` 创建会话并调用
+`session.command()`。未读取用户凭据、未连接 LiteLLM。
+
+**宿主要点**：`server.info()` 就绪后插件注册仍在进行，必须轮询 `command.list` 直到插件命令出现
+（本次最多等待约 20 秒）。本地插件目录（`config/opencode/plugins/`）在本机未生效；
+`config.plugins` 中的目录 `file://` URL 生效。
+
+**结果（2.0.15 与 2.0.16 一致）**：
+
+| 探测 | 命令耗时 | 消息列表新增 | 会话上下文可见（模型输入） | inbox |
+|---|---:|---|---|---|
+| `prompt`（未指定 delivery） | 17ms / 19ms | 1 条 `type: user`，文本即探测标记 | 是 | 空 |
+| `prompt` + `delivery: queue` | 11ms / 10ms | 同上 | 是 | 空 |
+| `prompt` + `delivery: steer` | 11ms / 10ms | 同上 | 是 | 空 |
+| `synthetic({ resume: false })` | 14ms / 9ms | **0 条** | 否 | 1 条 `type: synthetic` |
+
+**忙碌会话（模型请求长时间未返回，本地慢速 stub）**：
+
+- 命令仍在 55ms / 42ms 内完成，`prompt` 调用在 46ms 内 resolve，未拒绝、未阻塞。
+- 反馈消息进入 inbox（`type: user`、`delivery: steer`），当时尚未出现在消息列表；
+  当前回合结束后可被消费显示，不丢失。
+- 命令不等待模型回复。
+
+**结论：go**。`ctx.session.prompt` 在命令 execute 上下文中可用、快速返回、消息即时成为会话内可见
+user 消息（`role: user` 渲染路径，TUI 与 app 时间线均渲染该角色），且对模型上下文可见；
+delivery 三态在空闲会话无可见差异，忙碌会话不阻塞命令。因此选定：**空闲与忙碌均使用默认投递
+（不显式指定 delivery）**，由宿主 inbox 语义决定排队；命令侧不等待模型回复，返回时机为
+`prompt` resolve 之后，失败按静默降级处理。

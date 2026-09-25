@@ -4,6 +4,7 @@ export interface PluginOptions {
   pollInterval: number
   contextTierCap: boolean
   protocolOverrides: Record<string, Protocol>
+  conversationFeedback: boolean
 }
 
 export interface OptionLogger {
@@ -14,6 +15,7 @@ export const DEFAULT_OPTIONS: PluginOptions = {
   pollInterval: 300,
   contextTierCap: true,
   protocolOverrides: {},
+  conversationFeedback: false,
 }
 
 const PROTOCOLS = new Set<Protocol>(["chat", "responses", "messages"])
@@ -47,6 +49,12 @@ export function parseOptions(input: unknown, logger: OptionLogger = console): Pl
     else logger.warn("contextTierCap 必须是布尔值，已使用默认值 true")
   }
 
+  let conversationFeedback = DEFAULT_OPTIONS.conversationFeedback
+  if (input.conversationFeedback !== undefined) {
+    if (typeof input.conversationFeedback === "boolean") conversationFeedback = input.conversationFeedback
+    else logger.warn("conversationFeedback 必须是布尔值，已使用默认值 false")
+  }
+
   const protocolOverrides: Record<string, Protocol> = {}
   if (input.protocolOverrides !== undefined) {
     if (!isRecord(input.protocolOverrides)) {
@@ -62,5 +70,5 @@ export function parseOptions(input: unknown, logger: OptionLogger = console): Pl
     }
   }
 
-  return { pollInterval, contextTierCap, protocolOverrides }
+  return { pollInterval, contextTierCap, protocolOverrides, conversationFeedback }
 }

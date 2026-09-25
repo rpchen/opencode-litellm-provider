@@ -2,6 +2,7 @@ export const DEFAULT_OPTIONS = {
     pollInterval: 300,
     contextTierCap: true,
     protocolOverrides: {},
+    conversationFeedback: false,
 };
 const PROTOCOLS = new Set(["chat", "responses", "messages"]);
 function isRecord(value) {
@@ -34,6 +35,13 @@ export function parseOptions(input, logger = console) {
         else
             logger.warn("contextTierCap 必须是布尔值，已使用默认值 true");
     }
+    let conversationFeedback = DEFAULT_OPTIONS.conversationFeedback;
+    if (input.conversationFeedback !== undefined) {
+        if (typeof input.conversationFeedback === "boolean")
+            conversationFeedback = input.conversationFeedback;
+        else
+            logger.warn("conversationFeedback 必须是布尔值，已使用默认值 false");
+    }
     const protocolOverrides = {};
     if (input.protocolOverrides !== undefined) {
         if (!isRecord(input.protocolOverrides)) {
@@ -50,5 +58,5 @@ export function parseOptions(input, logger = console) {
             }
         }
     }
-    return { pollInterval, contextTierCap, protocolOverrides };
+    return { pollInterval, contextTierCap, protocolOverrides, conversationFeedback };
 }

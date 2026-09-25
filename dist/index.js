@@ -11,7 +11,9 @@ export async function setupLiteLLM(context, dependencies = {}) {
         registerIntegration(context),
         registerProvider(context, snapshot),
     ]);
-    const auditRegistration = await registerAudit(context, snapshot);
+    const auditRegistration = await registerAudit(context, snapshot, {
+        conversationFeedback: options.conversationFeedback,
+    });
     const loop = createDiscoveryLoop(context, snapshot, options, dependencies);
     const startup = loop.start();
     return async () => {
