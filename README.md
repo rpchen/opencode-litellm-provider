@@ -146,7 +146,7 @@ opencode plugin add github:rpchen/opencode-litellm-provider#v0.1.4
 
 ```bash
 npm ci
-bun run build:dist
+npm run build:fixed  # 按已提交 provenance 构建；显式更新 core 使用 build:dist
 ```
 
 然后在 OpenCode 配置文件的 `plugins` 中使用指向 `dist` 目录的绝对 `file://` URL：
@@ -177,7 +177,7 @@ Windows 示例：
 }
 ```
 
-本地路径必须指向含有 `index.js` 的 `dist` 目录，而不是仓库根目录。修改源码后重新执行 `bun run build:dist`；OpenCode 会监视本地插件构建产物的变化。
+本地路径必须指向含有 `index.js` 的 `dist` 目录，而不是仓库根目录。修改宿主源码后可执行 `npm run build:fixed`；需要同时取得最新共享 core 时使用 `npm run build:dist`。OpenCode 会监视本地插件构建产物的变化。
 
 ## 连接 LiteLLM
 
@@ -256,21 +256,47 @@ Windows 示例：
 - 401/403、最终 404、成功返回空清单或断开连接会撤下旧模型。
 - models.dev 使用六小时进程内缓存；插件不写磁盘缓存。
 
+## 共享 core 与交付来源
+
+宿主无关的模型发现与元数据逻辑只在 [rpchen/litellm-discovery-core](https://github.com/rpchen/litellm-discovery-core) 维护。OpenCode 的入口、provider 注册、连接凭据、HTTP、轮询、错误降级、配置、命令及审计仍在本仓库；`ModelSpec.package` 和 SDK 协议映射属于 OpenCode 适配层，不属于中立 core。
+
+用户安装方式和运行时行为不变。core 在插件构建时编译进 `dist`，安装或加载插件不会从 GitHub 下载 core，不要求平级仓库、本机构建缓存或生命周期脚本。**core/main 更新不会改变已经发布的插件；下一次插件更新构建才会纳入新 core。** 本次迁移不包含跨仓库自动触发。
+
+`dist/core-provenance.json` 记录该产物使用的公开 core 仓库、分支和完整 commit SHA。它是自动生成的构建记录，不是每次手工修改的依赖版本；不要把 Git dependency 的 `#main` 当作绕过 lockfile 自动更新的保证。
+
 ## 开发
 
+需要 Git、Node.js、Bun 和锁定的开发依赖。普通验收只复验已提交产物，不更新 core/main：
+
 ```bash
-npm ci              # 本项目 .npmrc 固定使用公网 npm registry
-bun run typecheck
-bun test
-bun run test:tui-render # 在 OpenTUI 测试渲染器中检查卡片及鼠标操作
-bun run build:dist        # clean build；生成的 dist 必须随源码提交
-bun run test:package # 验证 tarball 在禁用 lifecycle scripts 时可安装并导入
+npm ci                 # 本项目 .npmrc 固定使用公网 npm registry
+npm run verify:dist    # 先在外部临时目录重建，对比未覆盖的候选 dist
+npm run test:delivery  # 缓存完整性、SHA/provenance 和独立比较回归
+npm run typecheck      # 按候选 provenance 准备同一 SHA
+npm test               # 包含原 fixtures、快照及宿主测试
+npm run test:tui-render
+npm run test:distribution # 无预生成源码/缓存的构建及真实 verify CLI 负向测试
+npm run test:package   # 工作区外 npm install --ignore-scripts + 真实安装入口初始化
 npm run validate:spec
 ```
 
+### 更新产物与固定复验
+
+```bash
+npm run build:dist     # 显式解析当时 core/main，一次 SHA 的 typecheck/test/tsc 编译
+npm run verify:dist    # 按刚生成的 provenance 独立复验，不再解析 main
+npm run test:package
+```
+
+`build:dist` 成功后提交整个 `dist`（包括 provenance），无需手工维护 core 版本。`build:fixed` 则按已有 provenance 重建；诊断特定提交可用 `node scripts/build.mjs --sha=<完整40位SHA>`。`verify:dist` 不覆盖候选产物，内容、缺失或多余文件有差异都失败；provenance 缺失、无效或来源不符时明确失败，不能回退最新 main。CI 和 Release 走固定复验，不先清空 dist，也不在同一 tag 发版时刷新 core/main。
+
+开发缓存位于 `.tmp/discovery-core/<sha>`；生成源码位于 `src/generated/discovery-core/`，兼容转接位于 `src/core/`，后三者均不入库。源码准备拒绝缓存中已暂存、未暂存或未跟踪修改，并从选定 Git commit 的对象导出普通文件，避免工作树污染；不会自动 reset、clean 或 stash。遇到脏缓存请先保留和处理修改，不能用手工编辑生成文件的方式修复 core。完整的干净 SHA 缓存可供固定构建复用；没有缓存时在构建期获取公开仓库，不要求任何平级目录。
+
+隔离安装测试提供实际 `@opencode/plugin` peer 及宿主 SDK，但以模拟宿主 context 和脱敏 HTTP fixtures 验证初始化与清理，不代表真实 OpenCode 会话或真实 LiteLLM 对话验收。迁移验收记录见 [`docs/research/pr3-core-migration-validation.md`](docs/research/pr3-core-migration-validation.md)。
+
 开发必须在分支完成，并通过面向 `main` 的 pull request 和 required `CI` check。提交使用 Conventional Commits；完整约定见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
 
-真实宿主验收结果见 [`docs/research/acceptance-notes.md`](docs/research/acceptance-notes.md)。宿主 API 调研见 [`docs/research/opencode-v2-plugin-api.md`](docs/research/opencode-v2-plugin-api.md)。
+历史真实宿主验收结果见 [`docs/research/acceptance-notes.md`](docs/research/acceptance-notes.md)，不替代本次迁移的验证记录。宿主 API 调研见 [`docs/research/opencode-v2-plugin-api.md`](docs/research/opencode-v2-plugin-api.md)。
 
 ## OpenSpec
 
