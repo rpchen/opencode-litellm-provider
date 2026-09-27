@@ -1,6 +1,6 @@
 {
   "name": "opencode-litellm-provider",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "OpenCode v2 plugin that auto-discovers providers, protocols, models and reasoning variants from a LiteLLM proxy",
   "type": "module",
   "license": "MIT",
@@ -29,7 +29,7 @@
     "verify:dist": "node scripts/verify-dist.mjs",
     "typecheck": "node scripts/run-with-core.mjs typecheck",
     "test": "node scripts/run-with-core.mjs test",
-    "test:delivery": "node --test scripts/check-core-delivery.mjs",
+    "test:delivery": "node --test scripts/check-core-delivery.mjs scripts/check-release-version.mjs",
     "test:distribution": "node scripts/test-distribution.mjs",
     "test:tui-render": "bun --conditions=browser scripts/test-tui-render.ts",
     "test:package": "bun scripts/test-package.ts",

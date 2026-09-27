@@ -63,7 +63,7 @@ OpenCode v2 插件：通过 `/connect` 填写 LiteLLM 地址和自己的 API Key
 - **改后**（对象写法，开启对话反馈）：
   `{ "package": "github:rpchen/opencode-litellm-provider", "options": { "conversationFeedback": true } }`
 
-如果你用的是固定版本 tag，把 `package` 的值换成对应的 `github:rpchen/opencode-litellm-provider#v0.1.4` 即可，其余不变。
+如果你用的是固定版本 tag，把 `package` 的值换成对应的 `github:rpchen/opencode-litellm-provider#v0.2.0` 即可，其余不变。
 
 #### 第 3 步：重启 OpenCode
 
@@ -130,12 +130,30 @@ OpenCode 会取得 `main` 上的构建；仓库已经包含 `dist`，用户无�
 }
 ```
 
+### 已安装插件的升级
+
+先执行 `opencode plugin list`，以 `SOURCE` 列的完整来源为准；`plugin check/update` 不按 ID `litellm` 匹配。配置为 `#v0.1.4` 时，`current` 只表示该固定 tag 无变化，不代表已跟随 main。
+
+升级时编辑原有 plugins 条目，保留全部 options，将旧 tag 改为无后缀来源（跟随 main）或 `#v0.2.0`（固定本次发行）。不要另加第二条，也不要同时启用本地与 Git 两份插件。保存后重载，再用与新配置完全一致的来源执行更新：
+
+```sh
+opencode reload
+opencode plugin check "github:rpchen/opencode-litellm-provider"
+opencode plugin update "github:rpchen/opencode-litellm-provider"
+opencode reload
+opencode plugin list
+```
+
+以上命令用于无后缀来源；固定版本需将 check/update 参数替换为配置中的完整 tag 来源。Git 安装的 VERSION 列显示提交短 SHA，不能仅用 package.json 的版本号判断是否真正更新。
+
+v0.2.0 是共享 discovery core 迁移后的首个发行版；安装方式、宿主契约和配置保持兼容。发行说明、维护者实测范围与 core 溯源见 [v0.2.0](docs/releases/v0.2.0.md)。
+
 ### 锁定版本或回滚
 
 使用 GitHub Release 对应的 tag：
 
 ```bash
-opencode plugin add github:rpchen/opencode-litellm-provider#v0.1.4
+opencode plugin add github:rpchen/opencode-litellm-provider#v0.2.0
 ```
 
 固定 tag 不会随 `main` 后续变化。遇到兼容性问题时，也可以把配置中的 tag 改回此前版本；但回滚到 `v0.1.1` 会恢复活跃 TUI 卡片不即时出现的问题，回滚到 `v0.1.0` 还会恢复模型初始化缺陷。项目当前不发布到 npm registry；GitHub Release 的 `.tgz` 与 SHA-256 文件用于审计和归档，默认安装入口仍是 Git package spec。

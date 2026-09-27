@@ -55,3 +55,16 @@ OpenCode 版本保持 `0.1.4`，依赖与 lockfile 未改。仍使用 tsc，入�
 ## 非迁移范围的提示
 
 锁定依赖安装输出已有的 Node engine/deprecation/audit 警告，但未阻止本次完整 CI。没有为使迁移通过而升级宿主 SDK、改写 lockfile、执行 audit fix 或夹带业务修正。Release workflow 的固定复验逻辑已调整，实际 Release/tag/npm publish 未执行。
+
+## 后续维护者真实宿主反馈（2026-09-27）
+
+PR #19 合并后，维护者在 Windows / OpenCode 2.0.16 上从固定 v0.1.4 切换到无后缀 Git 来源，执行更新后提供 plugin list 输出：
+
+```text
+ID       VERSION  SOURCE
+litellm  d565084  github:rpchen/opencode-litellm-provider
+```
+
+随后维护者针对模型列表、推理档位、常用模型实际对话和 /litellm-audit-export 这些验收项明确反馈“已验证，正常”，并授权按 v0.2.0 发版。实测实现为 d565084c065e048cf53597f9ff9f529107d1a121，core 为 32575d4e0185ebf40fb54aa5b538a22acca4e0d3；合并后的 main CI run 36323934825 也已成功。
+
+这补充了前文实施时未执行真实宿主验证的历史记录；来源是维护者反馈，不是代理亲自操作宿主。没有提供逐模型/逐协议/全平台验证记录，不据此扩大验收范围；没有收集真实服务地址、Key 或私人绝对路径。v0.2.0 准备只更新版本、发行门禁与文档，保留上述源码、dist 和 provenance，不重新取得 core/main。
