@@ -6,31 +6,40 @@ context: |
   All artifacts must be written in zh-CN.
   Keep OpenSpec structural headings and SHALL/MUST keywords in English.
 
-  项目：opencode-litellm-provider —— OpenCode v2 插件（npm 包），让用户像配置普通 provider 一样
-  只填 LiteLLM 地址 + API Key，即自动发现并注册 provider / 协议 / 模型 / 能力 / 推理档位，并跟随 LiteLLM 端变更。
-  目标替代手工脚本 `opencode-litellm-config-sync`（~/.agents/skills/opencode-litellm-config-sync），
-  其既有的元数据规则（LiteLLM 优先、models.dev 仅补缺且只取一方记录、Codex models_cache 覆盖 GPT 上下文窗、
-  variants 映射规则、reasoning 无 variants 为合法终态）是本项目的行为基线，偏离必须在 design.md 说明理由。
+  项目：opencode-litellm-provider —— 通过公开 GitHub Git package 分发的 OpenCode v2 插件，不发布 npm。
+  用户只填 LiteLLM 地址 + API Key，即自动发现并注册 provider / 协议 / 模型 / 能力 / 推理档位。
+  业务基线以 openspec/specs 与 docs/decisions.md 为准：LiteLLM 优先、models.dev 仅补缺且只取一方记录，
+  使用 LiteLLM 价格阶梯截断上下文；禁止读取 Codex models_cache.json；无 variants 是合法终态。
 
-  Tech stack: TypeScript（ESM）+ Bun（测试/包管理）；运行时依赖仅 `@opencode/plugin`（peer，v2 Promise API）。
-  目标宿主：OpenCode v2（>= 2.0.15）。v2 插件接口参考 docs/research/opencode-v2-plugin-api.md，
-  以及上游 anomalyco/opencode 分支 dev 下 packages/core/src/plugin/provider/*.ts 中的官方 provider 插件。
-  仓库：https://github.com/rpchen/opencode-litellm-provider（独立 git 仓库，嵌套在 LiteLLM 部署仓库目录下但不属于它）。
+  宿主无关的发现、协议、元数据与指纹仅在 rpchen/litellm-discovery-core 维护，经公共入口消费。
+  src/generated/discovery-core 和 src/core 是构建生成、Git 忽略的源码/转接，不手工维护或提交。
+  Protocol 来自共享入口；OpenCode ModelSpec.package 和 SDK 映射留在 src/host。
+  HTTP、轮询、缓存、凭据、宿主注册、命令与审计仍是本仓库职责。
 
-# Per-artifact rules — injected into the corresponding artifact instructions.
+  Tech stack: TypeScript ESM + tsc；npm ci 锁定依赖，Bun 运行测试。
+  目标宿主：OpenCode >=2.0.15 <2.1；沿用 package.json 的 @opencode/plugin peer 和 TUI 依赖。
+  宿主 SDK 不编入 core，参考 docs/research/opencode-v2-plugin-api.md 中的版本与来源。
+  仓库：https://github.com/rpchen/opencode-litellm-provider；独立 Git 仓库，不要求任何平级目录。
+
+  build:dist 显式解析当时 core/main 的完整 SHA，在一次构建中固定类型检查、测试和编译输入。
+  dist 和 dist/core-provenance.json 必须提交；安装和运行不得下载 core 或依赖生命周期脚本。
+  verify:dist 读取候选 provenance，在独立目录重建后比较原 dist；不先覆盖候选、不回退最新 main。
+  core 更新不改变已发布插件；下一次更新构建才包含新 core。本次不做跨仓库自动触发。
+
 rules:
   proposal:
-    - 必须写明对 OpenCode v2 插件 API 的依赖面（用到哪些 ctx 域 / hook），以及对上游未公开或 experimental 接口的风险
+    - 必须写明对 OpenCode v2 插件 API 的依赖面（用到哪些 ctx 域 / hook），以及 experimental 接口风险
   design:
-    - 与 opencode-litellm-config-sync 行为基线的任何差异必须列表说明（差异 → 理由）
-    - 涉及网络发现的设计必须说明：失败降级（LiteLLM / models.dev 不可达时的行为）、缓存策略、刷新触发方式
+    - 与现有主规格和固定 fixtures 行为基线的任何差异必须列表说明（差异 → 理由）
+    - 涉及网络发现的设计必须说明失败降级、缓存策略和刷新触发方式
+    - 涉及构建交付必须区分更新构建与固定复验，说明缓存真实性和安装隔离边界
   tasks:
     - 每个变更必须包含针对 LiteLLM /v1/model/info 固定样本（test/fixtures）的单元测试任务
-    - 涉及宿主集成的变更必须包含在真实 opencode v2 中手动加载验证的任务
+    - 涉及宿主集成必须评估真实 OpenCode v2 手动加载条件；具备条件时执行，未执行须明确原因，不以替身测试冒充
 
-# Per-operation guidance.
 operations:
   apply:
     guidance:
-      - 密钥一律不写入仓库与测试 fixtures；fixtures 中的 key / 内网地址需脱敏
-      - 提交使用 conventional commits
+      - 密钥、真实服务地址及用户本机路径不得写入源码、测试 fixtures、构建 provenance 或日志
+      - 保留已有未提交修改，不自动清理或提交用户工作；遵守 AGENTS 的真实验证凭据约定
+      - 提交使用 conventional commits，完成后同步主规格并归档，逐项如实记录验证结果

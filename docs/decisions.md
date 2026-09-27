@@ -1,6 +1,6 @@
 # 方案决策记录
 
-记录 `add-litellm-auto-discovery` 方案讨论中由用户拍板的决策与背景（2026-09-23 ~ 09-24）。落地规格以 `openspec/specs/` 为准，原 change 已归档到 `openspec/changes/archive/2026-09-24-add-litellm-auto-discovery/`；本文件说明“为什么这样定”，供后续维护时参考，避免重新讨论。
+记录用户确认的方案与背景。初始 `add-litellm-auto-discovery` 讨论发生于 2026-09-23 ~ 09-24，已归档到 `openspec/changes/archive/2026-09-24-add-litellm-auto-discovery/`；2026-09-27 的共享 core 决策更新了源码来源和交付复验方式，其余业务规则不变。落地规格以 `openspec/specs/` 为准，本文件说明“为什么这样定”，避免重新讨论。
 
 ## 已确认的决策
 
@@ -20,16 +20,32 @@
 | 真实环境测试凭据 | 使用 `~/.agents/skills/opencode-litellm-config-sync/.env` 的 `LITELLM_BASE_URL` / `LITELLM_API_KEY`，只在内存中使用 | 不读 `~/.config/opencode` 里用户自己的 Key |
 | 发行渠道 | 不发布 npm；公开 GitHub 仓库，默认安装 `github:rpchen/opencode-litellm-provider` | OpenCode 明确支持 Git package；普通用户无需 registry 配置或 GitHub 凭据 |
 | 稳定版本 | 无 ref 安装跟随默认分支 `main`；`main` 只接受通过 required CI 的 PR；`#vX.Y.Z` 用于锁定和回滚 | 同时兼顾最简安装和可复现部署 |
-| 构建产物 | `dist` 随源码提交并由 CI clean build 后校验一致；构建命令为 `build:dist`，不声明精确 `scripts.build`，也不依赖 `prepare` | OpenCode 2.0.15 的 Git package 安装设置 `ignoreScripts: true`；Pacote 仍会因 `scripts.build` 触发 Git preparation，Windows 直接 Arborist 路径会在 `spawn npm` 失败 |
+| 构建产物 | `dist` 和 core provenance 随源码提交；CI 按 provenance SHA 在独立目录重建并比较未覆盖的候选产物；`build:dist` 是另一条显式更新流程，不声明精确 `scripts.build`，不依赖 `prepare` | 防止先覆盖 dist 掩盖漏交/过期产物；OpenCode 2.0.15 的 Git package 安装禁用脚本，精确 `scripts.build` 会触发 Pacote Git preparation |
 | GitHub 治理 | 仓库改为 Public；功能分支开发，GitHub 规则强制 PR、required `CI`、禁止 force-push/删除，管理员不绕过 | Public 既满足公众安装，也让 GitHub Free 可启用分支保护；单维护者 approval 设为 0 |
-| Release | 首个版本 `v0.1.0`；tag 校验 package version 后创建 GitHub Release，附 `.tgz` 与 SHA-256，不 `npm publish` | tag 提供固定安装和回滚，附件便于审计与归档 |
+| Release | 首个版本 `v0.1.0`；tag 校验 package version 后按既有 provenance 固定复验，创建 GitHub Release，附 `.tgz` 与 SHA-256，不 `npm publish` | tag 提供固定安装和回滚；同一 tag 不切换到后续 core/main |
+
+## 共享 core 迁移（2026-09-27）
+
+唯一业务维护仓库为 `rpchen/litellm-discovery-core`；Pi 和 OpenCode 是各自独立的宿主适配仓库。不合仓、不采用 submodule、不把 Git dependency `#main` 当作无视 lockfile 的更新保证。本次 PR3 只修改 OpenCode，不加入跨仓库自动触发。
+
+开始时核验 OpenCode main 为 `96b00f5e291bb6b0e407f8bc9fa81de890cb7e79`，core main 为 `32575d4e0185ebf40fb54aa5b538a22acca4e0d3`，Pi main 为 `83d64946ca1172ae1073b18267a18cf018e64fbb`。这些是本次参考点，不是未来 main 不变的承诺。
+
+`npm run build:dist` 解析当时 core/main 的完整 SHA，在独立临时源码目录以同一 SHA 完成类型检查、测试和 tsc 编译，自动记录到 `dist/core-provenance.json`。安装所需的 core ESM、声明及许可证随 dist 提交；宿主 SDK 沿用 peer/external，不编入 core。`prepare:core`、`typecheck`、`test`、`build:fixed` 和 `verify:dist` 使用已有 provenance；固定复验缺少有效 provenance 必须失败，不回退 main。
+
+缓存按 SHA 隔离，拒绝暂存、未暂存和未跟踪修改，核对 Git commit 后从 Git tree/blob 导出受版本控制的源码，不能只看 HEAD 就复制工作树。`src/generated/discovery-core/` 和 `src/core/` 由构建生成并被 Git 忽略；后者只有公共入口或宿主适配转接，不维护业务实现。缓存异常不得自动 reset/clean/stash。
+
+中立 `Protocol` 与 `ModelSpec` 从共享公共入口取得；OpenCode 所需的 `package` 和三个 SDK 路径留在 `src/host/`。HTTP、轮询、模型缓存、凭据、注册、命令和审计不搬入 core。保留旧 fixtures、快照及宿主契约，不夹带行为修改。
+
+用户安装方式和运行时行为保持不变；安装/加载不下载 core，也不依赖平级目录、源码、构建缓存或生命周期脚本。core 更新不会改变已经发布的插件；下一次插件更新构建才纳入新代码。本次保持 OpenCode `0.1.4` 及依赖锁文件不变，不替代之后单独的发版决策。
 
 ## 独立审查
 
-方案经过一次独立第三方对抗式审查，采纳了除“逐模型发 Responses 请求验证”以外的全部建议（该条与“不做协议探测”决策冲突，不采纳）。审查发现的已核实事实已写入 design.md 的 Context 部分。
+初始方案经过一次独立第三方对抗式审查，采纳了除“逐模型发 Responses 请求验证”以外的全部建议（该条与“不做协议探测”决策冲突，不采纳）。审查发现的已核实事实已写入原 design.md 的 Context 部分。
+
+共享迁移另落实 Pi PR2 审查发现的两项风险：不得先覆盖候选 dist 再验收；不得把脏缓存内容与原 SHA 的 provenance 一起交付。相应正负向测试进入本仓库 CI。
 
 ## 给实施者的提示
 
-- 按 `tasks.md` 顺序实施：测试样本 → 核心纯函数 → 网络与宿主适配 → 集成验收。
-- `.tmp/` 下的临时调研文件（LiteLLM 实测抓取、上游源码快照、models.dev 快照）不入库、可能已被清理；需要时按 `docs/research/opencode-v2-plugin-api.md` 的来源重新获取。上游 v2 源码在 `anomalyco/opencode` 的 **`beta` 分支**（不是 `dev`）。
-- 生成 fixtures 需要真实的 `/v1/model/info` 响应：用上述 `.env` 中的地址和 Key 抓取，按 tasks 1.1 的白名单脱敏后才能入库。
+- 先核验当前工作区和远端，再按本次 `tasks.md` 实施；共享业务修改只在独立 core 进行，宿主适配留在本仓库。
+- `.tmp/` 下的历史调研文件可能已被清理，不得假设它们存在。需要上游资料时按 `docs/research/opencode-v2-plugin-api.md` 中的明确版本/来源重新获取，不把历史分支名当成永久位置。
+- 兼容性验证优先复用现有脱敏 fixtures；本次迁移无需真实 LiteLLM 凭据。必须新增真实响应样本时，遵守 AGENTS 的凭据约定和白名单脱敏规则后才能入库。

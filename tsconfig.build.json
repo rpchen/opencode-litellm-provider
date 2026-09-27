@@ -2,7 +2,8 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "rootDir": "src",
-    "types": ["node"]
+    "types": ["node"],
+    "newLine": "lf"
   },
   "include": ["src"],
   "exclude": ["test"]

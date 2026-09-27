@@ -23,9 +23,14 @@
   ],
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "build:dist": "npm run clean && tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit",
-    "test": "bun test",
+    "prepare:core": "node scripts/prepare-core.mjs --from-provenance",
+    "build:dist": "node scripts/build.mjs",
+    "build:fixed": "node scripts/build.mjs --from-provenance",
+    "verify:dist": "node scripts/verify-dist.mjs",
+    "typecheck": "node scripts/run-with-core.mjs typecheck",
+    "test": "node scripts/run-with-core.mjs test",
+    "test:delivery": "node --test scripts/check-core-delivery.mjs",
+    "test:distribution": "node scripts/test-distribution.mjs",
     "test:tui-render": "bun --conditions=browser scripts/test-tui-render.ts",
     "test:package": "bun scripts/test-package.ts",
     "validate:spec": "openspec validate --all --strict --no-interactive"

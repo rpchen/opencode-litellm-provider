@@ -1,4 +1,5 @@
-export type Protocol = "chat" | "responses" | "messages";
+import type { Protocol } from "./generated/discovery-core/index.js";
+export type { Protocol } from "./generated/discovery-core/index.js";
 export interface PluginOptions {
     pollInterval: number;
     contextTierCap: boolean;
