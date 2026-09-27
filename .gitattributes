@@ -1,0 +1,2 @@
+# Keep committed delivery bytes consistent with the compiler on all platforms.
+dist/** text eol=lf

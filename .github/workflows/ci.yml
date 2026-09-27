@@ -2,11 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches:
-      - main
+    branches: [main]
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -16,10 +14,12 @@ jobs:
   verify:
     name: CI
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -32,47 +32,43 @@ jobs:
         with:
           bun-version: 1.3.10
 
-      - name: Install dependencies
+      - name: Install locked dependencies
         run: npm ci
 
-      - name: Typecheck
-        run: bun run typecheck
+      # Never run the main-following update build before this check.
+      - name: Verify untouched committed distribution at its provenance SHA
+        run: npm run verify:dist
 
-      - name: Run tests
-        run: bun test
+      - name: Test cache integrity and immutable verification
+        run: npm run test:delivery
+
+      - name: Typecheck at the committed core SHA
+        run: npm run typecheck
+
+      - name: Run all unit tests at the committed core SHA
+        run: npm test
 
       - name: Render TUI card and exercise mouse actions
-        run: bun run test:tui-render
+        run: npm run test:tui-render
 
-      - name: Build clean distribution
-        run: bun run build:dist
-
-      - name: Verify committed distribution
-        shell: bash
-        run: |
-          git diff --exit-code -- dist
-          test -z "$(git ls-files --others --exclude-standard -- dist)"
+      - name: Build in a clean external workspace and reject altered distributions
+        run: npm run test:distribution
 
       - name: Validate OpenSpec
         run: npm run validate:spec
 
-      - name: Test package without lifecycle scripts
-        run: bun run test:package
+      - name: Install and initialize the delivered tarball without lifecycle scripts
+        run: npm run test:package
 
-      - name: Test remote Git package
-        if: github.event_name == 'push'
-        shell: bash
+      - name: Install and initialize this remote Git commit
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         env:
-          PACKAGE_SPEC: github:${{ github.repository }}#${{ github.sha }}
+          PACKAGE_SPEC: github:${{ github.repository }}#${{ github.event.pull_request.head.sha || github.sha }}
+        run: npm run test:package
+
+      - name: Ensure delivery and fixtures were not overwritten during verification
+        shell: bash
         run: |
-          consumer="$(mktemp -d)"
-          trap 'rm -rf "$consumer"' EXIT
-          cd "$consumer"
-          npm init --yes >/dev/null
-          npm install --ignore-scripts --no-audit --no-fund --package-lock=false "$PACKAGE_SPEC"
-          node --input-type=module --eval '
-            const plugin = await import("opencode-litellm-provider")
-            if (plugin.PLUGIN_ID !== "litellm" || !plugin.default) {
-              throw new Error("remote Git package exports are invalid")
-            }
-          '
+          git diff --exit-code -- dist test/fixtures test/__snapshots__
+          test -z "$(git ls-files --others --exclude-standard -- dist)"
+          test -z "$(git ls-files -- src/core src/generated/discovery-core)"

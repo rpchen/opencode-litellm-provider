@@ -9,3 +9,7 @@ node_modules/
 *.log
 .DS_Store
 Thumbs.db
+
+# Generated from the selected discovery-core commit; never maintain these by hand.
+/src/core/
+/src/generated/discovery-core/
