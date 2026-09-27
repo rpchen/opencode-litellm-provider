@@ -21,7 +21,9 @@ test("共享 ModelSpec 保持中立，OpenCode 适配只增加 SDK package", () 
   expect(adapted).toEqual(buildModelSpecs(litellm, modelsDev, options))
   for (const model of adapted) {
     const { package: sdk, ...metadata } = model
-    expect(metadata).toEqual(neutral.find((item) => item.id === model.id))
+    const expected = neutral.find((item) => item.id === model.id)
+    if (!expected) throw new Error(`missing neutral fixture model: ${model.id}`)
+    expect(metadata).toEqual(expected)
     expect(sdk).toBe(PROTOCOL_PACKAGES[model.protocol])
   }
   expect(neutral.every((model) => !Object.hasOwn(model, "package"))).toBe(true)
