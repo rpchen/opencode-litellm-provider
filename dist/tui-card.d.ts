@@ -7,11 +7,20 @@ export interface AuditResult {
     path: string;
     error: string;
 }
+export interface DiagnosticsResult {
+    sequence: number;
+    sessionID: string;
+    lines: string[];
+}
 export interface AuditCardActions {
     open: (path: string) => Promise<void>;
     copy: (path: string) => Promise<void>;
     manualCopy: (path: string) => Promise<unknown>;
 }
+export declare function createDiagnosticsResultStore(): {
+    forSession: (sessionID: string) => DiagnosticsResult | undefined;
+    accept(result: DiagnosticsResult): void;
+};
 export declare function createAuditResultStore(): {
     forSession: (sessionID: string) => AuditResult | undefined;
     accept(result: AuditResult): void;
@@ -27,3 +36,13 @@ export declare function AuditCard(props: {
     actions: AuditCardActions;
 }): import("solid-js").JSX.Element;
 export declare function auditCardActions(context: Pick<Context, "ui">): AuditCardActions;
+export declare function DiagnosticsCard(props: {
+    result: () => DiagnosticsResult | undefined;
+    foreground: () => NonNullable<JSX.IntrinsicElements["text"]["fg"]>;
+}): import("solid-js").JSX.Element;
+export declare function ProviderCards(props: {
+    auditResult: () => AuditResult | undefined;
+    diagnosticsResult: () => DiagnosticsResult | undefined;
+    foreground: () => NonNullable<JSX.IntrinsicElements["text"]["fg"]>;
+    actions: AuditCardActions;
+}): import("solid-js").JSX.Element;

@@ -20,27 +20,44 @@ function isAnthropic(deployment) {
 function normalizeEndpoint(value) {
     return value.toLowerCase().replace(/^\//, "").replace(/^v1\//, "");
 }
-export function deploymentProtocol(deployment) {
+export function deploymentProtocolResolution(deployment) {
     if (isAnthropic(deployment))
-        return "messages";
+        return { protocol: "messages", reason: "anthropic" };
     const endpoints = deployment.modelInfo.supported_endpoints;
     if (Array.isArray(endpoints)) {
         const normalized = new Set(endpoints
             .filter((endpoint) => typeof endpoint === "string")
             .map(normalizeEndpoint));
         if (normalized.has("responses"))
-            return "responses";
+            return { protocol: "responses", reason: "supported-endpoints" };
         if (normalized.has("chat/completions"))
-            return "chat";
+            return { protocol: "chat", reason: "supported-endpoints" };
     }
-    return optionalString(deployment.modelInfo.mode)?.toLowerCase() === "responses"
-        ? "responses"
-        : "chat";
+    if (optionalString(deployment.modelInfo.mode)?.toLowerCase() === "responses") {
+        return { protocol: "responses", reason: "mode" };
+    }
+    return { protocol: "chat", reason: "fallback" };
 }
-export function resolveProtocol(group, overrides = {}) {
+export function deploymentProtocol(deployment) {
+    return deploymentProtocolResolution(deployment).protocol;
+}
+export function resolveProtocolResolution(group, overrides = {}) {
+    const deployments = group.deployments.map(deploymentProtocolResolution);
     const override = overrides[group.modelName];
     if (override)
-        return override;
-    const protocols = new Set(group.deployments.map(deploymentProtocol));
-    return protocols.size === 1 ? (protocols.values().next().value ?? "chat") : "chat";
+        return { protocol: override, reason: "override", deployments };
+    const protocols = new Set(deployments.map((item) => item.protocol));
+    if (protocols.size !== 1)
+        return { protocol: "chat", reason: "mixed-fallback", deployments };
+    const protocol = deployments[0]?.protocol ?? "chat";
+    const reasons = new Set(deployments.map((item) => item.reason));
+    const reason = reasons.size === 1
+        ? (deployments[0]?.reason ?? "fallback")
+        : deployments.some((item) => item.reason === "fallback")
+            ? "fallback"
+            : "supported-endpoints";
+    return { protocol, reason, deployments };
+}
+export function resolveProtocol(group, overrides = {}) {
+    return resolveProtocolResolution(group, overrides).protocol;
 }

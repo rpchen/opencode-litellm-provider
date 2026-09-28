@@ -1,6 +1,7 @@
 import { createAuditReport } from "./audit.js";
 import { writeAuditFile } from "./audit-file.js";
 import { auditRpc } from "./audit-rpc.js";
+import { createDiagnosticsLines } from "./diagnostics.js";
 import { createFeedbackSubmitter, } from "./audit-feedback.js";
 function failureMessage(error) {
     const code = typeof error === "object" && error !== null && "code" in error
@@ -24,6 +25,7 @@ function captureSnapshot(audit) {
 }
 export async function registerAudit(context, snapshot, dependencies = {}) {
     let sequence = 0;
+    let diagnosticSequence = 0;
     let latest = { sequence, sessionID: "", ok: false, path: "", error: "" };
     const writeFile = dependencies.writeFile ?? writeAuditFile;
     const conversationFeedback = dependencies.conversationFeedback ?? false;
@@ -71,14 +73,30 @@ export async function registerAudit(context, snapshot, dependencies = {}) {
         },
     });
     try {
-        const command = await context.command.transform((editor) => editor.add({
-            name: "litellm-audit-export",
-            description: "将当前 LiteLLM 模型注册视图导出到本地 JSON 文件",
-            async execute({ sessionID }) {
-                const outcome = await performExport(sessionID);
-                await submitFeedback(sessionID, outcome);
-            },
-        }));
+        const command = await context.command.transform((editor) => {
+            editor.add({
+                name: "litellm-diagnostics",
+                description: "显示 LiteLLM 发现、协议、元数据来源、缓存与构建诊断",
+                async execute({ sessionID }) {
+                    await rpc.events.emit("completed", {
+                        sequence: ++diagnosticSequence,
+                        sessionID,
+                        ok: true,
+                        path: "",
+                        error: "",
+                        lines: createDiagnosticsLines(snapshot),
+                    });
+                },
+            });
+            editor.add({
+                name: "litellm-audit-export",
+                description: "将当前 LiteLLM 模型注册视图导出到本地 JSON 文件",
+                async execute({ sessionID }) {
+                    const outcome = await performExport(sessionID);
+                    await submitFeedback(sessionID, outcome);
+                },
+            });
+        });
         return {
             async dispose() {
                 await command.dispose();

@@ -11,6 +11,15 @@ const result = {
     required: ["sequence", "sessionID", "ok", "path", "error"],
     additionalProperties: false,
 };
+const completed = {
+    type: "object",
+    properties: {
+        ...result.properties,
+        lines: { type: "array", items: { type: "string" } },
+    },
+    required: result.required,
+    additionalProperties: false,
+};
 export const auditRpc = {
     id: "litellm-audit-export",
     methods: {
@@ -25,5 +34,5 @@ export const auditRpc = {
         },
         latest: { input: empty, output: result },
     },
-    events: { completed: { schema: result } },
+    events: { completed: { schema: completed } },
 };
