@@ -281,12 +281,20 @@ export function createDiscoveryLoop(
       snapshot.models = []
       snapshot.registrationView = undefined
       snapshot.audit = { status: "switching" }
+      snapshot.diagnostics = {
+        cache: createDiscoveryCacheDiagnostics({ source: "none", pending: true }),
+        note: "连接已切换，等待新 endpoint 完成发现。",
+      }
       lastFingerprint = undefined
       persistedIdentity = undefined
       persistedSnapshot = undefined
       if (hadRegistration) await reload()
     } else if (!snapshot.ready && snapshot.audit?.status === "disconnected") {
       snapshot.audit = { status: "pending" }
+      snapshot.diagnostics = {
+        cache: createDiscoveryCacheDiagnostics({ source: "none", pending: true }),
+        note: "等待首次网络发现。",
+      }
     }
 
     const resolved = await context.integration.connection.resolve(connection)
@@ -323,6 +331,10 @@ export function createDiscoveryLoop(
       snapshot.models = []
       snapshot.registrationView = undefined
       snapshot.audit = { status: "switching" }
+      snapshot.diagnostics = {
+        cache: createDiscoveryCacheDiagnostics({ source: "none", pending: true }),
+        note: "endpoint 或凭据已变化，等待新结果。",
+      }
       lastFingerprint = undefined
       if (hadRegistration) await reload()
     }
