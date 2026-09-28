@@ -22,6 +22,11 @@ export interface SyncContext {
             signal?: AbortSignal;
         }): AsyncIterable<EventLike>;
     };
+    storage?: {
+        get(key: string): Promise<unknown>;
+        set(key: string, value: unknown): Promise<void>;
+        remove?(key: string): Promise<void>;
+    };
 }
 export interface SyncLogger {
     warn(message: string): void;

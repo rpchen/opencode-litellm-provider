@@ -1,8 +1,15 @@
 import type { ConnectionInfo } from "@opencode/client"
 import type { ModelSpec } from "../core/build.js"
-import { buildModelSpecs, modelFingerprint } from "../core/build.js"
+import { buildModelSpecs, modelFingerprint, toOpenCodeModelSpec } from "../core/build.js"
 import { normalizeLiteLLMURL } from "../core/litellm.js"
 import { createDiscoveryCoordinator } from "../core/refresh.js"
+import {
+  compareDiscoverySnapshots,
+  createDiscoverySnapshot,
+  endpointFingerprint,
+  inspectDiscoverySnapshot,
+  type DiscoverySnapshot,
+} from "../core/snapshot.js"
 import type { PluginOptions } from "../options.js"
 import {
   DiscoveryError,
@@ -37,6 +44,11 @@ export interface SyncContext {
   event: {
     subscribe(options?: { signal?: AbortSignal }): AsyncIterable<EventLike>
   }
+  storage?: {
+    get(key: string): Promise<unknown>
+    set(key: string, value: unknown): Promise<void>
+    remove?(key: string): Promise<void>
+  }
 }
 
 export interface SyncLogger {
@@ -64,6 +76,8 @@ export interface DiscoveryLoop {
   trigger(forceRefresh?: boolean): Promise<void>
   dispose(): Promise<void>
 }
+
+const DISCOVERY_SNAPSHOT_STORAGE_KEY = "litellm.discovery.snapshot.v1"
 
 const defaultScheduler: Scheduler = {
   setTimeout: (callback, milliseconds) => setTimeout(callback, milliseconds),
@@ -108,6 +122,8 @@ export function createDiscoveryLoop(
   let queued = false
   let identity: string | undefined
   let lastFingerprint: string | undefined
+  let persistedIdentity: string | undefined
+  let persistedSnapshot: DiscoverySnapshot | undefined
   let reloadPending = false
   let eventTask: Promise<void> | undefined
 
@@ -115,6 +131,64 @@ export function createDiscoveryLoop(
     reloadPending = true
     await context.provider.reload()
     reloadPending = false
+  }
+
+  const neutralModels = (models: readonly ModelSpec[]) =>
+    models.map(({ package: _package, ...model }) => model)
+
+  const loadPersistedSnapshot = async (
+    nextIdentity: string,
+    expectedEndpoint: string,
+  ): Promise<DiscoverySnapshot | undefined> => {
+    if (persistedIdentity === nextIdentity) return persistedSnapshot
+    persistedIdentity = nextIdentity
+    persistedSnapshot = undefined
+    if (!context.storage) return undefined
+    try {
+      const raw = await context.storage.get(DISCOVERY_SNAPSHOT_STORAGE_KEY)
+      const value = typeof raw === "string" ? JSON.parse(raw) : raw
+      const inspected = inspectDiscoverySnapshot(value, expectedEndpoint)
+      if (inspected.compatible) persistedSnapshot = inspected.snapshot
+      return persistedSnapshot
+    } catch (error) {
+      logger.warn(`LiteLLM snapshot 读取失败，继续网络发现：${redact(error instanceof Error ? error.message : String(error))}`)
+      return undefined
+    }
+  }
+
+  const persistSnapshot = async (
+    nextIdentity: string,
+    value: DiscoverySnapshot,
+  ): Promise<void> => {
+    const unchanged =
+      persistedIdentity === nextIdentity &&
+      persistedSnapshot?.endpointFingerprint === value.endpointFingerprint &&
+      persistedSnapshot.modelFingerprint === value.modelFingerprint
+    if (unchanged) return
+    if (!context.storage) {
+      persistedIdentity = nextIdentity
+      persistedSnapshot = value
+      return
+    }
+    try {
+      await context.storage.set(DISCOVERY_SNAPSHOT_STORAGE_KEY, JSON.stringify(value))
+      persistedIdentity = nextIdentity
+      persistedSnapshot = value
+    } catch (error) {
+      logger.warn(`LiteLLM snapshot 持久化失败（不影响本次发现）：${redact(error instanceof Error ? error.message : String(error))}`)
+    }
+  }
+
+  const clearPersistedSnapshot = async (nextIdentity: string): Promise<void> => {
+    persistedIdentity = nextIdentity
+    persistedSnapshot = undefined
+    if (!context.storage) return
+    try {
+      if (context.storage.remove) await context.storage.remove(DISCOVERY_SNAPSHOT_STORAGE_KEY)
+      else await context.storage.set(DISCOVERY_SNAPSHOT_STORAGE_KEY, "null")
+    } catch (error) {
+      logger.warn(`LiteLLM snapshot 清理失败：${redact(error instanceof Error ? error.message : String(error))}`)
+    }
   }
 
   const cancelTimer = () => {
@@ -143,6 +217,8 @@ export function createDiscoveryLoop(
     if (identity) coordinator.clear(identity)
     identity = undefined
     lastFingerprint = undefined
+    persistedIdentity = undefined
+    persistedSnapshot = undefined
     if (hadRegistration) await reload()
   }
 
@@ -187,6 +263,8 @@ export function createDiscoveryLoop(
       snapshot.registrationView = undefined
       snapshot.audit = { status: "switching" }
       lastFingerprint = undefined
+      persistedIdentity = undefined
+      persistedSnapshot = undefined
       if (hadRegistration) await reload()
     } else if (!snapshot.ready && snapshot.audit?.status === "disconnected") {
       snapshot.audit = { status: "pending" }
@@ -231,6 +309,32 @@ export function createDiscoveryLoop(
     }
     identity = nextIdentity
 
+    const expectedEndpoint = endpointFingerprint({
+      baseUrl: addresses.rootURL,
+      credentialKey: resolved.key,
+      buildOptions: {
+        contextTierCap: options.contextTierCap,
+        protocolOverrides: options.protocolOverrides,
+      },
+    })
+    const previousPersisted = await loadPersistedSnapshot(nextIdentity, expectedEndpoint)
+    if (!snapshot.ready && previousPersisted) {
+      const restoredModels = previousPersisted.models.map(toOpenCodeModelSpec)
+      const restoredView = createRegistrationView(restoredModels, addresses.apiBaseURL)
+      snapshot.ready = true
+      snapshot.connection = connection
+      snapshot.apiBaseURL = addresses.apiBaseURL
+      snapshot.models = restoredModels
+      snapshot.registrationView = restoredView
+      lastFingerprint = fingerprint(restoredModels)
+      snapshot.audit = {
+        status: "stale",
+        lastSuccessfulDiscoveryAt: previousPersisted.discoveredAt,
+        view: restoredView,
+      }
+      await reload()
+    }
+
     try {
       const coordinated = await coordinator.refresh(
         nextIdentity,
@@ -261,6 +365,19 @@ export function createDiscoveryLoop(
       }
 
       const { models, fingerprint: nextFingerprint } = coordinated.value
+      const nextPersisted = createDiscoverySnapshot(
+        expectedEndpoint,
+        neutralModels(models),
+        new Date(coordinated.refreshedAt).toISOString(),
+      )
+      if (previousPersisted) {
+        const diff = compareDiscoverySnapshots(previousPersisted, nextPersisted)
+        if (diff.drift) {
+          logger.warn(
+            `LiteLLM 发现漂移：added=${diff.added.length}, removed=${diff.removed.length}, protocol=${diff.protocolChanged.length}, capabilities=${diff.capabilityChanged.length}`,
+          )
+        }
+      }
       const changed = !snapshot.ready || lastFingerprint !== nextFingerprint || reloadPending
       const view = changed || !snapshot.registrationView
         ? createRegistrationView(models, addresses.apiBaseURL)
@@ -272,6 +389,7 @@ export function createDiscoveryLoop(
       snapshot.registrationView = view
       if (changed) await reload()
       lastFingerprint = nextFingerprint
+      await persistSnapshot(nextIdentity, nextPersisted)
       snapshot.audit = {
         status: models.length === 0 ? "empty" : "ready",
         lastSuccessfulDiscoveryAt: new Date(coordinated.refreshedAt).toISOString(),
@@ -281,6 +399,7 @@ export function createDiscoveryLoop(
       if (disposed || identity !== nextIdentity) return
       if (error instanceof DiscoveryError && (error.kind === "auth" || error.kind === "notfound")) {
         logger.error(redact(error.message, resolved.key))
+        await clearPersistedSnapshot(nextIdentity)
         await clearModels(
           connection,
           addresses.apiBaseURL,

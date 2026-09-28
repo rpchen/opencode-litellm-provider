@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { ConnectionInfo } from "@opencode/client"
 import type { ModelSpec } from "../src/core/build.js"
+import { createDiscoverySnapshot, endpointFingerprint } from "../src/core/snapshot.js"
 import { DiscoveryError } from "../src/net/fetch.js"
 import { createDiscoveryLoop, type Scheduler, type SyncContext } from "../src/host/sync.js"
 import type { ProviderSnapshot } from "../src/host/register.js"
@@ -74,7 +75,7 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-function harness() {
+function harness(initialStorage?: unknown) {
   const scheduler = new FakeScheduler()
   const events = new EventQueue()
   const connectionA: ConnectionInfo = {
@@ -95,6 +96,8 @@ function harness() {
   let nextFetch: () => Promise<unknown> = async () => ({ model: "model-a" })
   const warnings: string[] = []
   const errors: string[] = []
+  let storageValue: unknown = initialStorage
+  let storageWrites = 0
   const context: SyncContext = {
     integration: {
       connection: {
@@ -109,6 +112,17 @@ function harness() {
       },
     },
     event: { subscribe: ({ signal } = {}) => events.iterable(signal) },
+    storage: {
+      get: async () => storageValue,
+      set: async (_key, value) => {
+        storageValue = value
+        storageWrites += 1
+      },
+      remove: async () => {
+        storageValue = undefined
+        storageWrites += 1
+      },
+    },
   }
   const snapshot: ProviderSnapshot = { ready: false, models: [] }
   const options: PluginOptions = {
@@ -141,6 +155,8 @@ function harness() {
     errors,
     get reloads() { return reloads },
     get fetches() { return fetches },
+    get storageValue() { return storageValue },
+    get storageWrites() { return storageWrites },
     setConnection(value: ConnectionInfo | undefined) { connection = value },
     setCredential(value: typeof credential) { credential = value },
     setFetch(value: () => Promise<unknown>) { nextFetch = value },
@@ -148,13 +164,68 @@ function harness() {
   }
 }
 
+function persistedSnapshot(id: string, credentialKey = "sk-first") {
+  const { package: _package, ...neutral } = spec(id)
+  return createDiscoverySnapshot(
+    endpointFingerprint({
+      baseUrl: "https://litellm.example",
+      credentialKey,
+      buildOptions: { contextTierCap: true, protocolOverrides: {} },
+    }),
+    [neutral],
+    "2026-09-28T00:00:00.000Z",
+  )
+}
+
 async function flush(): Promise<void> {
-  await Promise.resolve()
-  await Promise.resolve()
-  await Promise.resolve()
+  // Storage restore adds asynchronous hops before network discovery/event-triggered work.
+  for (let index = 0; index < 10; index += 1) await Promise.resolve()
 }
 
 describe("发现循环", () => {
+  test("启动时先恢复 endpoint 兼容 snapshot，再用网络结果确认", async () => {
+    const stored = JSON.stringify(persistedSnapshot("model-a"))
+    const h = harness(stored)
+    const pending = deferred<unknown>()
+    h.setFetch(() => pending.promise)
+
+    const starting = h.loop.start()
+    await flush()
+    expect(h.snapshot.models.map((model) => model.id)).toEqual(["model-a"])
+    expect(h.snapshot.audit?.status).toBe("stale")
+    expect(h.snapshot.audit?.lastSuccessfulDiscoveryAt).toBe("2026-09-28T00:00:00.000Z")
+    expect(h.reloads).toBe(1)
+
+    pending.resolve({ model: "model-a" })
+    await starting
+    expect(h.snapshot.audit?.status).toBe("ready")
+    // The test fixture uses a synthetic host package, so the network-confirmed host
+    // fingerprint differs from the package reconstructed from the neutral snapshot.
+    expect(h.reloads).toBe(2)
+    const persisted = JSON.parse(String(h.storageValue)) as { models: Array<Record<string, unknown>> }
+    expect(persisted.models[0]?.package).toBeUndefined()
+    await h.loop.dispose()
+  })
+
+  test("endpoint fingerprint 不匹配时不恢复旧 snapshot", async () => {
+    const stored = JSON.stringify(persistedSnapshot("old-model", "sk-other"))
+    const h = harness(stored)
+    const pending = deferred<unknown>()
+    h.setFetch(() => pending.promise)
+
+    const starting = h.loop.start()
+    await flush()
+    expect(h.snapshot.ready).toBeFalse()
+    expect(h.snapshot.models).toEqual([])
+    expect(h.reloads).toBe(0)
+
+    pending.resolve({ model: "model-a" })
+    await starting
+    expect(h.snapshot.models.map((model) => model.id)).toEqual(["model-a"])
+    expect(h.storageWrites).toBe(1)
+    await h.loop.dispose()
+  })
+
   test("启动发现、稳定指纹不重复 reload、轮询继续发现", async () => {
     const h = harness()
     await h.loop.start()
