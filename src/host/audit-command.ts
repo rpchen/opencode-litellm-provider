@@ -46,7 +46,6 @@ export async function registerAudit(
   let sequence = 0
   let diagnosticSequence = 0
   let latest = { sequence, sessionID: "", ok: false, path: "", error: "" }
-  let latestDiagnostics = { sequence: diagnosticSequence, sessionID: "", lines: [] as string[] }
   const writeFile = dependencies.writeFile ?? writeAuditFile
   const conversationFeedback = dependencies.conversationFeedback ?? false
   const createSubmitter = dependencies.createSubmitter
@@ -94,9 +93,6 @@ export async function registerAudit(
     async latest() {
       return latest
     },
-    async latestDiagnostics() {
-      return latestDiagnostics
-    },
   })
   try {
     const command = await context.command.transform((editor) => {
@@ -104,12 +100,14 @@ export async function registerAudit(
         name: "litellm-diagnostics",
         description: "显示 LiteLLM 发现、协议、元数据来源、缓存与构建诊断",
         async execute({ sessionID }) {
-          latestDiagnostics = {
+          await rpc.events.emit("completed", {
             sequence: ++diagnosticSequence,
             sessionID,
+            ok: true,
+            path: "",
+            error: "",
             lines: createDiagnosticsLines(snapshot),
-          }
-          await rpc.events.emit("diagnostics", latestDiagnostics)
+          })
         },
       })
       editor.add({
