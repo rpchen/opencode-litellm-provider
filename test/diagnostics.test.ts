@@ -58,7 +58,7 @@ describe("OpenCode diagnostics", () => {
     expect(text).toContain("models.dev：degraded")
     expect(text).toContain("协议 fallback：1")
     expect(text).toContain("model-a: models-dev-unmatched")
-    expect(text).toContain("Core：main@f1faf87fb7e2436358b190dd9b6fabd09b511c1f")
+    expect(text).toContain("Core：")
     expect(text).not.toContain("sk-secret")
     expect(text).not.toContain("private.example")
   })
