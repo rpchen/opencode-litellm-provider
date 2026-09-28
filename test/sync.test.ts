@@ -3,6 +3,7 @@ import type { ConnectionInfo } from "@opencode/client"
 import type { ModelSpec } from "../src/core/build.js"
 import { createDiscoverySnapshot, endpointFingerprint } from "../src/core/snapshot.js"
 import { DiscoveryError } from "../src/net/fetch.js"
+import { createDiagnosticsLines } from "../src/host/diagnostics.js"
 import { createDiscoveryLoop, type Scheduler, type SyncContext } from "../src/host/sync.js"
 import type { ProviderSnapshot } from "../src/host/register.js"
 import type { PluginOptions } from "../src/options.js"
@@ -75,7 +76,7 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-function harness(initialStorage?: unknown) {
+function harness(initialStorage?: unknown, useCoreDiagnostics = false) {
   const scheduler = new FakeScheduler()
   const events = new EventQueue()
   const connectionA: ConnectionInfo = {
@@ -139,11 +140,13 @@ function harness(initialStorage?: unknown) {
       return nextFetch()
     },
     getModelsDev: async () => ({}),
-    buildModels: (response) => {
-      const input = response as { model?: string; models?: string[] }
-      if (input.models) return input.models.map(spec)
-      return input.model === "empty" ? [] : [spec(input.model ?? "model-a")]
-    },
+    ...(useCoreDiagnostics ? {} : {
+      buildModels: (response: unknown) => {
+        const input = response as { model?: string; models?: string[] }
+        if (input.models) return input.models.map(spec)
+        return input.model === "empty" ? [] : [spec(input.model ?? "model-a")]
+      },
+    }),
   })
 
   return {
@@ -194,11 +197,15 @@ describe("发现循环", () => {
     expect(h.snapshot.models.map((model) => model.id)).toEqual(["model-a"])
     expect(h.snapshot.audit?.status).toBe("stale")
     expect(h.snapshot.audit?.lastSuccessfulDiscoveryAt).toBe("2026-09-28T00:00:00.000Z")
+    expect(h.snapshot.diagnostics?.cache?.source).toBe("snapshot")
+    expect(h.snapshot.diagnostics?.cache?.stale).toBeTrue()
+    expect(h.snapshot.diagnostics?.note).toContain("等待网络确认")
     expect(h.reloads).toBe(1)
 
     pending.resolve({ model: "model-a" })
     await starting
     expect(h.snapshot.audit?.status).toBe("ready")
+    expect(h.snapshot.diagnostics?.cache?.source).toBe("network")
     // The test fixture uses a synthetic host package, so the network-confirmed host
     // fingerprint differs from the package reconstructed from the neutral snapshot.
     expect(h.reloads).toBe(2)
@@ -237,14 +244,47 @@ describe("发现循环", () => {
     expect(h.reloads).toBe(1)
     expect(h.scheduler.tasks).toHaveLength(1)
 
-    await h.loop.trigger()
+    const beforeCachedRefresh = h.fetches
+    await h.loop.trigger(false)
     expect(h.reloads).toBe(1)
+    expect(h.fetches).toBe(beforeCachedRefresh)
+    expect(h.snapshot.diagnostics?.cache?.source).toBe("memory-cache")
     expect(h.snapshot.audit?.lastSuccessfulDiscoveryAt).toBeTruthy()
     expect(h.snapshot.audit?.view).toBe(h.snapshot.registrationView)
     expect(Date.parse(h.snapshot.audit!.lastSuccessfulDiscoveryAt!)).toBeGreaterThanOrEqual(Date.parse(previousSuccess!))
     h.scheduler.runNext()
     await flush()
     expect(h.fetches).toBe(2)
+    await h.loop.dispose()
+  })
+
+  test("production Core diagnostics and registered protocol stay aligned on conservative fallback", async () => {
+    const h = harness(undefined, true)
+    h.setFetch(async () => ({
+      data: [
+        {
+          model_name: "mixed-model",
+          litellm_params: { model: "openai/mixed-model" },
+          model_info: { supported_endpoints: ["/v1/responses"] },
+        },
+        {
+          model_name: "mixed-model",
+          litellm_params: { model: "openai/mixed-model" },
+          model_info: { supported_endpoints: ["/v1/chat/completions"] },
+        },
+      ],
+    }))
+
+    await h.loop.start()
+    expect(h.snapshot.models).toHaveLength(1)
+    expect(h.snapshot.models[0]?.protocol).toBe("chat")
+    expect(h.snapshot.diagnostics?.discovery?.models[0]?.protocol).toMatchObject({
+      value: "chat",
+      reason: "mixed-fallback",
+    })
+    expect(h.snapshot.diagnostics?.discovery?.stats.protocolFallbacks).toBe(1)
+    expect(h.snapshot.diagnostics?.discovery?.modelsDev.status).toBe("degraded")
+    expect(h.snapshot.diagnostics?.cache?.source).toBe("network")
     await h.loop.dispose()
   })
 
@@ -275,6 +315,8 @@ describe("发现循环", () => {
     await h.loop.trigger(true)
     const afterFailure = h.fetches
     expect(h.snapshot.audit?.status).toBe("stale")
+    expect(h.snapshot.diagnostics?.cache?.source).toBe("stale")
+    expect(h.snapshot.diagnostics?.cache?.stale).toBeTrue()
     expect(h.scheduler.delays.at(-1)).toBeGreaterThan(0)
     expect(h.scheduler.delays.at(-1)).toBeLessThanOrEqual(1_000)
 
@@ -290,11 +332,16 @@ describe("发现循环", () => {
     const successful = h.snapshot.audit?.lastSuccessfulDiscoveryAt
     const view = h.snapshot.audit?.view
     h.setFetch(async () => {
-      throw new DiscoveryError("network", "offline sk-first")
+      throw new DiscoveryError("network", "offline sk-first https://private.example raw transport body")
     })
     await h.loop.trigger()
     expect(h.snapshot.models.map((model) => model.id)).toEqual(["model-a"])
     expect(h.snapshot.audit).toEqual({ status: "stale", view, lastSuccessfulDiscoveryAt: successful })
+    expect(h.snapshot.diagnostics?.cache?.source).toBe("stale")
+    const staleDiagnostics = createDiagnosticsLines(h.snapshot).join("\n")
+    expect(staleDiagnostics).not.toContain("sk-first")
+    expect(staleDiagnostics).not.toContain("private.example")
+    expect(staleDiagnostics).not.toContain("raw transport body")
     expect(h.warnings[0]).not.toContain("sk-first")
 
     h.setFetch(async () => {
@@ -303,6 +350,9 @@ describe("发现循环", () => {
     await h.loop.trigger()
     expect(h.snapshot.models).toEqual([])
     expect(h.snapshot.audit?.status).toBe("cleared-auth")
+    expect(h.snapshot.diagnostics?.cache?.source).toBe("none")
+    expect(h.snapshot.diagnostics?.note).toContain("认证失败")
+    expect(createDiagnosticsLines(h.snapshot).join("\n")).not.toContain("sk-first")
     expect(h.snapshot.audit?.view).toBeUndefined()
     expect(h.snapshot.audit?.lastSuccessfulDiscoveryAt).toBeUndefined()
     expect(h.reloads).toBe(2)
