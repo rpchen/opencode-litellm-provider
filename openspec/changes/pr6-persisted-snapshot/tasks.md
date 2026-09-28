@@ -1,0 +1,9 @@
+- [x] Expose the Core snapshot facade in OpenCode's generated-core compatibility layer.
+- [x] Add best-effort plugin storage read/write/clear integration.
+- [x] Restore only endpoint-compatible snapshots before network discovery.
+- [x] Strip OpenCode-only package metadata before persistence and reconstruct it on restore.
+- [x] Compare prior compatible snapshots for PR6 drift.
+- [x] Clear durable snapshot on authentication/notfound destructive failures.
+- [x] Add warm-restore and endpoint-mismatch tests.
+- [ ] Rebuild committed dist against merged PR6 Core SHA.
+- [ ] Run delivery, typecheck, tests, TUI, distribution, OpenSpec, and package gates.
