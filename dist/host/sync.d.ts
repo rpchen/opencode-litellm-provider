@@ -42,7 +42,7 @@ export interface DiscoveryDependencies {
 }
 export interface DiscoveryLoop {
     start(): Promise<void>;
-    trigger(): Promise<void>;
+    trigger(forceRefresh?: boolean): Promise<void>;
     dispose(): Promise<void>;
 }
 export declare function createDiscoveryLoop(context: SyncContext, snapshot: ProviderSnapshot, options: PluginOptions, dependencies?: DiscoveryDependencies): DiscoveryLoop;

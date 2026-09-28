@@ -8,8 +8,10 @@ import type { PluginOptions } from "../src/options.js"
 
 class FakeScheduler implements Scheduler {
   tasks: Array<() => void> = []
-  setTimeout(callback: () => void): unknown {
+  delays: number[] = []
+  setTimeout(callback: () => void, milliseconds: number): unknown {
     this.tasks.push(callback)
+    this.delays.push(milliseconds)
     return callback
   }
   clearTimeout(handle: unknown): void {
@@ -171,7 +173,7 @@ describe("发现循环", () => {
     expect(Date.parse(h.snapshot.audit!.lastSuccessfulDiscoveryAt!)).toBeGreaterThanOrEqual(Date.parse(previousSuccess!))
     h.scheduler.runNext()
     await flush()
-    expect(h.fetches).toBe(3)
+    expect(h.fetches).toBe(2)
     await h.loop.dispose()
   })
 
@@ -190,6 +192,24 @@ describe("发现循环", () => {
     await h.loop.trigger()
     expect(h.snapshot.models.map((model) => model.id)).toEqual(["model-b"])
     expect(h.reloads).toBe(3)
+    await h.loop.dispose()
+  })
+
+  test("退避窗口内的非强制刷新不重复请求", async () => {
+    const h = harness()
+    await h.loop.start()
+    h.setFetch(async () => {
+      throw new DiscoveryError("network", "offline")
+    })
+    await h.loop.trigger(true)
+    const afterFailure = h.fetches
+    expect(h.snapshot.audit?.status).toBe("stale")
+    expect(h.scheduler.delays.at(-1)).toBeGreaterThan(0)
+    expect(h.scheduler.delays.at(-1)).toBeLessThanOrEqual(1_000)
+
+    await h.loop.trigger(false)
+    expect(h.fetches).toBe(afterFailure)
+    expect(h.snapshot.audit?.status).toBe("stale")
     await h.loop.dispose()
   })
 

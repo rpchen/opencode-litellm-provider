@@ -1,0 +1,7 @@
+- [x] Route OpenCode network discovery through the shared Core coordinator.
+- [x] Preserve host trigger serialization while mapping explicit and timer-driven force semantics.
+- [x] Use Core retry delay for timer scheduling after degradable failures.
+- [x] Clear obsolete coordinator state on disconnect and identity switch.
+- [x] Add adapter tests for TTL suppression and retry-backoff suppression.
+- [x] Rebuild committed dist against the merged PR5 Core SHA.
+- [x] Run OpenCode delivery, typecheck, test, distribution, OpenSpec, and package gates.

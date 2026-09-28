@@ -254,7 +254,7 @@ test("legacy facades contain only public-entry and host-adapter reexports", (t) 
   const fixture = checkout(t)
   prepareCore(fixture)
   const directory = path.join(fixture.root, "src/core")
-  assert.deepEqual(readdirSync(directory).sort(), ["build.ts", "capabilities.ts", "litellm.ts", "modelsdev.ts", "protocol.ts"])
+  assert.deepEqual(readdirSync(directory).sort(), ["build.ts", "capabilities.ts", "litellm.ts", "modelsdev.ts", "protocol.ts", "refresh.ts"])
   for (const filename of readdirSync(directory)) {
     const text = readFileSync(path.join(directory, filename), "utf8")
     assert.match(text, /^\/\/ Generated/u)
