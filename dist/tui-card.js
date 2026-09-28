@@ -2,6 +2,19 @@ import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "@opentui/soli
 import { createEffect, createSignal, Show } from "solid-js";
 import { jsx } from "@opentui/solid/jsx-runtime";
 import { copyAuditPath, openAuditReport } from "./tui-actions.js";
+export function createDiagnosticsResultStore() {
+    const [results, setResults] = createSignal({});
+    let seen = 0;
+    return {
+        forSession: (sessionID) => results()[sessionID],
+        accept(result) {
+            if (result.sequence <= seen || !result.sessionID)
+                return;
+            seen = result.sequence;
+            setResults((previous) => ({ ...previous, [result.sessionID]: result }));
+        },
+    };
+}
 export function createAuditResultStore() {
     const [results, setResults] = createSignal({});
     let seen = 0;
@@ -71,4 +84,18 @@ export function auditCardActions(context) {
         copy: copyAuditPath,
         manualCopy: (path) => context.ui.dialog.prompt({ title: "手动复制报告路径", value: path }),
     };
+}
+export function DiagnosticsCard(props) {
+    const Text = (text) => jsx("text", {
+        ...text,
+        get fg() { return props.foreground(); },
+    });
+    return Show({
+        get when() { return props.result(); },
+        keyed: true,
+        children: (result) => _jsx("box", { flexDirection: "column", paddingLeft: 2, paddingRight: 2, marginBottom: 1, children: result.lines.map((line) => _jsx(Text, { wrapMode: "char", children: line })) }),
+    });
+}
+export function ProviderCards(props) {
+    return _jsxs("box", { flexDirection: "column", children: [_jsx(DiagnosticsCard, { result: props.diagnosticsResult, foreground: props.foreground }), _jsx(AuditCard, { result: props.auditResult, foreground: props.foreground, actions: props.actions })] });
 }

@@ -14,6 +14,7 @@ function harness(
   options: { promptBehavior?: 'resolve' | 'reject' | 'hang' } = {},
 ) {
   let command: { execute: (input: { sessionID: string }) => Promise<void> } | undefined
+  const commands: Array<{ name?: string; execute: (input: { sessionID: string }) => Promise<void> }> = []
   let handlers: { export: (input: { sessionID: string }) => Promise<unknown>; latest: () => Promise<unknown> } | undefined
   let emits: unknown[] = []
   let disposed = 0
@@ -27,7 +28,11 @@ function harness(
     },
     command: {
       transform: async (register: (editor: { add(value: typeof command): void }) => void) => {
-        register({ add(value) { command = value } })
+        register({ add(value) {
+          const item = value as typeof command & { name?: string }
+          if (item) commands.push(item)
+          if (item?.name === "litellm-audit-export") command = item
+        } })
         return { dispose: async () => { disposed++ } }
       },
     },
@@ -44,6 +49,7 @@ function harness(
   return {
     context,
     get command() { return command! },
+    get commands() { return commands },
     get handlers() { return handlers! },
     get emits() { return emits },
     get disposed() { return disposed },
@@ -87,6 +93,7 @@ describe('审查导出命令', () => {
       return 'C:/audit/example.json'
     })
     const registration = await registerAudit(h.context, snapshot, { writeFile: h.writeFile })
+    expect(h.commands.map((item) => item.name)).toEqual(["litellm-diagnostics", "litellm-audit-export"])
     expect(await h.handlers.latest()).toEqual({ sequence: 0, sessionID: '', ok: false, path: '', error: '' })
     await h.command.execute({ sessionID: 'session-1' })
     expect(written).toHaveLength(1)

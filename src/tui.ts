@@ -1,6 +1,13 @@
 import { define, type Context } from "@opencode/plugin/tui/plugin"
 import { auditRpc } from "./host/audit-rpc.js"
-import { AuditCard, auditCardActions, createAuditResultStore, type AuditResult } from "./tui-card.js"
+import {
+  ProviderCards,
+  auditCardActions,
+  createAuditResultStore,
+  createDiagnosticsResultStore,
+  type AuditResult,
+  type DiagnosticsResult,
+} from "./tui-card.js"
 
 function scheduleRefresh(refresh: () => void): () => void {
   const timer = setInterval(refresh, 1000)
@@ -13,12 +20,25 @@ export async function setupAuditTui(
 ) {
   const rpc = context.client.rpc(auditRpc)
   const store = createAuditResultStore()
+  const diagnosticsStore = createDiagnosticsResultStore()
   const actions = auditCardActions(context)
-  const stop = rpc.events.on("completed", (event) => store.accept(event.data as unknown as AuditResult))
+  const stop = rpc.events.on("completed", (event) => {
+    const data = event.data as unknown as AuditResult & { lines?: string[] }
+    if (Array.isArray(data.lines)) {
+      diagnosticsStore.accept({
+        sequence: data.sequence,
+        sessionID: data.sessionID,
+        lines: data.lines,
+      })
+    } else {
+      store.accept(data)
+    }
+  })
   const remove = context.ui.slot({
     before: "session.composer.top",
-    render: ({ sessionID }) => AuditCard({
-      result: () => sessionID ? store.forSession(sessionID) : undefined,
+    render: ({ sessionID }) => ProviderCards({
+      auditResult: () => sessionID ? store.forSession(sessionID) : undefined,
+      diagnosticsResult: () => sessionID ? diagnosticsStore.forSession(sessionID) : undefined,
       foreground: () => context.theme.text.base,
       actions,
     }),

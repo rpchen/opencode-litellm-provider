@@ -11,10 +11,29 @@ export interface AuditResult {
   error: string
 }
 
+export interface DiagnosticsResult {
+  sequence: number
+  sessionID: string
+  lines: string[]
+}
+
 export interface AuditCardActions {
   open: (path: string) => Promise<void>
   copy: (path: string) => Promise<void>
   manualCopy: (path: string) => Promise<unknown>
+}
+
+export function createDiagnosticsResultStore() {
+  const [results, setResults] = createSignal<Record<string, DiagnosticsResult>>({})
+  let seen = 0
+  return {
+    forSession: (sessionID: string) => results()[sessionID],
+    accept(result: DiagnosticsResult) {
+      if (result.sequence <= seen || !result.sessionID) return
+      seen = result.sequence
+      setResults((previous) => ({ ...previous, [result.sessionID]: result }))
+    },
+  }
 }
 
 export function createAuditResultStore() {
@@ -99,4 +118,36 @@ export function auditCardActions(context: Pick<Context, "ui">): AuditCardActions
     copy: copyAuditPath,
     manualCopy: (path) => context.ui.dialog.prompt({ title: "手动复制报告路径", value: path }),
   }
+}
+
+
+export function DiagnosticsCard(props: {
+  result: () => DiagnosticsResult | undefined
+  foreground: () => NonNullable<JSX.IntrinsicElements["text"]["fg"]>
+}) {
+  const Text = (text: JSX.IntrinsicElements["text"]) => jsx("text", {
+    ...text,
+    get fg() { return props.foreground() },
+  })
+  return Show({
+    get when() { return props.result() },
+    keyed: true,
+    children: (result: DiagnosticsResult) =>
+      <box flexDirection="column" paddingLeft={2} paddingRight={2} marginBottom={1}>
+        {result.lines.map((line) => <Text wrapMode="char">{line}</Text>)}
+      </box>,
+  })
+}
+
+
+export function ProviderCards(props: {
+  auditResult: () => AuditResult | undefined
+  diagnosticsResult: () => DiagnosticsResult | undefined
+  foreground: () => NonNullable<JSX.IntrinsicElements["text"]["fg"]>
+  actions: AuditCardActions
+}) {
+  return <box flexDirection="column">
+    <DiagnosticsCard result={props.diagnosticsResult} foreground={props.foreground} />
+    <AuditCard result={props.auditResult} foreground={props.foreground} actions={props.actions} />
+  </box>
 }

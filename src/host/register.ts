@@ -1,6 +1,7 @@
 import type { ConnectionInfo } from "@opencode/client"
 import { Model, Plugin, Provider } from "@opencode/plugin"
 import type { ModelSpec } from "../core/build.js"
+import type { DiscoveryCacheDiagnostics, DiscoveryDiagnostics } from "../generated/discovery-core/index.js"
 import { PROTOCOL_PACKAGES } from "../core/protocol.js"
 
 export interface Registration {
@@ -62,6 +63,12 @@ export interface AuditSnapshot {
   readonly view?: RegistrationView
 }
 
+export interface ProviderDiagnosticsSnapshot {
+  readonly discovery?: DiscoveryDiagnostics
+  readonly cache?: DiscoveryCacheDiagnostics
+  readonly note?: string
+}
+
 export interface ProviderSnapshot {
   ready: boolean
   connection?: ConnectionInfo
@@ -69,6 +76,7 @@ export interface ProviderSnapshot {
   models: ModelSpec[]
   registrationView?: RegistrationView
   audit?: AuditSnapshot
+  diagnostics?: ProviderDiagnosticsSnapshot
 }
 
 export function applyIntegration(editor: IntegrationEditorLike): void {

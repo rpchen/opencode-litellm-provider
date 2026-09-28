@@ -1,4 +1,5 @@
 import { buildModelSpecs, modelFingerprint, toOpenCodeModelSpec } from "../core/build.js";
+import { createDiscoveryCacheDiagnostics, diagnoseModelSpecs, } from "../core/diagnostics.js";
 import { normalizeLiteLLMURL } from "../core/litellm.js";
 import { createDiscoveryCoordinator } from "../core/refresh.js";
 import { compareDiscoverySnapshots, createDiscoverySnapshot, endpointFingerprint, inspectDiscoverySnapshot, } from "../core/snapshot.js";
@@ -128,6 +129,10 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
         snapshot.models = [];
         snapshot.registrationView = undefined;
         snapshot.audit = { status };
+        snapshot.diagnostics = {
+            cache: createDiscoveryCacheDiagnostics({ source: "none" }),
+            note: status === "disconnected" ? "LiteLLM 尚未连接。" : undefined,
+        };
         if (identity)
             coordinator.clear(identity);
         identity = undefined;
@@ -147,6 +152,12 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
         snapshot.models = [];
         snapshot.registrationView = view;
         snapshot.audit = { status };
+        snapshot.diagnostics = {
+            cache: createDiscoveryCacheDiagnostics({ source: "none" }),
+            note: status === "cleared-auth"
+                ? "LiteLLM 返回认证失败；请检查当前凭据权限。"
+                : "LiteLLM model/info 端点不可用。",
+        };
         if (changed)
             await reload();
         lastFingerprint = emptyFingerprint;
@@ -170,6 +181,10 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
             snapshot.models = [];
             snapshot.registrationView = undefined;
             snapshot.audit = { status: "switching" };
+            snapshot.diagnostics = {
+                cache: createDiscoveryCacheDiagnostics({ source: "none", pending: true }),
+                note: "连接已切换，等待新 endpoint 完成发现。",
+            };
             lastFingerprint = undefined;
             persistedIdentity = undefined;
             persistedSnapshot = undefined;
@@ -178,6 +193,10 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
         }
         else if (!snapshot.ready && snapshot.audit?.status === "disconnected") {
             snapshot.audit = { status: "pending" };
+            snapshot.diagnostics = {
+                cache: createDiscoveryCacheDiagnostics({ source: "none", pending: true }),
+                note: "等待首次网络发现。",
+            };
         }
         const resolved = await context.integration.connection.resolve(connection);
         if (!isKeyCredential(resolved)) {
@@ -212,6 +231,10 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
             snapshot.models = [];
             snapshot.registrationView = undefined;
             snapshot.audit = { status: "switching" };
+            snapshot.diagnostics = {
+                cache: createDiscoveryCacheDiagnostics({ source: "none", pending: true }),
+                note: "endpoint 或凭据已变化，等待新结果。",
+            };
             lastFingerprint = undefined;
             if (hadRegistration)
                 await reload();
@@ -240,6 +263,13 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                 lastSuccessfulDiscoveryAt: previousPersisted.discoveredAt,
                 view: restoredView,
             };
+            snapshot.diagnostics = {
+                cache: createDiscoveryCacheDiagnostics({
+                    source: "snapshot",
+                    refreshedAt: Date.parse(previousPersisted.discoveredAt),
+                }),
+                note: "当前结果来自 endpoint-compatible 持久化快照，等待网络确认。",
+            };
             await reload();
         }
         try {
@@ -249,8 +279,17 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                     fetchImpl: dependencies.fetchImpl,
                     logger,
                 });
-                const models = buildModels(response, catalog, options);
-                return { models, fingerprint: fingerprint(models) };
+                if (dependencies.buildModels) {
+                    const models = buildModels(response, catalog, options);
+                    return { models, fingerprint: fingerprint(models) };
+                }
+                const diagnosed = diagnoseModelSpecs(response, catalog, options);
+                const models = diagnosed.models.map(toOpenCodeModelSpec);
+                return {
+                    models,
+                    fingerprint: fingerprint(models),
+                    diagnostics: diagnosed.diagnostics,
+                };
             }, {
                 forceRefresh,
                 failurePolicy: (error) => error instanceof DiscoveryError && (error.kind === "auth" || error.kind === "notfound")
@@ -264,6 +303,17 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                 logger.warn(`LiteLLM 发现失败，使用 last-known-good：${redact(message, resolved.key)}`);
                 if (snapshot.audit?.view)
                     snapshot.audit = { ...snapshot.audit, status: "stale" };
+                snapshot.diagnostics = {
+                    discovery: coordinated.value.diagnostics ?? snapshot.diagnostics?.discovery,
+                    cache: createDiscoveryCacheDiagnostics({
+                        source: "stale",
+                        stale: true,
+                        refreshedAt: coordinated.refreshedAt,
+                        failureCount: coordinated.failureCount,
+                        nextRetryAt: coordinated.nextRetryAt,
+                    }),
+                    note: "刷新失败，保留上次成功结果。",
+                };
                 return;
             }
             const { models, fingerprint: nextFingerprint } = coordinated.value;
@@ -292,6 +342,16 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                 lastSuccessfulDiscoveryAt: new Date(coordinated.refreshedAt).toISOString(),
                 view,
             };
+            snapshot.diagnostics = {
+                discovery: coordinated.value.diagnostics,
+                cache: createDiscoveryCacheDiagnostics({
+                    source: coordinated.source === "cache" ? "memory-cache" : "network",
+                    stale: false,
+                    refreshedAt: coordinated.refreshedAt,
+                    failureCount: coordinated.failureCount,
+                    nextRetryAt: coordinated.nextRetryAt,
+                }),
+            };
         }
         catch (error) {
             if (disposed || identity !== nextIdentity)
@@ -306,6 +366,19 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                 logger.warn(`LiteLLM 发现失败，保留上次结果：${redact(message, resolved.key)}`);
                 if (snapshot.audit?.view)
                     snapshot.audit = { ...snapshot.audit, status: "stale" };
+                const state = coordinator.state(nextIdentity);
+                snapshot.diagnostics = {
+                    discovery: snapshot.diagnostics?.discovery,
+                    cache: createDiscoveryCacheDiagnostics({
+                        source: state.hasValue ? "stale" : "none",
+                        stale: state.hasValue,
+                        refreshedAt: state.refreshedAt,
+                        failureCount: state.failureCount,
+                        nextRetryAt: state.nextRetryAt,
+                        pending: state.pending,
+                    }),
+                    note: "发现失败；详细错误已通过宿主日志记录。",
+                };
             }
         }
         finally {
