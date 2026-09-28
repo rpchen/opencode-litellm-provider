@@ -1,0 +1,8 @@
+- [x] Add OpenCode provider diagnostic snapshot and safe formatter.
+- [x] Use Core diagnostics in the production discovery path.
+- [x] Track snapshot/network/memory-cache/stale lifecycle state.
+- [x] Add litellm-diagnostics command over RPC without a model turn.
+- [x] Add a dedicated diagnostics TUI card while preserving audit export.
+- [x] Include package version and fixed Core provenance safely.
+- [ ] Rebuild committed dist against merged PR7 Core SHA.
+- [ ] Run OpenCode delivery, typecheck, tests, TUI, distribution, OpenSpec and package gates.
