@@ -11,14 +11,13 @@ const result = {
   required: ["sequence", "sessionID", "ok", "path", "error"],
   additionalProperties: false,
 } as const
-const diagnostics = {
+const completed = {
   type: "object",
   properties: {
-    sequence: { type: "number" },
-    sessionID: { type: "string" },
+    ...result.properties,
     lines: { type: "array", items: { type: "string" } },
   },
-  required: ["sequence", "sessionID", "lines"],
+  required: result.required,
   additionalProperties: false,
 } as const
 
@@ -35,10 +34,6 @@ export const auditRpc = {
       output: result,
     },
     latest: { input: empty, output: result },
-    latestDiagnostics: { input: empty, output: diagnostics },
   },
-  events: {
-    completed: { schema: result },
-    diagnostics: { schema: diagnostics },
-  },
+  events: { completed: { schema: completed } },
 } as const
