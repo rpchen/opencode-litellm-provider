@@ -389,7 +389,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     },
     "id": "shared-route",
     "limit": {
-      "context": 128000,
+      "context": 1050000,
       "input": 128000,
       "output": 128000,
     },
