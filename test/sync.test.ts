@@ -252,9 +252,14 @@ describe("发现循环", () => {
     expect(h.snapshot.audit?.lastSuccessfulDiscoveryAt).toBeTruthy()
     expect(h.snapshot.audit?.view).toBe(h.snapshot.registrationView)
     expect(Date.parse(h.snapshot.audit!.lastSuccessfulDiscoveryAt!)).toBeGreaterThanOrEqual(Date.parse(previousSuccess!))
+
+    await h.loop.trigger(true)
+    expect(h.fetches).toBe(beforeCachedRefresh + 1)
+    expect(h.snapshot.diagnostics?.cache?.source).toBe("network")
+
     h.scheduler.runNext()
     await flush()
-    expect(h.fetches).toBe(2)
+    expect(h.fetches).toBe(beforeCachedRefresh + 1)
     await h.loop.dispose()
   })
 
