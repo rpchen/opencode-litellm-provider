@@ -178,9 +178,8 @@ function persistedSnapshot(id: string, credentialKey = "sk-first") {
 }
 
 async function flush(): Promise<void> {
-  await Promise.resolve()
-  await Promise.resolve()
-  await Promise.resolve()
+  // Storage restore adds asynchronous hops before network discovery/event-triggered work.
+  for (let index = 0; index < 10; index += 1) await Promise.resolve()
 }
 
 describe("发现循环", () => {
@@ -200,7 +199,9 @@ describe("发现循环", () => {
     pending.resolve({ model: "model-a" })
     await starting
     expect(h.snapshot.audit?.status).toBe("ready")
-    expect(h.reloads).toBe(1)
+    // The test fixture uses a synthetic host package, so the network-confirmed host
+    // fingerprint differs from the package reconstructed from the neutral snapshot.
+    expect(h.reloads).toBe(2)
     const persisted = JSON.parse(String(h.storageValue)) as { models: Array<Record<string, unknown>> }
     expect(persisted.models[0]?.package).toBeUndefined()
     await h.loop.dispose()
