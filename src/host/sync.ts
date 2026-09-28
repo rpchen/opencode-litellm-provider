@@ -1,6 +1,11 @@
 import type { ConnectionInfo } from "@opencode/client"
 import type { ModelSpec } from "../core/build.js"
 import { buildModelSpecs, modelFingerprint, toOpenCodeModelSpec } from "../core/build.js"
+import {
+  createDiscoveryCacheDiagnostics,
+  diagnoseModelSpecs,
+  type DiscoveryDiagnostics,
+} from "../core/diagnostics.js"
 import { normalizeLiteLLMURL } from "../core/litellm.js"
 import { createDiscoveryCoordinator } from "../core/refresh.js"
 import {
@@ -112,7 +117,11 @@ export function createDiscoveryLoop(
   const fetchCatalog = dependencies.getModelsDev ?? getModelsDevCatalog
   const buildModels = dependencies.buildModels ?? buildModelSpecs
   const fingerprint = dependencies.fingerprint ?? modelFingerprint
-  const coordinator = createDiscoveryCoordinator<{ models: ModelSpec[]; fingerprint: string }>()
+  const coordinator = createDiscoveryCoordinator<{
+    models: ModelSpec[]
+    fingerprint: string
+    diagnostics?: DiscoveryDiagnostics
+  }>()
   const abortEvents = new AbortController()
   snapshot.audit ??= { status: "disconnected" }
 
@@ -214,6 +223,10 @@ export function createDiscoveryLoop(
     snapshot.models = []
     snapshot.registrationView = undefined
     snapshot.audit = { status }
+    snapshot.diagnostics = {
+      cache: createDiscoveryCacheDiagnostics({ source: "none" }),
+      note: status === "disconnected" ? "LiteLLM 尚未连接。" : undefined,
+    }
     if (identity) coordinator.clear(identity)
     identity = undefined
     lastFingerprint = undefined
@@ -236,6 +249,12 @@ export function createDiscoveryLoop(
     snapshot.models = []
     snapshot.registrationView = view
     snapshot.audit = { status }
+    snapshot.diagnostics = {
+      cache: createDiscoveryCacheDiagnostics({ source: "none" }),
+      note: status === "cleared-auth"
+        ? "LiteLLM 返回认证失败；请检查当前凭据权限。"
+        : "LiteLLM model/info 端点不可用。",
+    }
     if (changed) await reload()
     lastFingerprint = emptyFingerprint
   }
@@ -332,6 +351,13 @@ export function createDiscoveryLoop(
         lastSuccessfulDiscoveryAt: previousPersisted.discoveredAt,
         view: restoredView,
       }
+      snapshot.diagnostics = {
+        cache: createDiscoveryCacheDiagnostics({
+          source: "snapshot",
+          refreshedAt: Date.parse(previousPersisted.discoveredAt),
+        }),
+        note: "当前结果来自 endpoint-compatible 持久化快照，等待网络确认。",
+      }
       await reload()
     }
 
@@ -344,8 +370,17 @@ export function createDiscoveryLoop(
             fetchImpl: dependencies.fetchImpl,
             logger,
           })
-          const models = buildModels(response, catalog, options)
-          return { models, fingerprint: fingerprint(models) }
+          if (dependencies.buildModels) {
+            const models = buildModels(response, catalog, options)
+            return { models, fingerprint: fingerprint(models) }
+          }
+          const diagnosed = diagnoseModelSpecs(response, catalog, options)
+          const models = diagnosed.models.map(toOpenCodeModelSpec)
+          return {
+            models,
+            fingerprint: fingerprint(models),
+            diagnostics: diagnosed.diagnostics,
+          }
         },
         {
           forceRefresh,
@@ -361,6 +396,17 @@ export function createDiscoveryLoop(
         const message = coordinated.error instanceof Error ? coordinated.error.message : String(coordinated.error)
         logger.warn(`LiteLLM 发现失败，使用 last-known-good：${redact(message, resolved.key)}`)
         if (snapshot.audit?.view) snapshot.audit = { ...snapshot.audit, status: "stale" }
+        snapshot.diagnostics = {
+          discovery: coordinated.value.diagnostics ?? snapshot.diagnostics?.discovery,
+          cache: createDiscoveryCacheDiagnostics({
+            source: "stale",
+            stale: true,
+            refreshedAt: coordinated.refreshedAt,
+            failureCount: coordinated.failureCount,
+            nextRetryAt: coordinated.nextRetryAt,
+          }),
+          note: "刷新失败，保留上次成功结果。",
+        }
         return
       }
 
@@ -395,6 +441,16 @@ export function createDiscoveryLoop(
         lastSuccessfulDiscoveryAt: new Date(coordinated.refreshedAt).toISOString(),
         view,
       }
+      snapshot.diagnostics = {
+        discovery: coordinated.value.diagnostics,
+        cache: createDiscoveryCacheDiagnostics({
+          source: coordinated.source === "cache" ? "memory-cache" : "network",
+          stale: false,
+          refreshedAt: coordinated.refreshedAt,
+          failureCount: coordinated.failureCount,
+          nextRetryAt: coordinated.nextRetryAt,
+        }),
+      }
     } catch (error) {
       if (disposed || identity !== nextIdentity) return
       if (error instanceof DiscoveryError && (error.kind === "auth" || error.kind === "notfound")) {
@@ -409,6 +465,19 @@ export function createDiscoveryLoop(
         const message = error instanceof Error ? error.message : String(error)
         logger.warn(`LiteLLM 发现失败，保留上次结果：${redact(message, resolved.key)}`)
         if (snapshot.audit?.view) snapshot.audit = { ...snapshot.audit, status: "stale" }
+        const state = coordinator.state(nextIdentity)
+        snapshot.diagnostics = {
+          discovery: snapshot.diagnostics?.discovery,
+          cache: createDiscoveryCacheDiagnostics({
+            source: state.hasValue ? "stale" : "none",
+            stale: state.hasValue,
+            refreshedAt: state.refreshedAt,
+            failureCount: state.failureCount,
+            nextRetryAt: state.nextRetryAt,
+            pending: state.pending,
+          }),
+          note: "发现失败；详细错误已通过宿主日志记录。",
+        }
       }
     } finally {
       schedule()
