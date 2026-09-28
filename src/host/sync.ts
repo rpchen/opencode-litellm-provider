@@ -61,7 +61,7 @@ export interface DiscoveryDependencies {
 
 export interface DiscoveryLoop {
   start(): Promise<void>
-  trigger(): Promise<void>
+  trigger(forceRefresh?: boolean): Promise<void>
   dispose(): Promise<void>
 }
 
@@ -128,7 +128,7 @@ export function createDiscoveryLoop(
     const retryDelay = identity ? coordinator.retryDelayMs(identity) : undefined
     timer = scheduler.setTimeout(() => {
       timer = undefined
-      void trigger()
+      void trigger(false)
     }, retryDelay ?? options.pollInterval * 1000)
   }
 
@@ -164,7 +164,7 @@ export function createDiscoveryLoop(
     lastFingerprint = emptyFingerprint
   }
 
-  const refreshOnce = async () => {
+  const refreshOnce = async (forceRefresh: boolean) => {
     const connection = await context.integration.connection.active(INTEGRATION_ID)
     if (!connection) {
       cancelTimer()
@@ -244,6 +244,7 @@ export function createDiscoveryLoop(
           return { models, fingerprint: fingerprint(models) }
         },
         {
+          forceRefresh,
           failurePolicy: (error) =>
             error instanceof DiscoveryError && (error.kind === "auth" || error.kind === "notfound")
               ? "clear"
@@ -295,23 +296,28 @@ export function createDiscoveryLoop(
     }
   }
 
-  const trigger = (): Promise<void> => {
+  let queuedForce = false
+  const trigger = (forceRefresh = true): Promise<void> => {
     if (disposed) return Promise.resolve()
     if (running) {
       queued = true
+      queuedForce ||= forceRefresh
       return running
     }
 
     running = (async () => {
+      let nextForce = forceRefresh
       do {
         queued = false
+        queuedForce = false
         try {
-          await refreshOnce()
+          await refreshOnce(nextForce)
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           logger.warn(`LiteLLM 发现循环出错，将在下个周期重试：${redact(message)}`)
           schedule()
         }
+        nextForce = queuedForce
       } while (queued && !disposed)
     })().finally(() => {
       running = undefined
@@ -325,7 +331,7 @@ export function createDiscoveryLoop(
         if (disposed) break
         if (switchedForLiteLLM(event)) {
           cancelTimer()
-          void trigger()
+          void trigger(true)
         }
       }
     } catch (error) {
@@ -340,7 +346,7 @@ export function createDiscoveryLoop(
     async start() {
       if (disposed) return
       eventTask = listen()
-      await trigger()
+      await trigger(true)
     },
     trigger,
     async dispose() {
