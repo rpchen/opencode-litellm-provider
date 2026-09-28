@@ -2,4 +2,4 @@
 - [x] Add a Core-to-OpenCode vertical adapter assertion.
 - [x] Update README for the user-visible discovery-quality behavior.
 - [x] Rebuild committed dist from merged PR8 Core SHA.
-- [ ] Run verify:dist, delivery integrity, typecheck, tests, TUI, clean distribution, package and strict OpenSpec validation.
+- [x] Run verify:dist, delivery integrity, typecheck, tests, TUI, clean distribution, package and strict OpenSpec validation.
