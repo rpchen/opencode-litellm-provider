@@ -1,0 +1,65 @@
+import { describe, expect, test } from "bun:test"
+import { createDiagnosticsLines } from "../src/host/diagnostics.js"
+import type { ProviderSnapshot } from "../src/host/register.js"
+
+describe("OpenCode diagnostics", () => {
+  test("renders safe shared discovery and cache summary", () => {
+    const snapshot: ProviderSnapshot = {
+      ready: true,
+      models: [],
+      audit: {
+        status: "ready",
+        lastSuccessfulDiscoveryAt: "2026-09-28T08:00:00.000Z",
+      },
+      diagnostics: {
+        cache: {
+          source: "network",
+          stale: false,
+          refreshedAt: Date.parse("2026-09-28T08:00:00.000Z"),
+          ageMs: 0,
+          failureCount: 0,
+          pending: false,
+        },
+        discovery: {
+          schemaVersion: 1,
+          modelInfo: {
+            status: "ok",
+            primaryPath: "/v1/model/info",
+            fallbackPath: "/model/info",
+          },
+          modelsList: {
+            status: "unused",
+            path: "/v1/models",
+            reason: "not authoritative",
+          },
+          modelsDev: { status: "degraded" },
+          stats: {
+            responseEntries: 2,
+            deployments: 1,
+            filteredEntries: 1,
+            models: 1,
+            modelsDevMatched: 0,
+            modelsDevUnmatched: 1,
+            protocolFallbacks: 1,
+          },
+          models: [],
+          issues: [{
+            severity: "warning",
+            stage: "models-dev",
+            code: "models-dev-unmatched",
+            modelId: "model-a",
+            message: "safe",
+          }],
+        },
+      },
+    }
+    const text = createDiagnosticsLines(snapshot, Date.parse("2026-09-28T08:01:00.000Z")).join("\n")
+    expect(text).toContain("/v1/models：未作为发现源")
+    expect(text).toContain("models.dev：degraded")
+    expect(text).toContain("协议 fallback：1")
+    expect(text).toContain("model-a: models-dev-unmatched")
+    expect(text).toContain("Core：main@f1faf87fb7e2436358b190dd9b6fabd09b511c1f")
+    expect(text).not.toContain("sk-secret")
+    expect(text).not.toContain("private.example")
+  })
+})
