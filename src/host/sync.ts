@@ -164,11 +164,16 @@ export function createDiscoveryLoop(
       persistedIdentity === nextIdentity &&
       persistedSnapshot?.endpointFingerprint === value.endpointFingerprint &&
       persistedSnapshot.modelFingerprint === value.modelFingerprint
-    persistedIdentity = nextIdentity
-    persistedSnapshot = value
-    if (unchanged || !context.storage) return
+    if (unchanged) return
+    if (!context.storage) {
+      persistedIdentity = nextIdentity
+      persistedSnapshot = value
+      return
+    }
     try {
       await context.storage.set(DISCOVERY_SNAPSHOT_STORAGE_KEY, JSON.stringify(value))
+      persistedIdentity = nextIdentity
+      persistedSnapshot = value
     } catch (error) {
       logger.warn(`LiteLLM snapshot 持久化失败（不影响本次发现）：${redact(error instanceof Error ? error.message : String(error))}`)
     }
