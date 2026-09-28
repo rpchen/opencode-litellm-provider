@@ -138,3 +138,16 @@ export function DiagnosticsCard(props: {
       </box>,
   })
 }
+
+
+export function ProviderCards(props: {
+  auditResult: () => AuditResult | undefined
+  diagnosticsResult: () => DiagnosticsResult | undefined
+  foreground: () => NonNullable<JSX.IntrinsicElements["text"]["fg"]>
+  actions: AuditCardActions
+}) {
+  return <box flexDirection="column">
+    <DiagnosticsCard result={props.diagnosticsResult} foreground={props.foreground} />
+    <AuditCard result={props.auditResult} foreground={props.foreground} actions={props.actions} />
+  </box>
+}
