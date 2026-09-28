@@ -4,5 +4,5 @@
 - [x] Add litellm-diagnostics command over RPC without a model turn.
 - [x] Add a dedicated diagnostics TUI card while preserving audit export.
 - [x] Include package version and fixed Core provenance safely.
-- [ ] Rebuild committed dist against merged PR7 Core SHA.
+- [x] Rebuild committed dist against merged PR7 Core SHA.
 - [ ] Run OpenCode delivery, typecheck, tests, TUI, distribution, OpenSpec and package gates.
