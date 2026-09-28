@@ -2,6 +2,7 @@ import type { ConnectionInfo } from "@opencode/client"
 import type { ModelSpec } from "../core/build.js"
 import { buildModelSpecs, modelFingerprint } from "../core/build.js"
 import { normalizeLiteLLMURL } from "../core/litellm.js"
+import { createDiscoveryCoordinator } from "../core/refresh.js"
 import type { PluginOptions } from "../options.js"
 import {
   DiscoveryError,
@@ -97,6 +98,7 @@ export function createDiscoveryLoop(
   const fetchCatalog = dependencies.getModelsDev ?? getModelsDevCatalog
   const buildModels = dependencies.buildModels ?? buildModelSpecs
   const fingerprint = dependencies.fingerprint ?? modelFingerprint
+  const coordinator = createDiscoveryCoordinator<{ models: ModelSpec[]; fingerprint: string }>()
   const abortEvents = new AbortController()
   snapshot.audit ??= { status: "disconnected" }
 
@@ -123,10 +125,11 @@ export function createDiscoveryLoop(
   const schedule = () => {
     cancelTimer()
     if (disposed || (!snapshot.connection && !reloadPending)) return
+    const retryDelay = identity ? coordinator.retryDelayMs(identity) : undefined
     timer = scheduler.setTimeout(() => {
       timer = undefined
       void trigger()
-    }, options.pollInterval * 1000)
+    }, retryDelay ?? options.pollInterval * 1000)
   }
 
   const removeProvider = async (status: DiscoveryStatus = "disconnected") => {
@@ -137,6 +140,7 @@ export function createDiscoveryLoop(
     snapshot.models = []
     snapshot.registrationView = undefined
     snapshot.audit = { status }
+    if (identity) coordinator.clear(identity)
     identity = undefined
     lastFingerprint = undefined
     if (hadRegistration) await reload()
@@ -214,6 +218,7 @@ export function createDiscoveryLoop(
     const nextIdentity = connectionIdentity(connection, resolved, addresses.rootURL)
     const connectionChanged = identity !== undefined && identity !== nextIdentity
     if (connectionChanged) {
+      if (identity) coordinator.clear(identity)
       const hadRegistration = snapshot.ready
       snapshot.ready = false
       snapshot.connection = connection
@@ -227,15 +232,34 @@ export function createDiscoveryLoop(
     identity = nextIdentity
 
     try {
-      const response = await fetchModelInfo(addresses, resolved.key, dependencies.fetchImpl)
-      const catalog = await fetchCatalog({
-        fetchImpl: dependencies.fetchImpl,
-        logger,
-      })
+      const coordinated = await coordinator.refresh(
+        nextIdentity,
+        async () => {
+          const response = await fetchModelInfo(addresses, resolved.key, dependencies.fetchImpl)
+          const catalog = await fetchCatalog({
+            fetchImpl: dependencies.fetchImpl,
+            logger,
+          })
+          const models = buildModels(response, catalog, options)
+          return { models, fingerprint: fingerprint(models) }
+        },
+        {
+          failurePolicy: (error) =>
+            error instanceof DiscoveryError && (error.kind === "auth" || error.kind === "notfound")
+              ? "clear"
+              : "stale",
+        },
+      )
       if (disposed || identity !== nextIdentity) return
 
-      const models = buildModels(response, catalog, options)
-      const nextFingerprint = fingerprint(models)
+      if (coordinated.source === "stale") {
+        const message = coordinated.error instanceof Error ? coordinated.error.message : String(coordinated.error)
+        logger.warn(`LiteLLM 发现失败，使用 last-known-good：${redact(message, resolved.key)}`)
+        if (snapshot.audit?.view) snapshot.audit = { ...snapshot.audit, status: "stale" }
+        return
+      }
+
+      const { models, fingerprint: nextFingerprint } = coordinated.value
       const changed = !snapshot.ready || lastFingerprint !== nextFingerprint || reloadPending
       const view = changed || !snapshot.registrationView
         ? createRegistrationView(models, addresses.apiBaseURL)
@@ -249,7 +273,7 @@ export function createDiscoveryLoop(
       lastFingerprint = nextFingerprint
       snapshot.audit = {
         status: models.length === 0 ? "empty" : "ready",
-        lastSuccessfulDiscoveryAt: new Date().toISOString(),
+        lastSuccessfulDiscoveryAt: new Date(coordinated.refreshedAt).toISOString(),
         view,
       }
     } catch (error) {
