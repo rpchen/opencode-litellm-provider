@@ -6,6 +6,13 @@ describe("OpenCode diagnostics", () => {
   test("renders safe shared discovery and cache summary", () => {
     const snapshot: ProviderSnapshot = {
       ready: true,
+      connection: {
+        type: "credential",
+        id: "sk-secret",
+        label: "https://private.example",
+        method: "key",
+      },
+      apiBaseURL: "https://private.example/v1",
       models: [],
       audit: {
         status: "ready",
