@@ -29,6 +29,14 @@ test("共享 ModelSpec 保持中立，OpenCode 适配只增加 SDK package", () 
   expect(neutral.every((model) => !Object.hasOwn(model, "package"))).toBe(true)
 })
 
+test("PR8 的总 context 语义贯穿 Core 到 OpenCode 模型", () => {
+  const neutral = discover(litellm, modelsDev, options)
+  const adapted = neutral.map(toOpenCodeModelSpec)
+  const shared = adapted.find((model) => model.id === "shared-route")
+  expect(shared?.limit).toEqual({ context: 1050000, input: 128000, output: 128000 })
+  expect(shared?.package).toBe("@opencode/ai/providers/openai-compatible")
+})
+
 test("宿主 SDK 映射与迁移前完全相同，Protocol 来自公共入口", () => {
   const fromOptions = (protocol: OptionsProtocol): Protocol => protocol
   const fromCore = (protocol: Protocol): OptionsProtocol => protocol

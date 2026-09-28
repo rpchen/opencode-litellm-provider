@@ -30,7 +30,7 @@ describe("能力映射", () => {
   test("272k 与 512k 阶梯截断，可关闭", () => {
     expect(mapped("gpt-5.5").limit.context).toBe(272000)
     expect(mapped("minimax-m3").limit.context).toBe(512000)
-    expect(mapped("gpt-5.5", false).limit.context).toBe(900000)
+    expect(mapped("gpt-5.5", false).limit).toMatchObject({ context: 1050000, input: 900000 })
   })
 
   test("tiered_pricing 首个非零起点截断", () => {

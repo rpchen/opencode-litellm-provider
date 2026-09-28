@@ -6,7 +6,7 @@ OpenCode v2 插件：连接 LiteLLM 后，自动发现当前 API Key 可用的�
 
 - 从 LiteLLM `/v1/model/info` 发现当前 Key 可见的对话模型
 - 自动选择 Chat Completions、Responses 或 Anthropic Messages
-- 映射上下文窗口、输出上限、工具调用、模态和价格
+- 分开映射总 context、最大 input、输出上限，以及工具调用、模态和价格
 - 用 models.dev 补充元数据和 reasoning variants
 - 启动、连接变化和轮询时同步模型清单
 - 短暂故障时保留上次成功结果，认证失败等破坏性错误时撤下旧模型
@@ -165,6 +165,8 @@ opencode reload
 | 断开 LiteLLM 连接 | 撤下 provider 模型 |
 
 `/v1/model/info` 是模型发现的事实来源；`/v1/models` 不作为发现源。embedding、图像生成等非对话模型不会注册。
+
+模型上限按 PR8 的发现规则合并：总 context 与最大 input 分开处理；models.dev 可补充总 context，LiteLLM 的 `max_input_tokens` 仍作为 input 限制。两者冲突时不会再把 input 上限误当成总 context。models.dev 未命中的私有模型仍会保留。
 
 ## 升级与回滚
 

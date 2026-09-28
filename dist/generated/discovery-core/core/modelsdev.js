@@ -1,7 +1,7 @@
 /**
  * Host-independent models.dev record selection and reasoning variant extraction.
  */
-import { isRecord, optionalNumber, optionalString, stripRoutePrefix, } from "./litellm.js";
+import { isRecord, optionalBoolean, optionalNumber, optionalString, stripRoutePrefix, } from "./litellm.js";
 const FAMILY_RULES = [
     [/^(?:gpt-|o\d|.*codex)/, { primary: "openai", alternatives: [] }],
     [/^claude-/, { primary: "anthropic", alternatives: [] }],
@@ -23,14 +23,43 @@ function providers(catalog) {
         return [[providerID, provider.models]];
     });
 }
-function findExact(models, candidate) {
-    const normalized = candidate.toLowerCase();
+/**
+ * Conservative canonicalization for identity matching only. It deliberately does
+ * not strip semantic suffixes such as "-free", dates, sizes, or provider tiers.
+ */
+export function canonicalModelID(value) {
+    return stripRoutePrefix(value.trim())
+        .trim()
+        .toLowerCase()
+        .replace(/[\s_]+/g, "-")
+        .replace(/-+/g, "-");
+}
+function recordAliases(key, value) {
+    const aliases = Array.isArray(value.aliases)
+        ? value.aliases.filter((item) => typeof item === "string" && item.length > 0)
+        : [];
+    return [key, optionalString(value.id), ...aliases].filter((item) => item !== undefined);
+}
+function findMatch(models, candidate) {
+    const raw = stripRoutePrefix(candidate.trim()).toLowerCase();
+    const canonical = canonicalModelID(candidate);
     for (const [key, value] of Object.entries(models)) {
         if (!isRecord(value))
             continue;
         const id = optionalString(value.id) ?? key;
-        if (key.toLowerCase() === normalized || id.toLowerCase() === normalized) {
-            return [id, value];
+        const aliases = recordAliases(key, value);
+        for (const alias of aliases) {
+            const normalizedAlias = stripRoutePrefix(alias.trim()).toLowerCase();
+            if (normalizedAlias === raw) {
+                const kind = alias === key || alias === optionalString(value.id) ? "exact" : "alias";
+                return [id, value, kind];
+            }
+        }
+        for (const alias of aliases) {
+            if (canonicalModelID(alias) === canonical) {
+                const kind = alias === key || alias === optionalString(value.id) ? "canonical" : "alias";
+                return [id, value, kind];
+            }
         }
     }
     return undefined;
@@ -62,12 +91,21 @@ export function familyProviders(group) {
             return { primary: explicit, alternatives: [] };
     }
     for (const candidate of candidateModelIDs(group)) {
-        const normalized = stripRoutePrefix(candidate).toLowerCase();
+        const normalized = canonicalModelID(candidate);
         const match = FAMILY_RULES.find(([pattern]) => pattern.test(normalized));
         if (match)
             return match[1];
     }
     return undefined;
+}
+function selected(providerID, candidate, match) {
+    return {
+        providerID,
+        modelID: match[0],
+        record: match[1],
+        matchedCandidate: candidate,
+        matchKind: match[2],
+    };
 }
 export function selectModelsDevRecord(group, catalog) {
     const allProviders = providers(catalog);
@@ -78,22 +116,46 @@ export function selectModelsDevRecord(group, catalog) {
             const provider = allProviders.find(([id]) => id.toLowerCase() === providerID.toLowerCase());
             if (!provider)
                 continue;
-            const match = findExact(provider[1], candidate);
+            const match = findMatch(provider[1], candidate);
             if (match)
-                return { providerID: provider[0], modelID: match[0], record: match[1] };
+                return selected(provider[0], candidate, match);
         }
         const zen = allProviders.find(([id]) => id.toLowerCase() === "opencode");
-        const zenMatch = zen && findExact(zen[1], candidate);
+        const zenMatch = zen && findMatch(zen[1], candidate);
         if (zen && zenMatch)
-            return { providerID: zen[0], modelID: zenMatch[0], record: zenMatch[1] };
+            return selected(zen[0], candidate, zenMatch);
         const matches = allProviders.flatMap(([providerID, models]) => {
-            const match = findExact(models, candidate);
-            return match ? [{ providerID, modelID: match[0], record: match[1] }] : [];
+            const match = findMatch(models, candidate);
+            return match ? [selected(providerID, candidate, match)] : [];
         });
         if (matches.length === 1)
             return matches[0];
     }
     return undefined;
+}
+function modelsDevReasoning(selected) {
+    const declared = optionalBoolean(selected?.record.reasoning);
+    if (declared !== undefined)
+        return declared;
+    const options = selected?.record.reasoning_options;
+    return Array.isArray(options) && options.length > 0 ? true : undefined;
+}
+export function resolveReasoningSupport(group, selected) {
+    const modelsDev = modelsDevReasoning(selected);
+    const explicit = group.deployments.map((deployment) => optionalBoolean(deployment.modelInfo.supports_reasoning));
+    const conflict = modelsDev !== undefined &&
+        explicit.some((value) => value !== undefined && value !== modelsDev);
+    const supported = explicit.every((value) => value ?? modelsDev ?? false);
+    if (explicit.every((value) => value !== undefined)) {
+        return { supported, source: "litellm", conflict };
+    }
+    if (explicit.every((value) => value === undefined) && modelsDev !== undefined) {
+        return { supported, source: "models.dev", conflict };
+    }
+    if (explicit.some((value) => value !== undefined) || modelsDev !== undefined) {
+        return { supported, source: "derived", conflict };
+    }
+    return { supported: false, source: "default", conflict: false };
 }
 function effortVariants(options, protocol) {
     if (!isRecord(options) || options.type !== "effort" || !Array.isArray(options.values))
