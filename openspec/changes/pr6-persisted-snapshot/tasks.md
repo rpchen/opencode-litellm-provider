@@ -5,5 +5,5 @@
 - [x] Compare prior compatible snapshots for PR6 drift.
 - [x] Clear durable snapshot on authentication/notfound destructive failures.
 - [x] Add warm-restore and endpoint-mismatch tests.
-- [ ] Rebuild committed dist against merged PR6 Core SHA.
-- [ ] Run delivery, typecheck, tests, TUI, distribution, OpenSpec, and package gates.
+- [x] Rebuild committed dist against merged PR6 Core SHA.
+- [x] Run delivery, typecheck, tests, TUI, distribution, OpenSpec, and package gates.
