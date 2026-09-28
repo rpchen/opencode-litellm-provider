@@ -11,10 +11,25 @@ OpenCode v2 插件：通过 `/connect` 填写 LiteLLM 地址和自己的 API Key
 - 默认按 LiteLLM 的阶梯价格起点截断上下文窗口，避免意外进入高价区间
 - 在启动、连接变更和定时轮询时同步模型清单
 - 在短暂网络故障、429 或服务端错误时保留上次成功结果；Key 无效或模型接口不存在时撤下旧结果
+- 提供 `/litellm-diagnostics` 查看发现状态、缓存来源、models.dev 匹配、协议 fallback 和固定 Core provenance；该命令不提交会话 prompt、不产生模型调用
 
-## 模型调用与审查导出
+## 模型调用、诊断与审查导出
 
 连接 LiteLLM 后，插件会将当前连接可访问的对话模型加入 OpenCode 的模型列表。选择所需模型后，像平常一样发送消息即可。
+
+### 运行状态诊断
+
+在**终端 TUI** 的已连接会话中输入：
+
+```
+/litellm-diagnostics
+```
+
+会话输入框上方会出现诊断卡片，显示当前发现状态、已注册模型数、缓存来源（`snapshot` / `network` / `memory-cache` / `stale` 等）、models.dev 命中情况、协议 fallback 数量以及当前插件编入的 Core SHA。该命令只读取插件已有状态，**不会调用 `session.prompt`，不会发起模型请求，也不会产生额外 token 消耗**；诊断输出不会包含 API Key、LiteLLM 地址或原始传输错误。
+
+当前 diagnostics 展示依赖 OpenCode TUI 插件槽位；Desktop / Web 等不加载 TUI 卡片的客户端不会显示这张诊断卡片。
+
+### 审查报告导出
 
 在已连接的 OpenCode 会话中输入 `/litellm-audit-export`。每次导出会生成一个新文件，不会覆盖已有报告；导出不会上传报告。反馈方式取决于客户端：
 
@@ -217,6 +232,7 @@ Windows 示例：
 | `pollInterval` | number | `300` | 模型发现轮询间隔，单位为秒；低于 30 时钳制为 30 |
 | `contextTierCap` | boolean | `true` | 是否将上下文窗口截断到第一个非零输入价格阶梯起点 |
 | `protocolOverrides` | object | `{}` | 按 LiteLLM `model_name` 精确覆盖协议，可选值为 `chat`、`responses`、`messages` |
+| `conversationFeedback` | boolean | `false` | `/litellm-audit-export` 是否向当前会话提交插件生成的反馈消息；开启后会触发一次宿主会话/模型处理，适用于 Desktop / Web 需要看到导出结果的场景 |
 
 非法配置会产生警告并回退到默认值，不会阻止插件加载。
 
@@ -270,9 +286,10 @@ Windows 示例：
 - embedding、图像生成等非对话模型不会注册。
 - 同一 `model_name` 的多个部署会保守合并：布尔能力和模态取交集，数值上限取最小值。
 - 模型内容未变化时不会重复 reload。
-- 网络错误、超时、429、5xx、无法解析的响应和重定向会保留上次成功结果。
+- 启动时如果存在与当前 endpoint / credential / 配置兼容的持久化 discovery snapshot，会先恢复上次模型清单，再用网络结果校正；诊断中此阶段显示为 `snapshot`。
+- 网络错误、超时、429、5xx、无法解析的响应和重定向会保留上次成功结果，并在诊断中标记为 `stale`。
 - 401/403、最终 404、成功返回空清单或断开连接会撤下旧模型。
-- models.dev 使用六小时进程内缓存；插件不写磁盘缓存。
+- models.dev 使用六小时进程内缓存，不单独持久化；模型发现结果会通过 OpenCode 插件存储保存 endpoint-bound discovery snapshot，用于重启时快速恢复。
 
 ## 共享 core 与交付来源
 
@@ -287,7 +304,7 @@ Windows 示例：
 需要 Git、Node.js、Bun 和锁定的开发依赖。普通验收只复验已提交产物，不更新 core/main：
 
 ```bash
-npm ci                 # 本项目 .npmrc 固定使用公网 npm registry
+npm ci                 # registry 使用用户/系统 npm 配置；仓库不再覆盖 registry
 npm run verify:dist    # 先在外部临时目录重建，对比未覆盖的候选 dist
 npm run test:delivery  # 缓存完整性、SHA/provenance 和独立比较回归
 npm run typecheck      # 按候选 provenance 准备同一 SHA
