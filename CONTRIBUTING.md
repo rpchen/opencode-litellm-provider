@@ -36,6 +36,12 @@ npm run validate:spec
 - PR 描述提供 `Requirement / Scenario → Test Evidence`；
 - “CI 全绿”是必要条件，但不能替代 Scenario 级闭环。
 
+## 用户文档门禁
+
+凡变更会影响用户实际使用方式（安装/升级、配置、命令、默认值、缓存/刷新、错误降级、兼容或迁移流程），必须在**同一个 PR**更新 README，并在 PR 中标明更新章节。若确认没有用户可见变化，则明确写 `No README change: no user-visible behavior`。
+
+OpenSpec 中包含用户可见 Scenario 时，tasks 必须包含 README 更新任务。README 缺失时，即使测试和 CI 全绿也不算完成。
+
 ## 更新共享 core 或插件产物
 
 共享业务逻辑只在 `rpchen/litellm-discovery-core` 维护。本仓库 `src/generated/discovery-core/` 与 `src/core/` 是自动生成、被忽略的源码/转接，不手工编辑或提交。宿主映射位于 `src/host/`。
