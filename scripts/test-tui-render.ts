@@ -125,7 +125,7 @@ const cleanup = await setupAuditTui(context, (callback) => {
   tick = callback
   return () => { stopped++ }
 })
-const live = await testRender(() => render({ sessionID: "current" }), { width: 110, height: 12 })
+const live = await testRender(() => render({ sessionID: "current" }), { width: 110, height: 20 })
 try {
   await live.renderOnce()
   assert.doesNotMatch(live.captureCharFrame(), /审查报告/)
@@ -249,6 +249,8 @@ try {
   try {
     assert.ok(diagnosticsCommand)
     await diagnosticsCommand!.execute({ sessionID: "current" })
+    await Bun.sleep(0)
+    await live.renderOnce()
     await Bun.sleep(0)
     await live.renderOnce()
     const diagnosticsFrame = live.captureCharFrame()
