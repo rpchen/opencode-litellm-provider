@@ -1,5 +1,6 @@
 import { buildModelSpecs, modelFingerprint } from "../core/build.js";
 import { normalizeLiteLLMURL } from "../core/litellm.js";
+import { createDiscoveryCoordinator } from "../core/refresh.js";
 import { DiscoveryError, fetchLiteLLMModelInfo, getModelsDevCatalog, redact, } from "../net/fetch.js";
 import { createRegistrationView, INTEGRATION_ID } from "./register.js";
 const defaultScheduler = {
@@ -28,6 +29,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
     const fetchCatalog = dependencies.getModelsDev ?? getModelsDevCatalog;
     const buildModels = dependencies.buildModels ?? buildModelSpecs;
     const fingerprint = dependencies.fingerprint ?? modelFingerprint;
+    const coordinator = createDiscoveryCoordinator();
     const abortEvents = new AbortController();
     snapshot.audit ??= { status: "disconnected" };
     let timer;
@@ -52,10 +54,11 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
         cancelTimer();
         if (disposed || (!snapshot.connection && !reloadPending))
             return;
+        const retryDelay = identity ? coordinator.retryDelayMs(identity) : undefined;
         timer = scheduler.setTimeout(() => {
             timer = undefined;
-            void trigger();
-        }, options.pollInterval * 1000);
+            void trigger(false);
+        }, retryDelay ?? options.pollInterval * 1000);
     };
     const removeProvider = async (status = "disconnected") => {
         const hadRegistration = (snapshot.ready && snapshot.connection !== undefined) || reloadPending;
@@ -65,6 +68,8 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
         snapshot.models = [];
         snapshot.registrationView = undefined;
         snapshot.audit = { status };
+        if (identity)
+            coordinator.clear(identity);
         identity = undefined;
         lastFingerprint = undefined;
         if (hadRegistration)
@@ -84,7 +89,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
             await reload();
         lastFingerprint = emptyFingerprint;
     };
-    const refreshOnce = async () => {
+    const refreshOnce = async (forceRefresh) => {
         const connection = await context.integration.connection.active(INTEGRATION_ID);
         if (!connection) {
             cancelTimer();
@@ -134,6 +139,8 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
         const nextIdentity = connectionIdentity(connection, resolved, addresses.rootURL);
         const connectionChanged = identity !== undefined && identity !== nextIdentity;
         if (connectionChanged) {
+            if (identity)
+                coordinator.clear(identity);
             const hadRegistration = snapshot.ready;
             snapshot.ready = false;
             snapshot.connection = connection;
@@ -147,15 +154,30 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
         }
         identity = nextIdentity;
         try {
-            const response = await fetchModelInfo(addresses, resolved.key, dependencies.fetchImpl);
-            const catalog = await fetchCatalog({
-                fetchImpl: dependencies.fetchImpl,
-                logger,
+            const coordinated = await coordinator.refresh(nextIdentity, async () => {
+                const response = await fetchModelInfo(addresses, resolved.key, dependencies.fetchImpl);
+                const catalog = await fetchCatalog({
+                    fetchImpl: dependencies.fetchImpl,
+                    logger,
+                });
+                const models = buildModels(response, catalog, options);
+                return { models, fingerprint: fingerprint(models) };
+            }, {
+                forceRefresh,
+                failurePolicy: (error) => error instanceof DiscoveryError && (error.kind === "auth" || error.kind === "notfound")
+                    ? "clear"
+                    : "stale",
             });
             if (disposed || identity !== nextIdentity)
                 return;
-            const models = buildModels(response, catalog, options);
-            const nextFingerprint = fingerprint(models);
+            if (coordinated.source === "stale") {
+                const message = coordinated.error instanceof Error ? coordinated.error.message : String(coordinated.error);
+                logger.warn(`LiteLLM 发现失败，使用 last-known-good：${redact(message, resolved.key)}`);
+                if (snapshot.audit?.view)
+                    snapshot.audit = { ...snapshot.audit, status: "stale" };
+                return;
+            }
+            const { models, fingerprint: nextFingerprint } = coordinated.value;
             const changed = !snapshot.ready || lastFingerprint !== nextFingerprint || reloadPending;
             const view = changed || !snapshot.registrationView
                 ? createRegistrationView(models, addresses.apiBaseURL)
@@ -170,7 +192,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
             lastFingerprint = nextFingerprint;
             snapshot.audit = {
                 status: models.length === 0 ? "empty" : "ready",
-                lastSuccessfulDiscoveryAt: new Date().toISOString(),
+                lastSuccessfulDiscoveryAt: new Date(coordinated.refreshedAt).toISOString(),
                 view,
             };
         }
@@ -192,24 +214,29 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
             schedule();
         }
     };
-    const trigger = () => {
+    let queuedForce = false;
+    const trigger = (forceRefresh = true) => {
         if (disposed)
             return Promise.resolve();
         if (running) {
             queued = true;
+            queuedForce ||= forceRefresh;
             return running;
         }
         running = (async () => {
+            let nextForce = forceRefresh;
             do {
                 queued = false;
+                queuedForce = false;
                 try {
-                    await refreshOnce();
+                    await refreshOnce(nextForce);
                 }
                 catch (error) {
                     const message = error instanceof Error ? error.message : String(error);
                     logger.warn(`LiteLLM 发现循环出错，将在下个周期重试：${redact(message)}`);
                     schedule();
                 }
+                nextForce = queuedForce;
             } while (queued && !disposed);
         })().finally(() => {
             running = undefined;
@@ -223,7 +250,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                     break;
                 if (switchedForLiteLLM(event)) {
                     cancelTimer();
-                    void trigger();
+                    void trigger(true);
                 }
             }
         }
@@ -239,7 +266,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
             if (disposed)
                 return;
             eventTask = listen();
-            await trigger();
+            await trigger(true);
         },
         trigger,
         async dispose() {
