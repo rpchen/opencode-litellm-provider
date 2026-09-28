@@ -1,6 +1,14 @@
 import { define, type Context } from "@opencode/plugin/tui/plugin"
 import { auditRpc } from "./host/audit-rpc.js"
-import { AuditCard, auditCardActions, createAuditResultStore, type AuditResult } from "./tui-card.js"
+import {
+  AuditCard,
+  DiagnosticsCard,
+  auditCardActions,
+  createAuditResultStore,
+  createDiagnosticsResultStore,
+  type AuditResult,
+  type DiagnosticsResult,
+} from "./tui-card.js"
 
 function scheduleRefresh(refresh: () => void): () => void {
   const timer = setInterval(refresh, 1000)
@@ -13,8 +21,13 @@ export async function setupAuditTui(
 ) {
   const rpc = context.client.rpc(auditRpc)
   const store = createAuditResultStore()
+  const diagnosticsStore = createDiagnosticsResultStore()
   const actions = auditCardActions(context)
   const stop = rpc.events.on("completed", (event) => store.accept(event.data as unknown as AuditResult))
+  const stopDiagnostics = rpc.events.on(
+    "diagnostics",
+    (event) => diagnosticsStore.accept(event.data as unknown as DiagnosticsResult),
+  )
   const remove = context.ui.slot({
     before: "session.composer.top",
     render: ({ sessionID }) => AuditCard({
@@ -23,14 +36,27 @@ export async function setupAuditTui(
       actions,
     }),
   })
+  const removeDiagnostics = context.ui.slot({
+    before: "session.composer.top",
+    render: ({ sessionID }) => DiagnosticsCard({
+      result: () => sessionID ? diagnosticsStore.forSession(sessionID) : undefined,
+      foreground: () => context.theme.text.base,
+    }),
+  })
   let refreshing = false
   let disposed = false
   const refresh = async () => {
     if (refreshing || disposed) return
     refreshing = true
     try {
-      const result = await rpc.latest({}) as AuditResult
-      if (!disposed) store.accept(result)
+      const [result, diagnostics] = await Promise.all([
+        rpc.latest({}) as Promise<AuditResult>,
+        rpc.latestDiagnostics({}) as Promise<DiagnosticsResult>,
+      ])
+      if (!disposed) {
+        store.accept(result)
+        diagnosticsStore.accept(diagnostics)
+      }
     } catch {
       // 服务器可能尚未完成插件注册；后续轮询会继续尝试。
     } finally {
@@ -43,7 +69,9 @@ export async function setupAuditTui(
     disposed = true
     stopRefresh()
     stop()
+    stopDiagnostics()
     remove()
+    removeDiagnostics()
   }
 }
 
