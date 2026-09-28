@@ -26,6 +26,16 @@ npm run validate:spec
 
 `dist/`（包括 `dist/core-provenance.json`）是 GitHub Git package 的组成部分，必须与插件源码一起提交。`verify:dist` 在独立临时目录重建并比较待交付 dist，内容、缺失或多余文件有差异都会失败；不要先覆盖或删除待验收的产物。
 
+## 测试完成标准
+
+测试治理以 `litellm-discovery-core/docs/testing-standard.md` 为权威来源。行为变更除全套 CI 外还必须满足：
+
+- OpenSpec 每个 Scenario 都能映射到自动化验收证据；
+- 安全、凭据、snapshot、fallback、destructive failure 等边界有真实负向输入；
+- 新增用户可见功能至少有一条贯穿 Core → ProviderSnapshot → command/RPC → TUI 的纵向自动化链路；
+- PR 描述提供 `Requirement / Scenario → Test Evidence`；
+- “CI 全绿”是必要条件，但不能替代 Scenario 级闭环。
+
 ## 更新共享 core 或插件产物
 
 共享业务逻辑只在 `rpchen/litellm-discovery-core` 维护。本仓库 `src/generated/discovery-core/` 与 `src/core/` 是自动生成、被忽略的源码/转接，不手工编辑或提交。宿主映射位于 `src/host/`。

@@ -3,6 +3,9 @@ import { testRender } from "@opentui/solid"
 import { RGBA, TextRenderable, type Renderable } from "@opentui/core"
 import { createSignal } from "solid-js"
 import type { Context } from "@opencode/plugin/tui/plugin"
+import { registerAudit } from "../src/host/audit-command.js"
+import { createDiscoveryLoop } from "../src/host/sync.js"
+import type { ProviderSnapshot } from "../src/host/register.js"
 import { setupAuditTui } from "../src/tui.js"
 import { AuditCard, createAuditResultStore, type AuditResult } from "../src/tui-card.js"
 
@@ -122,7 +125,7 @@ const cleanup = await setupAuditTui(context, (callback) => {
   tick = callback
   return () => { stopped++ }
 })
-const live = await testRender(() => render({ sessionID: "current" }), { width: 110, height: 12 })
+const live = await testRender(() => render({ sessionID: "current" }), { width: 110, height: 20 })
 try {
   await live.renderOnce()
   assert.doesNotMatch(live.captureCharFrame(), /审查报告/)
@@ -147,7 +150,124 @@ try {
   await live.renderOnce()
   assert.match(live.captureCharFrame(), /C:\/second\.json/)
   assert.ok(!live.captureCharFrame().includes(report), "the next event must replace the previous path")
-  console.log("TUI latest recovery and live polling passed")
+
+  // PR7 vertical closure: fixture discovery -> ProviderSnapshot diagnostics -> real command
+  // -> real RPC event routing -> diagnostics store -> rendered TUI card.
+  const diagnosticSnapshot: ProviderSnapshot = { ready: false, models: [], audit: { status: "disconnected" } }
+  const diagnosticConnection = { type: "credential" as const, id: "diag-connection", label: "diag", method: "key" as const }
+  const diagnosticLoop = createDiscoveryLoop({
+    integration: {
+      connection: {
+        active: async () => diagnosticConnection,
+        resolve: async () => ({
+          type: "key",
+          key: "sk-diagnostics-fixture",
+          configuration: { url: "https://litellm.example" },
+        }),
+      },
+    },
+    provider: { reload: async () => {} },
+    event: {
+      subscribe: ({ signal } = {}) => ({
+        [Symbol.asyncIterator]: () => ({
+          next: () => new Promise<IteratorResult<never>>((resolve) => {
+            const finish = () => resolve({ value: undefined, done: true })
+            if (signal?.aborted) finish()
+            else signal?.addEventListener("abort", finish, { once: true })
+          }),
+        }),
+      }),
+    },
+  }, diagnosticSnapshot, {
+    pollInterval: 30,
+    contextTierCap: true,
+    protocolOverrides: {},
+    conversationFeedback: false,
+  }, {
+    scheduler: { setTimeout: () => ({}), clearTimeout: () => {} },
+    fetchLiteLLM: async () => ({
+      data: [{
+        model_name: "gpt-diagnostics",
+        litellm_params: { model: "openai/gpt-diagnostics" },
+        model_info: {
+          supported_endpoints: ["/v1/responses"],
+          max_input_tokens: 100000,
+          max_output_tokens: 10000,
+        },
+      }],
+    }),
+    getModelsDev: async () => ({
+      openai: {
+        models: {
+          "gpt-diagnostics": {
+            id: "gpt-diagnostics",
+            release_date: "2026-05-01",
+            modalities: { input: ["text"], output: ["text"] },
+          },
+        },
+      },
+    }),
+  })
+  await diagnosticLoop.start()
+  assert.equal(diagnosticSnapshot.audit?.status, "ready")
+  assert.equal(diagnosticSnapshot.diagnostics?.cache?.source, "network")
+  assert.equal(diagnosticSnapshot.diagnostics?.discovery?.modelsDev.status, "ok")
+
+  let diagnosticsCommand: { execute(input: { sessionID: string }): Promise<void> } | undefined
+  let sessionPrompts = 0
+  const serverRegistration = await registerAudit({
+    rpc: {
+      register: async () => ({
+        events: {
+          emit: async (_event: string, value: unknown) => {
+            completed({ data: value as AuditResult })
+          },
+        },
+        dispose: async () => {},
+      }),
+    },
+    command: {
+      transform: async (callback: (editor: { add(value: { name: string; execute(input: { sessionID: string }): Promise<void> }): void }) => void) => {
+        callback({
+          add(value) {
+            if (value.name === "litellm-diagnostics") diagnosticsCommand = value
+          },
+        })
+        return { dispose: async () => {} }
+      },
+    },
+    session: {
+      prompt: async () => {
+        sessionPrompts += 1
+        throw new Error("diagnostics must not create a model turn")
+      },
+    },
+  } as never, diagnosticSnapshot, {
+    writeFile: async () => "C:/unused.json",
+  })
+
+  try {
+    assert.ok(diagnosticsCommand)
+    await diagnosticsCommand!.execute({ sessionID: "current" })
+    await Bun.sleep(0)
+    await live.renderOnce()
+    await Bun.sleep(0)
+    await live.renderOnce()
+    const diagnosticsFrame = live.captureCharFrame()
+    assert.match(diagnosticsFrame, /LiteLLM Diagnostics/)
+    assert.match(diagnosticsFrame, /状态：正常/)
+    assert.match(diagnosticsFrame, /已注册模型：1/)
+    assert.match(diagnosticsFrame, /缓存：network/)
+    assert.match(diagnosticsFrame, /models\.dev：ok/)
+    assert.match(diagnosticsFrame, /协议 fallback：0/)
+    assert.doesNotMatch(diagnosticsFrame, /sk-diagnostics-fixture/)
+    assert.equal(sessionPrompts, 0)
+  } finally {
+    await serverRegistration.dispose()
+    await diagnosticLoop.dispose()
+  }
+
+  console.log("TUI latest recovery, live polling and PR7 diagnostics vertical path passed")
 } finally {
   live.renderer.destroy()
   cleanup()

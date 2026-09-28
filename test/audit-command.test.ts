@@ -17,13 +17,14 @@ function harness(
   const commands: Array<{ name?: string; execute: (input: { sessionID: string }) => Promise<void> }> = []
   let handlers: { export: (input: { sessionID: string }) => Promise<unknown>; latest: () => Promise<unknown> } | undefined
   let emits: unknown[] = []
+  const eventNames: string[] = []
   let disposed = 0
   const prompts: Prompts = { calls: [] }
   const context = {
     rpc: {
       register: async (_schema: unknown, input: typeof handlers) => {
         handlers = input
-        return { events: { emit: async (_event: string, value: unknown) => { emits.push(value) } }, dispose: async () => { disposed++ } }
+        return { events: { emit: async (event: string, value: unknown) => { eventNames.push(event); emits.push(value) } }, dispose: async () => { disposed++ } }
       },
     },
     command: {
@@ -52,6 +53,7 @@ function harness(
     get commands() { return commands },
     get handlers() { return handlers! },
     get emits() { return emits },
+    get eventNames() { return eventNames },
     get disposed() { return disposed },
     get prompts() { return prompts },
     writeFile,
@@ -86,6 +88,61 @@ const snapshot: ProviderSnapshot = {
 }
 
 describe('审查导出命令', () => {
+  test('diagnostics command emits safe completed payload, uses no session prompt, and leaves audit latest untouched', async () => {
+    const state: ProviderSnapshot = {
+      ready: true,
+      apiBaseURL: 'https://private.example/v1',
+      models: [],
+      audit: { status: 'ready', lastSuccessfulDiscoveryAt: '2026-09-28T08:00:00.000Z' },
+      diagnostics: {
+        cache: {
+          source: 'network',
+          stale: false,
+          refreshedAt: Date.parse('2026-09-28T08:00:00.000Z'),
+          ageMs: 0,
+          failureCount: 0,
+          pending: false,
+        },
+        discovery: {
+          schemaVersion: 1,
+          modelInfo: { status: 'ok', primaryPath: '/v1/model/info', fallbackPath: '/model/info' },
+          modelsList: { status: 'unused', path: '/v1/models', reason: 'not authoritative' },
+          modelsDev: { status: 'ok' },
+          stats: {
+            responseEntries: 1,
+            deployments: 1,
+            filteredEntries: 0,
+            models: 1,
+            modelsDevMatched: 1,
+            modelsDevUnmatched: 0,
+            protocolFallbacks: 0,
+          },
+          models: [],
+          issues: [],
+        },
+      },
+    }
+    const h = harness(state, async () => 'C:/audit/unused.json')
+    const registration = await registerAudit(h.context, state, {
+      writeFile: h.writeFile,
+      conversationFeedback: true,
+    })
+    const diagnostics = h.commands.find((item) => item.name === 'litellm-diagnostics')!
+    await diagnostics.execute({ sessionID: 'diag-session' })
+
+    expect(h.eventNames).toEqual(['completed'])
+    expect(h.emits).toHaveLength(1)
+    const payload = h.emits[0] as { sessionID: string; lines: string[] }
+    expect(payload.sessionID).toBe('diag-session')
+    expect(payload.lines.join('\n')).toContain('状态：正常')
+    expect(payload.lines.join('\n')).toContain('缓存：network')
+    expect(payload.lines.join('\n')).toContain('models.dev：ok')
+    expect(payload.lines.join('\n')).not.toContain('private.example')
+    expect(h.prompts.calls).toEqual([])
+    expect(await h.handlers.latest()).toEqual({ sequence: 0, sessionID: '', ok: false, path: '', error: '' })
+    await registration.dispose()
+  })
+
   test('命令写入 JSON 并通过事件和 latest 返回绝对路径，无需模型请求', async () => {
     const written: object[] = []
     const h = harness(snapshot, async (report) => {

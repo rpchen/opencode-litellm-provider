@@ -35,4 +35,4 @@ The existing litellm-audit-export command and TUI result card SHALL continue to 
 
 #### Scenario: export after diagnostics
 - **WHEN** the user runs diagnostics and later exports an audit report
-- **THEN** both RPC event channels retain their own latest session result
+- **THEN** the shared `completed` RPC event routes diagnostics into the diagnostics store while `latest()` and audit events retain audit-export semantics
