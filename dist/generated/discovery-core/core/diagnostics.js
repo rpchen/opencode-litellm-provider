@@ -1,7 +1,7 @@
 import { buildModelSpecs } from "./build.js";
 import { groupLiteLLMDeployments, isRecord, optionalBoolean, optionalNumber, positiveInteger, } from "./litellm.js";
-import { buildVariants, candidateModelIDs, selectModelsDevRecord, } from "./modelsdev.js";
-import { resolveProtocolResolution } from "./protocol.js";
+import { buildVariants, candidateModelIDs, canonicalModelID, resolveReasoningSupport, selectModelsDevRecord, } from "./modelsdev.js";
+import { resolveProtocolResolution, resolveProtocolSupport, } from "./protocol.js";
 export const DISCOVERY_DIAGNOSTICS_SCHEMA_VERSION = 1;
 function field(source, detail) {
     return detail ? { source, detail } : { source };
@@ -16,9 +16,12 @@ function catalogAvailable(catalog) {
 function modelsDevBoolean(selected, key) {
     return optionalBoolean(selected?.record[key]) !== undefined;
 }
-function modelsDevObjectNumber(selected, objectKey, key) {
+function modelsDevNumber(selected, objectKey, key) {
     const object = selected?.record[objectKey];
-    return isRecord(object) && optionalNumber(object[key]) !== undefined;
+    return isRecord(object) ? optionalNumber(object[key]) : undefined;
+}
+function modelsDevObjectNumber(selected, objectKey, key) {
+    return modelsDevNumber(selected, objectKey, key) !== undefined;
 }
 function anyDeploymentBoolean(group, key) {
     return group.deployments.some((deployment) => optionalBoolean(deployment.modelInfo[key]) !== undefined);
@@ -83,13 +86,10 @@ function contextProvenance(group, selected, options, spec) {
     if (options.contextTierCap && firstTier !== undefined && spec.limit.context === firstTier) {
         return field("derived", `LiteLLM pricing tier cap at ${firstTier} tokens`);
     }
-    if (liteLLMDeclared && modelsDevDeclared) {
-        return field("derived", "minimum across LiteLLM declarations with models.dev fallback");
-    }
-    if (liteLLMDeclared)
-        return field("litellm");
     if (modelsDevDeclared)
-        return field("models.dev");
+        return field("models.dev", "limit.context");
+    if (liteLLMDeclared)
+        return field("litellm", "max_input_tokens used as conservative context fallback");
     return field("default", "no context limit metadata");
 }
 function outputLimitProvenance(group, selected) {
@@ -105,6 +105,67 @@ function pricingProvenance(group, selected, deploymentFields, modelsDevKey) {
     if (modelsDevObjectNumber(selected, "cost", modelsDevKey))
         return field("models.dev");
     return field("default", "missing price metadata maps to zero");
+}
+function metadataConflicts(group, selected, reasoning) {
+    const conflicts = [];
+    const mdTools = optionalBoolean(selected?.record.tool_call);
+    if (mdTools !== undefined &&
+        group.deployments.some((deployment) => {
+            const value = optionalBoolean(deployment.modelInfo.supports_function_calling);
+            return value !== undefined && value !== mdTools;
+        })) {
+        conflicts.push({
+            field: "capabilities.tools",
+            resolution: "explicit LiteLLM values win per deployment; the group uses the conservative intersection",
+        });
+    }
+    if (reasoning.conflict) {
+        conflicts.push({
+            field: "reasoning",
+            resolution: "explicit LiteLLM supports_reasoning wins per deployment before models.dev fallback",
+        });
+    }
+    const limitChecks = [
+        ["limit.input", ["max_input_tokens"], "input"],
+        ["limit.output", ["max_output_tokens", "max_tokens"], "output"],
+    ];
+    for (const [fieldName, liteLLMFields, modelsDevKey] of limitChecks) {
+        const md = modelsDevNumber(selected, "limit", modelsDevKey);
+        if (md === undefined)
+            continue;
+        const differs = group.deployments.some((deployment) => liteLLMFields.some((key) => {
+            const value = positiveInteger(deployment.modelInfo[key]);
+            return value !== undefined && value !== md;
+        }));
+        if (differs) {
+            conflicts.push({
+                field: fieldName,
+                resolution: "explicit LiteLLM deployment limit wins; models.dev is used only when LiteLLM omits the field",
+            });
+        }
+    }
+    const priceChecks = [
+        ["pricing.input", ["input_cost_per_token"], "input"],
+        ["pricing.output", ["output_cost_per_token"], "output"],
+        ["pricing.cacheRead", ["cache_read_input_token_cost", "cache_read_cost_per_token"], "cache_read"],
+        ["pricing.cacheWrite", ["cache_creation_input_token_cost", "cache_write_input_token_cost"], "cache_write"],
+    ];
+    for (const [fieldName, liteLLMFields, modelsDevKey] of priceChecks) {
+        const md = modelsDevNumber(selected, "cost", modelsDevKey);
+        if (md === undefined)
+            continue;
+        const differs = group.deployments.some((deployment) => liteLLMFields.some((key) => {
+            const value = optionalNumber(deployment.modelInfo[key]);
+            return value !== undefined && value >= 0 && value * 1_000_000 !== md;
+        }));
+        if (differs) {
+            conflicts.push({
+                field: fieldName,
+                resolution: "LiteLLM deployment pricing wins; multiple deployments use the highest declared price",
+            });
+        }
+    }
+    return conflicts;
 }
 function releaseProvenance(selected) {
     const value = selected?.record.release_date;
@@ -133,6 +194,8 @@ function modelDiagnostic(group, spec, catalog, options) {
     const selected = selectModelsDevRecord(group, catalog);
     const protocol = resolveProtocolResolution(group, options.protocolOverrides);
     const variants = buildVariants(selected, spec.protocol);
+    const reasoning = resolveReasoningSupport(group, selected);
+    const conflicts = metadataConflicts(group, selected, reasoning);
     const issues = [];
     if (!selected) {
         issues.push({
@@ -141,6 +204,15 @@ function modelDiagnostic(group, spec, catalog, options) {
             code: "models-dev-unmatched",
             modelId: group.modelName,
             message: "No models.dev record matched this LiteLLM model.",
+        });
+    }
+    for (const conflict of conflicts) {
+        issues.push({
+            severity: "info",
+            stage: "mapping",
+            code: "metadata-conflict",
+            modelId: group.modelName,
+            message: `${conflict.field}: ${conflict.resolution}`,
         });
     }
     if (protocol.reason === "mixed-fallback") {
@@ -172,13 +244,31 @@ function modelDiagnostic(group, spec, catalog, options) {
             protocol: {
                 value: spec.protocol,
                 reason: protocol.reason,
+                support: resolveProtocolSupport(group),
                 deploymentProtocols: protocol.deployments.map((item) => item.protocol),
+            },
+            quality: {
+                identity: {
+                    canonicalCandidates: [...new Set(candidateModelIDs(group).map(canonicalModelID))],
+                    matchKind: selected?.matchKind,
+                    matchedCandidate: selected?.matchedCandidate,
+                },
+                reasoning,
+                protocolSupport: resolveProtocolSupport(group),
+                fallback: selected ? "enriched" : "litellm-only",
+                conflicts,
             },
             provenance: {
                 protocol: protocolProvenance(protocol.reason),
                 reasoning: variants.length > 0
                     ? field("models.dev", "reasoning_options")
-                    : field("none", "no reasoning variants matched"),
+                    : reasoning.source === "litellm"
+                        ? field("litellm", "supports_reasoning")
+                        : reasoning.source === "models.dev"
+                            ? field("models.dev", "reasoning")
+                            : reasoning.source === "derived"
+                                ? field("derived", "LiteLLM and models.dev reasoning evidence")
+                                : field("none", "no reasoning support metadata"),
                 capabilities: {
                     tools: capabilitySource(group, selected, "tools"),
                     input: capabilitySource(group, selected, "input"),

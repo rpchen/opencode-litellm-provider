@@ -1,5 +1,6 @@
 import { type BuildOptions, type ModelSpec } from "./build.js";
-import { type ProtocolReason } from "./protocol.js";
+import { type ReasoningSupportResolution } from "./modelsdev.js";
+import { type ProtocolReason, type ProtocolSupport } from "./protocol.js";
 export declare const DISCOVERY_DIAGNOSTICS_SCHEMA_VERSION: 1;
 export type DiagnosticSeverity = "info" | "warning" | "error";
 export type DiagnosticStage = "model-info" | "models-list" | "models-dev" | "protocol" | "mapping";
@@ -15,6 +16,21 @@ export interface FieldProvenance {
     readonly source: DiagnosticFieldSource;
     readonly detail?: string;
 }
+export interface MetadataConflictDiagnostic {
+    readonly field: string;
+    readonly resolution: string;
+}
+export interface ModelQualityDiagnostic {
+    readonly identity: {
+        readonly canonicalCandidates: readonly string[];
+        readonly matchKind?: "exact" | "canonical" | "alias";
+        readonly matchedCandidate?: string;
+    };
+    readonly reasoning: ReasoningSupportResolution;
+    readonly protocolSupport: ProtocolSupport;
+    readonly fallback: "enriched" | "litellm-only";
+    readonly conflicts: readonly MetadataConflictDiagnostic[];
+}
 export interface ModelDiagnostic {
     readonly id: string;
     readonly deploymentCount: number;
@@ -27,8 +43,10 @@ export interface ModelDiagnostic {
     readonly protocol: {
         readonly value: ModelSpec["protocol"];
         readonly reason: ProtocolReason;
+        readonly support: ProtocolSupport;
         readonly deploymentProtocols: readonly ModelSpec["protocol"][];
     };
+    readonly quality: ModelQualityDiagnostic;
     readonly provenance: {
         readonly protocol: FieldProvenance;
         readonly reasoning: FieldProvenance;
