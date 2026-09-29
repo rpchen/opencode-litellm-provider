@@ -3,6 +3,6 @@
 - [x] Add unit coverage for endpoint integration ids and API-Key-only explicit forms.
 - [x] Add V2 context-shape regression proving setup succeeds without plugin.add/remove.
 - [x] Update README with per-endpoint /connect instructions.
-- [ ] Extend installed-package/TUI vertical evidence for explicit multi-endpoint runtime.
-- [ ] Run committed-dist verification, typecheck, full tests, TUI render, distribution/package, strict OpenSpec and closure gates.
-- [ ] Archive this change through OpenSpec CLI and rerun strict validation.
+- [x] Extend installed-package/TUI vertical evidence for explicit multi-endpoint runtime.
+- [x] Run committed-dist verification, typecheck, full tests, TUI render, distribution/package, strict OpenSpec and closure gates.
+- [x] Archive this change through OpenSpec CLI and rerun strict validation.
