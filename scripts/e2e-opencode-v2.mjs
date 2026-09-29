@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -101,6 +101,27 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const defaultMock = await startLiteLLM(secrets[0])
 const companyMock = await startLiteLLM(secrets[1])
 
+async function dumpFailureDiagnostics() {
+  process.stderr.write("\n=== real OpenCode E2E diagnostics ===\n")
+  command(["plugin", "list", "--builtin"], { allowFailure: true })
+  command(["api", "GET", "/api/plugin"], { allowFailure: true })
+  const logResult = command(["debug", "paths", "log"], { allowFailure: true, echo: false })
+  const logPath = logResult.stdout.trim()
+  if (logPath && existsSync(logPath)) {
+    const files = statSync(logPath).isDirectory()
+      ? readdirSync(logPath).map((name) => path.join(logPath, name)).filter((file) => statSync(file).isFile())
+      : [logPath]
+    for (const file of files.sort()) {
+      const content = sanitize(readFileSync(file, "utf8"))
+      process.stderr.write(`--- ${file.replaceAll(workspace, "<e2e>")} ---\n`)
+      process.stderr.write(content.slice(Math.max(0, content.length - 24000)))
+      process.stderr.write("\n")
+    }
+  } else {
+    process.stderr.write(`No OpenCode log path found: ${sanitize(logPath)}\n`)
+  }
+}
+
 try {
   writeFileSync(path.join(project, "opencode.jsonc"), JSON.stringify({
     $schema: "https://opencode.ai/config.json",
@@ -167,6 +188,9 @@ try {
   assert.match(plugins.stdout, /litellm/u, "plugin list must include litellm")
 
   console.log("Real OpenCode 2.0.16 E2E passed: integrations, credentials, providers and models are visible.")
+} catch (error) {
+  await dumpFailureDiagnostics()
+  throw error
 } finally {
   command(["service", "stop"], { allowFailure: true, echo: false })
   await Promise.all([
