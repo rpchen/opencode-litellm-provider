@@ -119,7 +119,10 @@ const context = {
   get theme() { return { text: { base: foreground() } } },
   client: { rpc: () => ({
     latest: async () => latest,
-    events: { on: (name: string, listener: typeof auditCompleted) => {\n      if (name === "completed") auditCompleted = listener\n      return () => { stopped++ }\n    } },
+    events: { on: (name: string, listener: typeof auditCompleted) => {
+      if (name === "completed") auditCompleted = listener
+      return () => { stopped++ }
+    } },
   }) },
   ui: {
     slot: (claim: { render: typeof render }) => {
