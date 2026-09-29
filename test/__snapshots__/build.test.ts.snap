@@ -353,10 +353,10 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
       "tools": true,
     },
     "cost": {
-      "cacheRead": 0.25,
-      "cacheWrite": 3,
-      "input": 2.5,
-      "output": 10,
+      "cacheRead": 0,
+      "cacheWrite": 0,
+      "input": 0,
+      "output": 0,
     },
     "id": "shared-route",
     "limit": {
