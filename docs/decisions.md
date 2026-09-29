@@ -55,3 +55,19 @@
 维护者在 Windows / OpenCode 2.0.16 上实测 d565084 正常后，明确授权“发版 PR → CI → 合并 → main CI → tag → GitHub Release”。v0.2.0 标记共享 core 迁移的阶段性发行，不表示引入破坏性行为，也不要求与 Pi 版本同步。历史 v0.1.4 不移动、不覆盖；不发布 npm。
 
 发行沿用已实测实现、完整 dist 和 core provenance 32575d4e0185ebf40fb54aa5b538a22acca4e0d3，不执行更新构建。manifest 与锁文件两处根版本统一为 0.2.0，不更新依赖解析。Release 检查既有版本 tag 与三个版本字段一致；显式 dispatch 也不得选择 branch。附件上传后下载复核校验和、归档字节及解包 dist。所有验证仅在执行后记为通过，维护者实测与自动化替身测试分别说明。Pi 与 core 仓库保持不变。
+
+## Discovery quality 与宿主发布边界（2026-09-29）
+
+- 插件的核心目标是让 OpenCode 正确使用模型能力，不承担计费职责。protocol、context/input/output、modalities、tools、reasoning 的正确性优先于价格完整性。
+- models.dev provider 选择由共享 Core 维护：canonical 原厂 → OpenRouter → OpenCode → 全局唯一记录；宿主仓库不得复制选择算法，也不得靠新增硬编码模型家族修复新模型。
+- OpenRouter/OpenCode 仅作为能力 fallback 时，其价格不得覆盖 LiteLLM deployment price。
+- Core 可以保留未知 limits 的 neutral model 用于 diagnostics，但 OpenCode 不得发布 `context <= 0` 或 `output <= 0` 的宿主模型。
+- 任何这类边界变更必须有 Core 测试和 Core → OpenCode 纵向 adapter 测试。
+
+## Release 与会话收尾（2026-09-29）
+
+- 用户可见 feat/fix 合入后检查 tag/Release 是否落后于 main；release PR 同步 package/lockfile、README 当前固定版本和 release notes，并通过自动化一致性检查。
+- tag 只能在目标 main commit 完整 CI 通过后创建；发布后下载附件验证 SHA-256、归档字节和解包 dist。
+- OpenSpec change 只有在 tasks 与证据一致、通过 CLI archive、canonical specs 已同步并再次 strict validation 后才算 Closed。
+- 下一会话开工前必须重新读取当前 main、未合并 PR、最新 tag/Release、README、dist provenance、active OpenSpec 与共享 testing-standard，不能只依赖上一会话记忆。
+- 会话结束前必须做 retrospective，检查是否把具体症状提升成通用不变量、是否存在文档/代码/Release 漂移、是否残留临时 workflow/branch，并把长期经验写入权威文档。

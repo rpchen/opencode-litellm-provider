@@ -1,0 +1,5 @@
+- [x] Add OpenSpec closure and release metadata scripts.
+- [x] Wire both checks into CI and Release workflows.
+- [x] Document release/session retrospective decisions.
+- [x] Add canonical release-governance requirements.
+- [x] Validate via PR CI, then merge and re-check main CI.

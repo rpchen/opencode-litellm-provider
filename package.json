@@ -33,7 +33,9 @@
     "test:distribution": "node scripts/test-distribution.mjs",
     "test:tui-render": "bun --conditions=browser scripts/test-tui-render.ts",
     "test:package": "bun scripts/test-package.ts",
-    "validate:spec": "openspec validate --all --strict --no-interactive"
+    "validate:spec": "openspec validate --all --strict --no-interactive",
+    "test:openspec-closure": "node scripts/check-openspec-closure.mjs",
+    "test:release-metadata": "node scripts/check-release-metadata.mjs"
   },
   "peerDependencies": {
     "@opencode/plugin": ">=2.0.15 <2.1"

@@ -42,6 +42,12 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
+      - name: Verify release metadata consistency
+        run: npm run test:release-metadata
+
+      - name: Reject completed active OpenSpec changes
+        run: npm run test:openspec-closure
+
       # A tag reproduces its recorded core SHA, never a newer core/main.
       - name: Verify untouched tagged distribution at its provenance SHA
         run: npm run verify:dist

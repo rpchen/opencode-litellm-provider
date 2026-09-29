@@ -22,6 +22,8 @@ npm run test:tui-render
 npm run test:distribution
 npm run test:package
 npm run validate:spec
+npm run test:openspec-closure
+npm run test:release-metadata
 ```
 
 `dist/`（包括 `dist/core-provenance.json`）是 GitHub Git package 的组成部分，必须与插件源码一起提交。`verify:dist` 在独立临时目录重建并比较待交付 dist，内容、缺失或多余文件有差异都会失败；不要先覆盖或删除待验收的产物。
@@ -64,12 +66,16 @@ core/main 更新不会自动改变已发布插件；下一次插件更新构建�
 - package/CI smoke 禁用安装生命周期，不连接真实 LiteLLM，也不依赖 repository secrets。实际 host peer 与模拟 host context 的验证边界必须说明。
 - 真实环境验收必须遵守 `AGENTS.md` 的凭据来源与脱敏规则；未运行项目不得记录为通过。
 
+## OpenSpec 完成门禁
+
+`npm run test:openspec-closure` 会拒绝 tasks 已全部完成但仍留在 active `openspec/changes/` 的 change。实现完成后必须使用 OpenSpec CLI archive，再执行 strict validation；不得手工移动目录代替 archive。
+
 ## 发布
 
 普通变更不创建 tag。只有 `main` 的 CI 成功后才能创建与 `package.json.version` 相符的 `vX.Y.Z` tag。tag 会触发 GitHub Release，但不会执行 `npm publish`。Release 只复验 tag 中已有 provenance 的固定 SHA 和产物，不在同一 tag 下切换到更新的 core/main。
 
 ### 发行版本与显式重试
 
-发行准备经 PR 同步 package.json、package-lock.json 顶层和 packages[""] 的 version，不重新解析无关依赖。`test:delivery` 同时覆盖发行 ref/版本正负向检查。已有版本 tag 可显式 dispatch Release workflow；必须选择 tag，选择 main 或其他分支会失败，且不会自行创建 tag。该入口与 tag push 使用相同固定 provenance 门禁，不是跳过测试的捷径。
+发行准备经 PR 同步 package.json、package-lock.json 顶层和 packages[""] 的 version、README 当前固定版本与 release notes，并通过 `test:release-metadata`。已有版本 tag 可显式 dispatch Release workflow；必须选择 tag，选择 main 或其他分支会失败，且不会自行创建 tag。该入口与 tag push 使用相同固定 provenance 门禁，不是跳过测试的捷径。
 
 可在 docs/releases/vX.Y.Z.md 维护发行说明，workflow 会将其与自动变更记录一起发布。上传后 workflow 下载附件核验 SHA-256、打包字节和解包 dist。不要移动旧 tag、覆盖已经发布的不同内容，或把旧提交/维护者单机反馈扩大成新提交/全平台测试证据。
