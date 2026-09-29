@@ -16,6 +16,7 @@ const data = path.join(workspace, "data")
 const cache = path.join(workspace, "cache")
 const state = path.join(workspace, "state")
 const opencodeConfig = path.join(config, "opencode")
+const opencodeConfigFile = path.join(opencodeConfig, "opencode.jsonc")
 for (const dir of [project, home, config, data, cache, state, opencodeConfig]) mkdirSync(dir, { recursive: true })
 
 const secrets = ["sk-e2e-default", "sk-e2e-company"]
@@ -61,7 +62,7 @@ const env = {
   NO_COLOR: "1",
 }
 delete env.OPENCODE_SERVER
-delete env.OPENCODE_CONFIG
+env.OPENCODE_CONFIG = opencodeConfigFile
 
 function command(args, options = {}) {
   const result = spawnSync("opencode", args, {
@@ -124,7 +125,7 @@ async function dumpFailureDiagnostics() {
 }
 
 try {
-  writeFileSync(path.join(opencodeConfig, "opencode.jsonc"), JSON.stringify({
+  writeFileSync(opencodeConfigFile, JSON.stringify({
     $schema: "https://opencode.ai/config.json",
     plugins: [{
       package: root,
