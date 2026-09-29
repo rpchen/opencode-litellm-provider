@@ -125,7 +125,7 @@ async function dumpFailureDiagnostics() {
 }
 
 try {
-  writeFileSync(opencodeConfigFile, JSON.stringify({
+  const e2eConfig = {
     $schema: "https://opencode.ai/config.json",
     plugins: [{
       package: root,
@@ -137,7 +137,10 @@ try {
         },
       },
     }],
-  }, null, 2) + "\n")
+  }
+  writeFileSync(opencodeConfigFile, JSON.stringify(e2eConfig, null, 2) + "\n")
+  env.OPENCODE_CONFIG_CONTENT = JSON.stringify(e2eConfig)
+  env.OPENCODE_CONFIG_PROJECT_DISABLE = "1"
 
   const version = command(["--version"]).stdout.trim()
   assert.match(version, /2\.0\.16/u, `real host must be pinned to OpenCode 2.0.16, got ${version}`)
