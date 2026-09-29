@@ -60,7 +60,7 @@ test("固定发现样本导出与注册模型逐字段对应", () => {
 
 describe("发布日期单位及 allowlist", () => {
   test("字符串、数值、缺失及无效日期保留注册数值并分别标注", () => {
-    const response = { data: ["date-text", "date-number", "date-missing", "date-invalid", "date-epoch"].map((model_name) => ({ model_name, model_info: {}, litellm_params: { model: model_name } })) }
+    const response = { data: ["date-text", "date-number", "date-missing", "date-invalid", "date-epoch"].map((model_name) => ({ model_name, model_info: { max_input_tokens: 1000, max_output_tokens: 100 }, litellm_params: { model: model_name } })) }
     const models = {
       "date-text": { release_date: "2026-01-02", reasoning_options: [{ type: "effort", values: ["high"] }] },
       "date-number": { release_date: 1234567890 },
@@ -82,7 +82,7 @@ describe("发布日期单位及 allowlist", () => {
 
   test("凭据、连接、上游原文和扩展设置不进入报告，允许字段不被改写", () => {
     const secret = "sk-fixture-not-real"
-    const response = { data: [{ model_name: "internal-model", litellm_params: { model: "openai/internal-model", api_key: secret, api_base: "https://private.example" }, model_info: { api_key: secret, route: "private-route", base_model: "internal-model" } }] }
+    const response = { data: [{ model_name: "internal-model", litellm_params: { model: "openai/internal-model", api_key: secret, api_base: "https://private.example" }, model_info: { api_key: secret, route: "private-route", base_model: "internal-model", max_input_tokens: 1000, max_output_tokens: 100 } }] }
     const catalog = { internal: { models: { "internal-model": { reasoning_options: [{ type: "effort", values: ["internal-high"] }], hidden: secret } } } }
     const specs = buildModelSpecs(response, catalog, options)
     const view = createRegistrationView(specs, "https://private.example/v1")

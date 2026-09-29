@@ -6,6 +6,16 @@ import { mapCapabilities } from "./capabilities.js";
 import { groupLiteLLMDeployments } from "./litellm.js";
 import { buildVariants, releaseTimestamp, selectModelsDevRecord, } from "./modelsdev.js";
 import { resolveProtocol } from "./protocol.js";
+/**
+ * Whether a neutral model has the minimum positive token limits required by
+ * Pi/OpenCode to expose it as an operational conversational model.
+ *
+ * Core may retain zero as "unknown" for diagnostics/fingerprints, but adapters
+ * must not publish zero context/output limits to their hosts.
+ */
+export function hasOperationalLimits(spec) {
+    return spec.limit.context > 0 && spec.limit.output > 0;
+}
 export function buildModelSpecs(litellmResponse, modelsDevCatalog, options) {
     return groupLiteLLMDeployments(litellmResponse)
         .map((group) => {

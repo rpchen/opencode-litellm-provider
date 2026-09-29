@@ -6,7 +6,7 @@ import {
   normalizeLiteLLMURL,
   type Protocol,
 } from "../src/generated/discovery-core/index.js"
-import { buildModelSpecs, modelFingerprint, toOpenCodeModelSpec } from "../src/host/models.js"
+import { buildModelSpecs, hasOperationalLimits, modelFingerprint, toOpenCodeModelSpec } from "../src/host/models.js"
 import { PROTOCOL_PACKAGES } from "../src/host/protocol.js"
 import { normalizeLiteLLMURL as compatibilityURL } from "../src/core/litellm.js"
 import type { Protocol as OptionsProtocol } from "../src/options.js"
@@ -16,9 +16,10 @@ const options = { contextTierCap: true, protocolOverrides: {} }
 test("共享 ModelSpec 保持中立，OpenCode 适配只增加 SDK package", () => {
   const neutral = discover(litellm, modelsDev, options)
   const original = structuredClone(neutral)
-  const adapted = neutral.map(toOpenCodeModelSpec)
+  const adapted = neutral.filter(hasOperationalLimits).map(toOpenCodeModelSpec)
   expect(neutral).toEqual(original)
   expect(adapted).toEqual(buildModelSpecs(litellm, modelsDev, options))
+  expect(neutral.some((model) => !hasOperationalLimits(model))).toBeTrue()
   for (const model of adapted) {
     const { package: sdk, ...metadata } = model
     const expected = neutral.find((item) => item.id === model.id)
@@ -80,6 +81,59 @@ test("hy4-preview 通过 OpenRouter 能力 fallback 保持可用限制", () => {
   expect(hy4.cost.input).toBeCloseTo(0.834)
   expect(hy4.cost.output).toBeCloseTo(2.501)
   expect(hy4.package).toBe("@opencode/ai/providers/openai-compatible")
+})
+
+test("通用 operational-limit guard 不向 OpenCode 发布 context/output 非正数模型", () => {
+  const invalidContext = {
+    id: "zero-context",
+    name: "zero-context",
+    protocol: "chat" as const,
+    capabilities: { tools: true, input: ["text"], output: ["text"] },
+    variants: [],
+    released: 0,
+    releaseUnit: "none" as const,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    limit: { context: 0, input: 0, output: 100 },
+  }
+  const invalidOutput = {
+    ...invalidContext,
+    id: "zero-output",
+    name: "zero-output",
+    limit: { context: 1000, input: 1000, output: 0 },
+  }
+  const valid = {
+    ...invalidContext,
+    id: "valid",
+    name: "valid",
+    limit: { context: 1000, input: 1000, output: 100 },
+  }
+
+  expect(hasOperationalLimits(invalidContext)).toBeFalse()
+  expect(hasOperationalLimits(invalidOutput)).toBeFalse()
+  expect(hasOperationalLimits(valid)).toBeTrue()
+
+  const adapted = buildModelSpecs({
+    data: [
+      {
+        model_name: "zero-context",
+        litellm_params: { model: "custom/zero-context" },
+        model_info: { mode: "chat", max_output_tokens: 100 },
+      },
+      {
+        model_name: "zero-output",
+        litellm_params: { model: "custom/zero-output" },
+        model_info: { mode: "chat", max_input_tokens: 1000 },
+      },
+      {
+        model_name: "valid",
+        litellm_params: { model: "custom/valid" },
+        model_info: { mode: "chat", max_input_tokens: 1000, max_output_tokens: 100 },
+      },
+    ],
+  }, {}, options)
+  expect(adapted.map((model) => model.id)).toEqual(["valid"])
+  expect(adapted[0]!.limit.context).toBeGreaterThan(0)
+  expect(adapted[0]!.limit.output).toBeGreaterThan(0)
 })
 
 test("宿主 SDK 映射与迁移前完全相同，Protocol 来自公共入口", () => {

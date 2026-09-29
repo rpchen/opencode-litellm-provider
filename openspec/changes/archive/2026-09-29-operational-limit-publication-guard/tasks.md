@@ -1,0 +1,6 @@
+- [x] Add a generic OpenCode operational-limit publication guard.
+- [x] Add adapter tests for zero context, zero output, and a valid model.
+- [x] Update README behavior, fixed-version examples, and current release-note link to v0.3.0.
+- [x] Update AGENTS with publication, release, and cross-session retrospective rules.
+- [x] Run complete OpenCode CI and strict OpenSpec validation.
+- [x] Archive the change and re-run strict validation.
