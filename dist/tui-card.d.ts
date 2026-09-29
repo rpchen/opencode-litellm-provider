@@ -20,10 +20,12 @@ export interface AuditCardActions {
 export declare function createDiagnosticsResultStore(): {
     forSession: (sessionID: string) => DiagnosticsResult | undefined;
     accept(result: DiagnosticsResult): void;
+    dismiss(sessionID: string): void;
 };
 export declare function createAuditResultStore(): {
     forSession: (sessionID: string) => AuditResult | undefined;
     accept(result: AuditResult): void;
+    dismiss(sessionID: string): void;
 };
 export declare function createAuditCardController(actions: AuditCardActions): {
     feedback: import("solid-js").Accessor<string>;
@@ -34,15 +36,19 @@ export declare function AuditCard(props: {
     result: () => AuditResult | undefined;
     foreground: () => NonNullable<JSX.IntrinsicElements["text"]["fg"]>;
     actions: AuditCardActions;
+    onDismiss: () => void;
 }): import("solid-js").JSX.Element;
 export declare function auditCardActions(context: Pick<Context, "ui">): AuditCardActions;
 export declare function DiagnosticsCard(props: {
     result: () => DiagnosticsResult | undefined;
     foreground: () => NonNullable<JSX.IntrinsicElements["text"]["fg"]>;
+    onDismiss: () => void;
 }): import("solid-js").JSX.Element;
 export declare function ProviderCards(props: {
     auditResult: () => AuditResult | undefined;
     diagnosticsResult: () => DiagnosticsResult | undefined;
     foreground: () => NonNullable<JSX.IntrinsicElements["text"]["fg"]>;
     actions: AuditCardActions;
+    dismissAudit: () => void;
+    dismissDiagnostics: () => void;
 }): import("solid-js").JSX.Element;

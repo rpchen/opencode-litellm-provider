@@ -13,6 +13,17 @@ export function createDiagnosticsResultStore() {
             seen = result.sequence;
             setResults((previous) => ({ ...previous, [result.sessionID]: result }));
         },
+        dismiss(sessionID) {
+            if (!sessionID)
+                return;
+            setResults((previous) => {
+                if (!(sessionID in previous))
+                    return previous;
+                const next = { ...previous };
+                delete next[sessionID];
+                return next;
+            });
+        },
     };
 }
 export function createAuditResultStore() {
@@ -25,6 +36,17 @@ export function createAuditResultStore() {
                 return;
             seen = result.sequence;
             setResults((previous) => ({ ...previous, [result.sessionID]: result }));
+        },
+        dismiss(sessionID) {
+            if (!sessionID)
+                return;
+            setResults((previous) => {
+                if (!(sessionID in previous))
+                    return previous;
+                const next = { ...previous };
+                delete next[sessionID];
+                return next;
+            });
         },
     };
 }
@@ -71,7 +93,7 @@ export function AuditCard(props) {
     return Show({
         get when() { return props.result(); },
         keyed: true,
-        children: (result) => _jsxs("box", { flexDirection: "column", paddingLeft: 2, paddingRight: 2, marginBottom: 1, children: [_jsx(Text, { children: result.ok ? "LiteLLM 审查报告已导出" : "LiteLLM 审查报告导出失败" }), result.ok ? _jsxs(_Fragment, { children: [_jsx(Text, { wrapMode: "char", onMouseUp: () => { void controller.act("open", result.path); }, children: _jsx("u", { children: result.path }) }), _jsxs("box", { flexDirection: "row", gap: 2, children: [_jsx(Text, { onMouseUp: () => { void controller.act("open", result.path); }, children: "[\u6253\u5F00\u62A5\u544A]" }), _jsx(Text, { onMouseUp: () => { void controller.act("copy", result.path); }, children: "[\u590D\u5236\u8DEF\u5F84]" })] })] }) : _jsx(Text, { children: result.error }), Show({
+        children: (result) => _jsxs("box", { flexDirection: "column", paddingLeft: 2, paddingRight: 2, marginBottom: 1, children: [_jsx(Text, { children: result.ok ? "LiteLLM 审查报告已导出" : "LiteLLM 审查报告导出失败" }), result.ok ? _jsxs(_Fragment, { children: [_jsx(Text, { wrapMode: "char", onMouseUp: () => { void controller.act("open", result.path); }, children: _jsx("u", { children: result.path }) }), _jsxs("box", { flexDirection: "row", gap: 2, children: [_jsx(Text, { onMouseUp: () => { void controller.act("open", result.path); }, children: "[\u6253\u5F00\u62A5\u544A]" }), _jsx(Text, { onMouseUp: () => { void controller.act("copy", result.path); }, children: "[\u590D\u5236\u8DEF\u5F84]" }), _jsx(Text, { onMouseUp: props.onDismiss, children: "[\u5173\u95ED]" })] })] }) : _jsxs(_Fragment, { children: [_jsx(Text, { children: result.error }), _jsx(Text, { onMouseUp: props.onDismiss, children: "[\u5173\u95ED]" })] }), Show({
                     get when() { return controller.feedback() || undefined; },
                     keyed: true,
                     children: (message) => _jsx(Text, { children: message }),
@@ -93,9 +115,9 @@ export function DiagnosticsCard(props) {
     return Show({
         get when() { return props.result(); },
         keyed: true,
-        children: (result) => _jsx("box", { flexDirection: "column", paddingLeft: 2, paddingRight: 2, marginBottom: 1, children: result.lines.map((line) => _jsx(Text, { wrapMode: "char", children: line })) }),
+        children: (result) => _jsxs("box", { flexDirection: "column", paddingLeft: 2, paddingRight: 2, marginBottom: 1, children: [result.lines.map((line) => _jsx(Text, { wrapMode: "char", children: line })), _jsx(Text, { onMouseUp: props.onDismiss, children: "[\u5173\u95ED]" })] }),
     });
 }
 export function ProviderCards(props) {
-    return _jsxs("box", { flexDirection: "column", children: [_jsx(DiagnosticsCard, { result: props.diagnosticsResult, foreground: props.foreground }), _jsx(AuditCard, { result: props.auditResult, foreground: props.foreground, actions: props.actions })] });
+    return _jsxs("box", { flexDirection: "column", children: [_jsx(DiagnosticsCard, { result: props.diagnosticsResult, foreground: props.foreground, onDismiss: props.dismissDiagnostics }), _jsx(AuditCard, { result: props.auditResult, foreground: props.foreground, actions: props.actions, onDismiss: props.dismissAudit })] });
 }
