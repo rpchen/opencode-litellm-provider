@@ -2,12 +2,12 @@ import { Plugin } from "@opencode/plugin";
 import { registerAudit } from "./host/audit-command.js";
 import { registerEndpointActivation } from "./host/endpoint-command.js";
 import { registerMultiEndpointAudit } from "./host/multi-audit-command.js";
-import { registerIntegration, registerProvider } from "./host/register.js";
+import { registerIntegration, registerIntegrations, registerProvider } from "./host/register.js";
 import { createDiscoveryLoop } from "./host/sync.js";
 import { ACTIVATION_STORAGE_KEY, activeEndpointIds, endpointIdentity, parseActivation, } from "./endpoints.js";
 import { parseOptions } from "./options.js";
 export const PLUGIN_ID = "litellm";
-async function setupEndpoint(context, endpoint, options, dependencies, snapshots, snapshotOverride) {
+async function setupEndpoint(context, endpoint, options, dependencies, snapshots, snapshotOverride, registerEndpointIntegration = true) {
     const snapshot = snapshotOverride ?? { ready: false, models: [], audit: { status: "disconnected" } };
     snapshots?.set(endpoint.id, snapshot);
     const endpointOptions = {
@@ -15,10 +15,10 @@ async function setupEndpoint(context, endpoint, options, dependencies, snapshots
         endpoints: undefined,
         protocolOverrides: options.endpoints?.[endpoint.id]?.protocolOverrides ?? options.protocolOverrides,
     };
-    const [integrationRegistration, providerRegistration] = await Promise.all([
-        registerIntegration(context, endpoint),
-        registerProvider(context, snapshot, endpoint),
-    ]);
+    const integrationRegistration = registerEndpointIntegration
+        ? await registerIntegration(context, endpoint)
+        : undefined;
+    const providerRegistration = await registerProvider(context, snapshot, endpoint);
     const loop = createDiscoveryLoop(context, snapshot, endpointOptions, dependencies, endpoint);
     const startup = loop.start();
     return async () => {
@@ -26,7 +26,7 @@ async function setupEndpoint(context, endpoint, options, dependencies, snapshots
         await startup;
         snapshots?.delete(endpoint.id);
         await providerRegistration.dispose();
-        await integrationRegistration.dispose();
+        await integrationRegistration?.dispose();
     };
 }
 async function readActivation(context) {
@@ -88,42 +88,32 @@ export async function setupLiteLLM(rawContext, dependencies = {}) {
         };
     }
     const endpointIds = Object.keys(options.endpoints);
+    const identities = new Map(endpointIds.map((id) => {
+        const definition = options.endpoints?.[id];
+        return [id, endpointIdentity(id, definition?.baseUrl, false)];
+    }));
     const snapshots = new Map();
     let activation = await readActivation(context);
     const disposers = new Map();
+    // OpenCode V2 does not support runtime child-plugin mutation. Keep every
+    // configured integration registered in this plugin instance so /connect can
+    // manage an independent credential for each endpoint, while activation only
+    // starts/stops provider discovery and publication.
+    const integrationRegistration = await registerIntegrations(context, [...identities.values()]);
     const activateOne = async (id) => {
         if (disposers.has(id))
             return;
-        const definition = options.endpoints?.[id];
-        if (!definition)
+        const endpoint = identities.get(id);
+        if (!endpoint)
             return;
-        const endpoint = endpointIdentity(id, definition.baseUrl, false);
-        if (id === "default") {
-            disposers.set(id, await setupEndpoint(context, endpoint, options, dependencies, snapshots));
-            return;
-        }
-        if (!context.plugin)
-            throw new Error("当前 OpenCode 版本不支持动态 endpoint plugin");
-        await context.plugin.add(Plugin.define({
-            id: endpoint.providerId,
-            async setup(childContext) {
-                const dispose = await setupEndpoint(childContext, endpoint, options, dependencies, snapshots);
-                disposers.set(id, dispose);
-                return dispose;
-            },
-        }));
+        disposers.set(id, await setupEndpoint(context, endpoint, options, dependencies, snapshots, undefined, false));
     };
     const deactivateOne = async (id) => {
-        if (!disposers.has(id))
+        const dispose = disposers.get(id);
+        if (!dispose)
             return;
-        if (id === "default") {
-            const dispose = disposers.get(id);
-            disposers.delete(id);
-            await dispose?.();
-            return;
-        }
         disposers.delete(id);
-        await context.plugin?.remove(endpointIdentity(id).providerId);
+        await dispose();
     };
     const reconcile = async () => {
         const active = new Set(activeEndpointIds(endpointIds, activation));
@@ -134,7 +124,15 @@ export async function setupLiteLLM(rawContext, dependencies = {}) {
             if (active.has(id))
                 await activateOne(id);
     };
-    await reconcile();
+    try {
+        await reconcile();
+    }
+    catch (error) {
+        for (const id of [...disposers.keys()])
+            await deactivateOne(id);
+        await integrationRegistration.dispose();
+        throw error;
+    }
     const auditRegistration = await registerMultiEndpointAudit(context, endpointIds, () => activeEndpointIds(endpointIds, activation), snapshots);
     const activationRegistration = await registerEndpointActivation(context, endpointIds, () => activation, async (next) => {
         activation = next;
@@ -146,6 +144,7 @@ export async function setupLiteLLM(rawContext, dependencies = {}) {
         await auditRegistration.dispose();
         for (const id of [...disposers.keys()])
             await deactivateOne(id);
+        await integrationRegistration.dispose();
     };
 }
 export default Plugin.define({

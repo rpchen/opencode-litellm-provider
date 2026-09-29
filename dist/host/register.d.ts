@@ -68,4 +68,5 @@ export declare function applyIntegration(editor: IntegrationEditorLike, endpoint
 export declare function createRegistrationView(models: readonly ModelSpec[], apiBaseURL: string, endpoint?: EndpointIdentity): RegistrationView;
 export declare function applyProvider(editor: ProviderEditorLike, snapshot: ProviderSnapshot, endpoint?: EndpointIdentity): void;
 export declare function registerIntegration(context: Pick<Plugin.Context, "integration">, endpoint?: EndpointIdentity): Promise<Registration>;
+export declare function registerIntegrations(context: Pick<Plugin.Context, "integration">, endpoints: readonly EndpointIdentity[]): Promise<Registration>;
 export declare function registerProvider(context: Pick<Plugin.Context, "provider">, snapshot: ProviderSnapshot, endpoint?: EndpointIdentity): Promise<Registration>;
