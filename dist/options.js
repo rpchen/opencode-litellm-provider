@@ -1,3 +1,4 @@
+import { isEndpointID } from "./generated/discovery-core/index.js";
 export const DEFAULT_OPTIONS = {
     pollInterval: 300,
     contextTierCap: true,
@@ -5,12 +6,11 @@ export const DEFAULT_OPTIONS = {
     conversationFeedback: false,
 };
 const PROTOCOLS = new Set(["chat", "responses", "messages"]);
-const ENDPOINT_ID = /^[a-z0-9](?:[a-z0-9-]{0,62})$/;
 function isRecord(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 export function isEndpointId(value) {
-    return ENDPOINT_ID.test(value);
+    return isEndpointID(value);
 }
 function parseProtocolOverrides(value, label, logger) {
     const protocolOverrides = {};
@@ -78,7 +78,7 @@ export function parseOptions(input, logger = console) {
         }
         for (const [id, raw] of Object.entries(input.endpoints)) {
             if (!isEndpointId(id)) {
-                logger.warn(`endpoint id ${JSON.stringify(id)} 非法（仅允许小写 ASCII 字母、数字和连字符，最长 63），已跳过`);
+                logger.warn(`endpoint id ${JSON.stringify(id)} 非法（必须匹配 [a-z0-9][a-z0-9-_]*），已跳过`);
                 continue;
             }
             if (!isRecord(raw)) {

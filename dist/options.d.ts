@@ -1,4 +1,4 @@
-import type { Protocol } from "./generated/discovery-core/index.js";
+import { type Protocol } from "./generated/discovery-core/index.js";
 export type { Protocol } from "./generated/discovery-core/index.js";
 export interface EndpointDefinition {
     readonly baseUrl: string;
