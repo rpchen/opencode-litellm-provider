@@ -148,7 +148,7 @@ assert.equal(disconnected.state.providers.length, 0)
 assert.equal(disconnected.state.commands.length, 3)
 assert.deepEqual(disconnected.state.commands.sort(), ["litellm-audit-export", "litellm-diagnostics", "litellm-endpoints"])
 assert.equal(disconnected.state.eventAborts, 1)
-assert.deepEqual(disconnected.state.disposed.sort(), ["command", "integration", "provider", "rpc"])
+assert.deepEqual(disconnected.state.disposed.sort(), ["command", "command", "integration", "provider", "rpc", "rpc"])
 assert.equal(modelRequests + catalogRequests, 0)
 
 const connected = hostContext(true)
@@ -185,7 +185,7 @@ try {
   clearTimeout(deadline)
   await closeConnected()
 }
-assert.deepEqual(connected.state.disposed.sort(), ["command", "integration", "provider", "rpc"])
+assert.deepEqual(connected.state.disposed.sort(), ["command", "command", "integration", "provider", "rpc", "rpc"])
 assert.equal(connected.state.eventAborts, 1)
 const { buildModelSpecs } = await installedModule("dist/generated/discovery-core/index.js")
 assert(buildModelSpecs(input.litellm, input.modelsDev, { contextTierCap: true, protocolOverrides: {} })
