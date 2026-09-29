@@ -7,8 +7,9 @@ import { registerAudit } from "../src/host/audit-command.js"
 import { registerEndpointActivation } from "../src/host/endpoint-command.js"
 import { createDiscoveryLoop } from "../src/host/sync.js"
 import type { ProviderSnapshot } from "../src/host/register.js"
+import type { EndpointActivation } from "../src/endpoints.js"
 import { setupAuditTui } from "../src/tui.js"
-import { AuditCard, createAuditResultStore, type AuditResult } from "../src/tui-card.js"
+import { AuditCard, createAuditResultStore, type AuditResult, type EndpointActivationResult } from "../src/tui-card.js"
 
 const store = createAuditResultStore()
 const lightText = RGBA.fromHex("#1a1a1a")
@@ -113,23 +114,39 @@ try {
 
 let latest: AuditResult = { sequence: 0, sessionID: "", ok: false, path: "", error: "" }
 let tick!: () => void
-let auditCompleted!: (event: { data: AuditResult }) => void
-let endpointShown!: (event: { data: unknown }) => void
+let auditCompleted!: (event: { data: AuditResult & { lines?: string[] } }) => void
+let endpointShown!: (event: { data: EndpointActivationResult }) => void
 let render!: (input: { sessionID: string }) => ReturnType<typeof AuditCard>
 let stopped = 0
+let auditServerHandlers: { latest(input: Record<string, never>): Promise<AuditResult & { lines?: string[] }> } | undefined
+let endpointServerHandlers: {
+  state(input: Record<string, never>): Promise<EndpointActivationResult>
+  set(input: { action: string; endpointId: string }): Promise<EndpointActivationResult>
+} | undefined
+let dropNextAuditEvent = false
+const endpointChoices: Array<string | undefined> = []
+const endpointDialogs: Array<{ title: string; options: ReadonlyArray<{ title: string; value: string }> }> = []
+const emptyEndpoint: EndpointActivationResult = {
+  sequence: 0,
+  sessionID: "",
+  mode: "all",
+  endpointIds: [],
+  activeEndpointIds: [],
+}
 const context = {
   get theme() { return { text: { base: foreground() } } },
   client: { rpc: (schema: { id?: string }) => schema.id === "litellm-endpoints"
     ? ({
-        state: async () => ({ sequence: 0, sessionID: "", mode: "all", endpointIds: [], activeEndpointIds: [] }),
-        set: async () => ({ sequence: 0, sessionID: "", mode: "all", endpointIds: [], activeEndpointIds: [] }),
+        state: async () => endpointServerHandlers ? endpointServerHandlers.state({}) : emptyEndpoint,
+        set: async (input: { action: string; endpointId: string }) =>
+          endpointServerHandlers ? endpointServerHandlers.set(input) : emptyEndpoint,
         events: { on: (name: string, listener: typeof endpointShown) => {
           if (name === "shown") endpointShown = listener
           return () => { stopped++ }
         } },
       })
     : ({
-        latest: async () => latest,
+        latest: async () => auditServerHandlers ? auditServerHandlers.latest({}) : latest,
         events: { on: (name: string, listener: typeof auditCompleted) => {
           if (name === "completed") auditCompleted = listener
           return () => { stopped++ }
@@ -140,7 +157,16 @@ const context = {
       render = claim.render
       return () => { stopped++ }
     },
-    dialog: { prompt: async () => undefined },
+    router: { current: () => ({ type: "session", sessionID: "current" }) },
+    toast: { show: () => {} },
+    dialog: {
+      prompt: async () => undefined,
+      clear: () => {},
+      select: async (options: { title: string; options: ReadonlyArray<{ title: string; value: string }> }) => {
+        endpointDialogs.push(options)
+        return endpointChoices.shift()
+      },
+    },
   },
 } as unknown as Context
 const cleanup = await setupAuditTui(context, (callback) => {
@@ -258,14 +284,21 @@ try {
   let sessionPrompts = 0
   const serverRegistration = await registerAudit({
     rpc: {
-      register: async () => ({
-        events: {
-          emit: async (_event: string, value: unknown) => {
-            auditCompleted({ data: value as AuditResult })
+      register: async (_schema: unknown, handlers: typeof auditServerHandlers) => {
+        auditServerHandlers = handlers
+        return {
+          events: {
+            emit: async (_event: string, value: unknown) => {
+              if (dropNextAuditEvent) {
+                dropNextAuditEvent = false
+                return
+              }
+              auditCompleted({ data: value as AuditResult & { lines?: string[] } })
+            },
           },
-        },
-        dispose: async () => {},
-      }),
+          dispose: async () => {},
+        }
+      },
     },
     command: {
       transform: async (callback: (editor: { add(value: { name: string; execute(input: { sessionID: string }): Promise<void> }): void }) => void) => {
@@ -289,7 +322,12 @@ try {
 
   try {
     assert.ok(diagnosticsCommand)
+    dropNextAuditEvent = true
     await diagnosticsCommand!.execute({ sessionID: "current" })
+    await Bun.sleep(0)
+    await live.renderOnce()
+    assert.doesNotMatch(live.captureCharFrame(), /LiteLLM Diagnostics/, "dropped live event must not render immediately")
+    tick()
     await Bun.sleep(0)
     await live.renderOnce()
     await Bun.sleep(0)
@@ -307,19 +345,22 @@ try {
     await clickLive("[关闭]")
     assert.doesNotMatch(live.captureCharFrame(), /LiteLLM Diagnostics/, "diagnostics card must be dismissible")
 
-    // PR9 vertical closure: real endpoint command -> RPC event -> endpoint store -> visible TUI card.
+    // PR9 vertical closure: server command -> RPC event -> native selector -> RPC set -> activation mutation.
     let endpointCommand: { execute(input: { sessionID: string }): Promise<void> } | undefined
-    let activation = { mode: "all" as const }
+    let activation: EndpointActivation = { mode: "all" }
     const endpointRegistration = await registerEndpointActivation({
       rpc: {
-        register: async () => ({
-          events: {
-            emit: async (_event: string, value: unknown) => {
-              endpointShown({ data: value })
+        register: async (_schema: unknown, handlers: typeof endpointServerHandlers) => {
+          endpointServerHandlers = handlers
+          return {
+            events: {
+              emit: async (_event: string, value: unknown) => {
+                endpointShown({ data: value as EndpointActivationResult })
+              },
             },
-          },
-          dispose: async () => {},
-        }),
+            dispose: async () => {},
+          }
+        },
       },
       command: {
         transform: async (callback: (editor: { add(value: { name: string; execute(input: { sessionID: string }): Promise<void> }): void }) => void) => {
@@ -332,21 +373,26 @@ try {
         },
       },
     } as never, ["default", "company"], () => activation, async (next) => {
-      activation = next as typeof activation
+      activation = next
     })
     try {
       assert.ok(endpointCommand)
+      endpointChoices.push("toggle:default", "close")
       await endpointCommand!.execute({ sessionID: "current" })
       await Bun.sleep(0)
-      await live.renderOnce()
-      const endpointFrame = live.captureCharFrame()
-      assert.match(endpointFrame, /LiteLLM endpoints/)
-      assert.match(endpointFrame, /✓ default/)
-      assert.match(endpointFrame, /✓ company/)
-      assert.match(endpointFrame, /\[全部启用\]/)
-      assert.match(endpointFrame, /\[全部停用\]/)
-      await clickLive("[关闭]")
-      assert.doesNotMatch(live.captureCharFrame(), /LiteLLM endpoints/)
+      await Bun.sleep(0)
+
+      assert.deepEqual(activation, { mode: "selected", endpointIds: ["company"] })
+      assert.equal(endpointDialogs.length, 2)
+      assert.deepEqual(endpointDialogs[0]?.options.map((item) => item.title), [
+        "✓ default",
+        "✓ company",
+        "全部启用",
+        "全部停用",
+        "关闭",
+      ])
+      assert.equal(endpointDialogs[1]?.options[0]?.title, "○ default")
+      assert.equal(endpointDialogs[1]?.options[1]?.title, "✓ company")
     } finally {
       await endpointRegistration.dispose()
     }
@@ -355,7 +401,7 @@ try {
     await diagnosticLoop.dispose()
   }
 
-  console.log("TUI latest recovery, diagnostics and PR9 endpoint command vertical paths passed")
+  console.log("TUI latest recovery, diagnostics recovery and native endpoint selector vertical paths passed")
 } finally {
   live.renderer.destroy()
   cleanup()
