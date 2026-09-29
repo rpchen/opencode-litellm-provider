@@ -90,6 +90,13 @@ const expectedSDKs = {
 }
 const { PROTOCOL_PACKAGES } = await installedModule("dist/core/protocol.js")
 assert.deepEqual(PROTOCOL_PACKAGES, expectedSDKs)
+const core = await installedModule("dist/generated/discovery-core/index.js")
+const neutralFixtureModels = core.buildModelSpecs(
+  input.litellm,
+  input.modelsDev,
+  { contextTierCap: true, protocolOverrides: {} },
+)
+const expectedOperationalCount = neutralFixtureModels.filter(core.hasOperationalLimits).length
 for (const specifier of Object.values(expectedSDKs)) {
   resolved(specifier)
   assert(await import(specifier))
@@ -161,7 +168,7 @@ try {
   assert.equal(registration.info.id, "litellm")
   assert.equal(registration.info.package, expectedSDKs.chat)
   assert.equal(registration.info.settings.baseURL, "https://litellm.example/v1")
-  assert.equal(registration.models.length, 10)
+  assert.equal(registration.models.length, expectedOperationalCount)
   assert.equal(Object.isFrozen(registration.models), true)
   assert.equal(JSON.stringify(registration).includes("sk-fixture-only"), false)
   const models = new Map(registration.models.map((model) => [model.id, model]))
@@ -186,11 +193,9 @@ try {
 }
 assert.deepEqual(connected.state.disposed.sort(), ["command", "integration", "provider", "rpc"])
 assert.equal(connected.state.eventAborts, 1)
-const { buildModelSpecs } = await installedModule("dist/generated/discovery-core/index.js")
-assert(buildModelSpecs(input.litellm, input.modelsDev, { contextTierCap: true, protocolOverrides: {} })
-  .every((model) => !Object.hasOwn(model, "package")))
+assert(neutralFixtureModels.every((model) => !Object.hasOwn(model, "package")))
 const { createAuditResultStore } = await installedModule("dist/tui-card.js")
 const store = createAuditResultStore()
 store.accept({ sequence: 1, sessionID: "smoke", ok: true, path: "C:/audit/report.json", error: "" })
 assert.equal(store.forSession("smoke")?.path, "C:/audit/report.json")
-console.log(`Installed-entry contract passed: real @opencode/plugin ${peer.version}; simulated host context and fixture HTTP; 10 models, 3 SDKs, both entry points`)
+console.log(`Installed-entry contract passed: real @opencode/plugin ${peer.version}; simulated host context and fixture HTTP; ${expectedOperationalCount} operational models, 3 SDKs, both entry points`)
