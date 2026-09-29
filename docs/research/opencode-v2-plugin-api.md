@@ -30,11 +30,23 @@
 | `ctx.provider.reload()` / `ctx.model.reload()` | 触发 transform 重新执行 | 变更检测后刷新 |
 | `ctx.aisdk.hook("sdk" \| "language", cb, { providerID })` | 自定义 SDK 实例 / 选择 LanguageModel | 决定走 chat / responses / messages（例如对 `@ai-sdk/openai` 选 `.chat()` 还是 `.responses()`） |
 | `ctx.event` | 事件订阅 | 监听连接变更（上游 opencode 插件监听 `Integration.Event.ConnectionUpdated`） |
+| `ctx.plugin.list()` | 读取当前 active plugins | **只读**；公开 V2 API 不提供 `plugin.add/remove`，不能用它动态创建 child plugin |
+
+### 2.1 多 endpoint 的宿主边界（2026-09-29 实机回归）
+
+v0.4.0 的首次 multi-endpoint 实现错误假设 `ctx.plugin.add/remove` 存在，OpenCode 2.0.x 实机因此在显式多个 endpoint 时直接进入 `failed`。重新核对当前上游源码与官方文档后确认：
+
+- Promise PluginContext 的 `plugin` 域只有 `list()`；运行时增删 plugin 不是公开 API。
+- `ctx.integration.transform` 的 editor `update(id, ...)` 在 id 不存在时会创建 `{ id, name: id }` integration，再应用 update；`method.update()` 同样可为该 integration 注册认证方式。
+- 因此一个 server plugin 可以、也应该在**同一个 plugin context** 中注册多个 LiteLLM integration/provider。每个 endpoint 用独立 integration id，`connection.active(id)` / `resolve()` 自然得到各自 credential。
+- activation 应只启停 provider/discovery runtime，不需要、也不应该卸载 integration；这样停用 endpoint 仍保留宿主 credential 管理入口。
+
+本项目从 v0.4.1 起把这条作为真实宿主不变量：显式 multi-endpoint 测试 context **故意不提供** `plugin.add/remove`，installed-package probe 也必须覆盖两个 integration id。
 
 `Transform<T>` 返回 `Registration`（带 `dispose`）；transform 回调是**同步**的，异步发现需先在外部完成、缓存结果，
 再在回调中写入，然后 `reload()` —— 上游 `plugin/provider/opencode.ts` 正是此模式（`load()` 拉取 → 缓存 → `catalog.reload()`）。
 
-### 2.1 会话消息通道与客户端渲染差异（2026-09-25 补充）
+### 2.2 会话消息通道与客户端渲染差异（2026-09-25 补充）
 
 对话反馈能力（`add-conversation-feedback-channel`）核查所得，含源码级证据：
 
