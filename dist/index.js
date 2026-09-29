@@ -1,6 +1,7 @@
 import { Plugin } from "@opencode/plugin";
 import { registerAudit } from "./host/audit-command.js";
 import { registerEndpointActivation } from "./host/endpoint-command.js";
+import { registerMultiEndpointAudit } from "./host/multi-audit-command.js";
 import { registerIntegration, registerProvider } from "./host/register.js";
 import { createDiscoveryLoop } from "./host/sync.js";
 import { ACTIVATION_STORAGE_KEY, activeEndpointIds, endpointIdentity, parseActivation, } from "./endpoints.js";
@@ -134,6 +135,7 @@ export async function setupLiteLLM(rawContext, dependencies = {}) {
                 await activateOne(id);
     };
     await reconcile();
+    const auditRegistration = await registerMultiEndpointAudit(context, endpointIds, () => activeEndpointIds(endpointIds, activation), snapshots);
     const activationRegistration = await registerEndpointActivation(context, endpointIds, () => activation, async (next) => {
         activation = next;
         await writeActivation(context, next);
@@ -141,6 +143,7 @@ export async function setupLiteLLM(rawContext, dependencies = {}) {
     });
     return async () => {
         await activationRegistration.dispose();
+        await auditRegistration.dispose();
         for (const id of [...disposers.keys()])
             await deactivateOne(id);
     };

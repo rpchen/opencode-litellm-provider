@@ -78,3 +78,14 @@ export function createAuditReport(snapshot, now = new Date()) {
         models: view?.models.map((model) => modelRecord(model, view)) ?? [],
     };
 }
+export function createMultiEndpointAuditReport(endpoints, now = new Date()) {
+    return {
+        schemaVersion: 2,
+        scope: "plugin-submitted",
+        exportedAt: now.toISOString(),
+        endpoints: endpoints.map(({ id, snapshot }) => ({
+            id,
+            report: createAuditReport(snapshot, now),
+        })),
+    };
+}
