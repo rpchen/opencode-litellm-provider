@@ -102,10 +102,11 @@ describe("PR9 endpoint options", () => {
     const options = parseOptions({
       endpoints: {
         "team-a": { baseUrl: "https://a.example" },
+        "team_2": { baseUrl: "https://b.example" },
         "Team A": { baseUrl: "https://bad.example" },
         broken: { baseUrl: "ftp://bad.example" },
       },
     }, { warn: () => {} })
-    expect(Object.keys(options.endpoints ?? {})).toEqual(["team-a"])
+    expect(Object.keys(options.endpoints ?? {})).toEqual(["team-a", "team_2"])
   })
 })
