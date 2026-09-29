@@ -1,0 +1,8 @@
+- [ ] Replace endpoint activation pseudo-card flow with the native OpenCode selector.
+- [ ] Make endpoint show requests recoverable without replaying activation mutations.
+- [ ] Make diagnostics results recoverable through latest polling.
+- [ ] Add adapter/TUI regression tests for missed startup events and selector actions.
+- [ ] Extend real OpenCode 2.0.16 E2E with pre-connect commands and keyboard activation toggling.
+- [ ] Update README for the native selector and recovered command output.
+- [ ] Rebuild and commit dist, then run the full repository validation suite.
+- [ ] Archive the OpenSpec change and re-run strict validation after CI evidence is complete.
