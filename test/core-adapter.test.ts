@@ -16,9 +16,10 @@ const options = { contextTierCap: true, protocolOverrides: {} }
 test("共享 ModelSpec 保持中立，OpenCode 适配只增加 SDK package", () => {
   const neutral = discover(litellm, modelsDev, options)
   const original = structuredClone(neutral)
-  const adapted = neutral.map(toOpenCodeModelSpec)
+  const adapted = neutral.filter(hasOperationalLimits).map(toOpenCodeModelSpec)
   expect(neutral).toEqual(original)
   expect(adapted).toEqual(buildModelSpecs(litellm, modelsDev, options))
+  expect(neutral.some((model) => !hasOperationalLimits(model))).toBeTrue()
   for (const model of adapted) {
     const { package: sdk, ...metadata } = model
     const expected = neutral.find((item) => item.id === model.id)
