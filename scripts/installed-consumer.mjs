@@ -96,7 +96,7 @@ for (const specifier of Object.values(expectedSDKs)) {
 }
 
 function hostContext(active) {
-  const state = { disposed: [], providers: [], commands: 0, eventAborts: 0, integration: { id: "litellm", name: "old" } }
+  const state = { disposed: [], providers: [], commands: [], eventAborts: 0, integration: { id: "litellm", name: "old" } }
   let transform
   let ready
   state.ready = new Promise((resolve) => { ready = resolve })
@@ -123,7 +123,7 @@ function hostContext(active) {
       reload: async () => { transform(editor) },
     },
     rpc: { register: async () => ({ ...registration("rpc"), events: { emit: async () => {} } }) },
-    command: { transform: async (callback) => { callback({ add: () => { state.commands++ } }); return registration("command") } },
+    command: { transform: async (callback) => { callback({ add: (value) => { state.commands.push(value.name) } }); return registration("command") } },
     event: {
       subscribe: ({ signal }) => ({
         [Symbol.asyncIterator]: () => ({
@@ -145,7 +145,8 @@ assert.equal(typeof closeDisconnected, "function")
 await closeDisconnected()
 assert.equal(disconnected.state.integration.name, "LiteLLM")
 assert.equal(disconnected.state.providers.length, 0)
-assert.equal(disconnected.state.commands, 2)
+assert.equal(disconnected.state.commands.length, 3)
+assert.deepEqual(disconnected.state.commands.sort(), ["litellm-audit-export", "litellm-diagnostics", "litellm-endpoints"])
 assert.equal(disconnected.state.eventAborts, 1)
 assert.deepEqual(disconnected.state.disposed.sort(), ["command", "integration", "provider", "rpc"])
 assert.equal(modelRequests + catalogRequests, 0)
