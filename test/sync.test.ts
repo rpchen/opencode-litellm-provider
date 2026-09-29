@@ -7,6 +7,7 @@ import { createDiagnosticsLines } from "../src/host/diagnostics.js"
 import { createDiscoveryLoop, type Scheduler, type SyncContext } from "../src/host/sync.js"
 import type { ProviderSnapshot } from "../src/host/register.js"
 import type { PluginOptions } from "../src/options.js"
+import { endpointIdentity, type EndpointIdentity } from "../src/endpoints.js"
 
 class FakeScheduler implements Scheduler {
   tasks: Array<() => void> = []
@@ -76,7 +77,11 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-function harness(initialStorage?: unknown, useCoreDiagnostics = false) {
+function harness(
+  initialStorage?: unknown,
+  useCoreDiagnostics = false,
+  endpoint: EndpointIdentity = endpointIdentity("default", undefined, true),
+) {
   const scheduler = new FakeScheduler()
   const events = new EventQueue()
   const connectionA: ConnectionInfo = {
@@ -147,7 +152,7 @@ function harness(initialStorage?: unknown, useCoreDiagnostics = false) {
         return input.model === "empty" ? [] : [spec(input.model ?? "model-a")]
       },
     }),
-  })
+  }, endpoint)
 
   return {
     loop,
@@ -167,10 +172,11 @@ function harness(initialStorage?: unknown, useCoreDiagnostics = false) {
   }
 }
 
-function persistedSnapshot(id: string, credentialKey = "sk-first") {
+function persistedSnapshot(id: string, credentialKey = "sk-first", endpointID?: string) {
   const { package: _package, ...neutral } = spec(id)
   return createDiscoverySnapshot(
     endpointFingerprint({
+      endpointID,
       baseUrl: "https://litellm.example",
       credentialKey,
       buildOptions: { contextTierCap: true, protocolOverrides: {} },
@@ -230,6 +236,30 @@ describe("发现循环", () => {
     await starting
     expect(h.snapshot.models.map((model) => model.id)).toEqual(["model-a"])
     expect(h.storageWrites).toBe(1)
+    await h.loop.dispose()
+  })
+
+  test("显式 endpoint identity 隔离同 URL/同凭据的 legacy snapshot", async () => {
+    const stored = JSON.stringify(persistedSnapshot("legacy-model"))
+    const endpoint = endpointIdentity("company", "https://litellm.example", false)
+    const h = harness(stored, false, endpoint)
+    const pending = deferred<unknown>()
+    h.setFetch(() => pending.promise)
+
+    const starting = h.loop.start()
+    await flush()
+    expect(h.snapshot.ready).toBeFalse()
+    expect(h.snapshot.models).toEqual([])
+
+    pending.resolve({ model: "company-model" })
+    await starting
+    const persisted = JSON.parse(String(h.storageValue)) as { endpointFingerprint: string }
+    expect(persisted.endpointFingerprint).toBe(endpointFingerprint({
+      endpointID: "company",
+      baseUrl: "https://litellm.example",
+      credentialKey: "sk-first",
+      buildOptions: { contextTierCap: true, protocolOverrides: {} },
+    }))
     await h.loop.dispose()
   })
 
