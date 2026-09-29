@@ -12,8 +12,6 @@ jobs:
     if: "!startsWith(github.event.head_commit.message, 'build: sync operational limit guard dist')"
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    env:
-      LITELLM_CORE_SHA: e5f6393c12fc199bd8466e9d01dd5914ad6b74d8
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
