@@ -78,7 +78,7 @@ function command(args, options = {}) {
     if (stderr) process.stderr.write(stderr)
   }
   if (!options.allowFailure && (result.error || result.status !== 0)) {
-    throw new Error(`opencode exited ${result.status ?? "unknown"}: ${result.error?.message ?? stderr || stdout}`)
+    throw new Error(`opencode exited ${result.status ?? "unknown"}: ${result.error?.message ?? (stderr || stdout)}`)
   }
   return { status: result.status, stdout, stderr }
 }
