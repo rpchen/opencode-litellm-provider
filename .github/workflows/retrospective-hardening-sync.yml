@@ -40,6 +40,16 @@ jobs:
         run: |
           node -e "const fs=require('node:fs'); const p='openspec/changes/session-retrospective-hardening/tasks.md'; let s=fs.readFileSync(p,'utf8'); s=s.replaceAll('- [ ] ','- [x] '); fs.writeFileSync(p,s)"
           npx openspec archive session-retrospective-hardening --yes
+          node <<'NODE'
+          const fs = require("node:fs")
+          const path = "openspec/specs/release-governance/spec.md"
+          let content = fs.readFileSync(path, "utf8")
+          content = content.replace(
+            /## Purpose\n[\s\S]*?\n## Requirements/,
+            "## Purpose\nDefines release metadata and completion checks that keep OpenCode package versions, README current-release instructions, release notes, OpenSpec archive state, and published release inputs consistent.\n\n## Requirements",
+          )
+          fs.writeFileSync(path, content)
+          NODE
           npm run validate:spec
           npm run test:openspec-closure
       - name: Commit dist and archive
