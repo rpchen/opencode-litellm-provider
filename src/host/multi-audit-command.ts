@@ -10,7 +10,7 @@ interface MultiAuditDependencies {
   now?: () => Date
 }
 
-interface LatestVisibleResult {
+type LatestVisibleResult = {
   sequence: number
   sessionID: string
   ok: boolean
