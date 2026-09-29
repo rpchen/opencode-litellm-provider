@@ -1,6 +1,6 @@
-import { buildModelSpecs } from "./build.js";
+import { buildModelSpecs, hasOperationalLimits } from "./build.js";
 import { groupLiteLLMDeployments, isRecord, optionalBoolean, optionalNumber, positiveInteger, } from "./litellm.js";
-import { buildVariants, candidateModelIDs, canonicalModelID, resolveReasoningSupport, selectModelsDevRecord, } from "./modelsdev.js";
+import { buildVariants, canUseSelectedModelsDevPrice, candidateModelIDs, canonicalModelID, resolveReasoningSupport, selectModelsDevRecord, } from "./modelsdev.js";
 import { resolveProtocolResolution, resolveProtocolSupport, } from "./protocol.js";
 export const DISCOVERY_DIAGNOSTICS_SCHEMA_VERSION = 1;
 function field(source, detail) {
@@ -102,8 +102,11 @@ function outputLimitProvenance(group, selected) {
 function pricingProvenance(group, selected, deploymentFields, modelsDevKey) {
     if (anyDeploymentNonNegativeNumber(group, deploymentFields))
         return field("litellm");
-    if (modelsDevObjectNumber(selected, "cost", modelsDevKey))
-        return field("models.dev");
+    if (modelsDevObjectNumber(selected, "cost", modelsDevKey)) {
+        if (canUseSelectedModelsDevPrice(selected))
+            return field("models.dev");
+        return field("default", `models.dev ${selected?.selectionSource ?? "fallback"} price ignored; capability fallback is not deployment pricing`);
+    }
     return field("default", "missing price metadata maps to zero");
 }
 function metadataConflicts(group, selected, reasoning) {
@@ -204,6 +207,15 @@ function modelDiagnostic(group, spec, catalog, options) {
             code: "models-dev-unmatched",
             modelId: group.modelName,
             message: "No models.dev record matched this LiteLLM model.",
+        });
+    }
+    if (!hasOperationalLimits(spec)) {
+        issues.push({
+            severity: "warning",
+            stage: "mapping",
+            code: "model-operational-limits-missing",
+            modelId: group.modelName,
+            message: "Model context/output limits are not positive; host adapters must not publish this model as operational.",
         });
     }
     for (const conflict of conflicts) {

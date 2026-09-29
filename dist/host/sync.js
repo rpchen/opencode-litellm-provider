@@ -1,9 +1,10 @@
-import { buildModelSpecs, modelFingerprint, toOpenCodeModelSpec } from "../core/build.js";
+import { buildModelSpecs, modelFingerprint } from "../core/build.js";
 import { createDiscoveryCacheDiagnostics, diagnoseModelSpecs, } from "../core/diagnostics.js";
 import { normalizeLiteLLMURL } from "../core/litellm.js";
 import { createDiscoveryCoordinator } from "../core/refresh.js";
 import { compareDiscoverySnapshots, createDiscoverySnapshot, endpointFingerprint, inspectDiscoverySnapshot, } from "../core/snapshot.js";
 import { DiscoveryError, fetchLiteLLMModelInfo, getModelsDevCatalog, redact, } from "../net/fetch.js";
+import { filterOperationalModelSpecs, toOperationalOpenCodeModelSpecs } from "./models.js";
 import { createRegistrationView, INTEGRATION_ID } from "./register.js";
 const DISCOVERY_SNAPSHOT_STORAGE_KEY = "litellm.discovery.snapshot.v1";
 const defaultScheduler = {
@@ -250,7 +251,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
         });
         const previousPersisted = await loadPersistedSnapshot(nextIdentity, expectedEndpoint);
         if (!snapshot.ready && previousPersisted) {
-            const restoredModels = previousPersisted.models.map(toOpenCodeModelSpec);
+            const restoredModels = toOperationalOpenCodeModelSpecs(previousPersisted.models);
             const restoredView = createRegistrationView(restoredModels, addresses.apiBaseURL);
             snapshot.ready = true;
             snapshot.connection = connection;
@@ -280,11 +281,11 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                     logger,
                 });
                 if (dependencies.buildModels) {
-                    const models = buildModels(response, catalog, options);
+                    const models = filterOperationalModelSpecs(buildModels(response, catalog, options));
                     return { models, fingerprint: fingerprint(models) };
                 }
                 const diagnosed = diagnoseModelSpecs(response, catalog, options);
-                const models = diagnosed.models.map(toOpenCodeModelSpec);
+                const models = toOperationalOpenCodeModelSpecs(diagnosed.models);
                 return {
                     models,
                     fingerprint: fingerprint(models),

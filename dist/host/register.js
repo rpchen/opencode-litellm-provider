@@ -1,5 +1,6 @@
 import { Model, Provider } from "@opencode/plugin";
 import { PROTOCOL_PACKAGES } from "../core/protocol.js";
+import { filterOperationalModelSpecs } from "./models.js";
 export const INTEGRATION_ID = "litellm";
 export const PROVIDER_ID = "litellm";
 export function applyIntegration(editor) {
@@ -61,7 +62,7 @@ function freezeDeep(value, seen = new WeakSet()) {
     return Object.freeze(value);
 }
 export function createRegistrationView(models, apiBaseURL) {
-    const specs = structuredClone(models);
+    const specs = filterOperationalModelSpecs(structuredClone(models));
     const protocols = Object.fromEntries(specs.map((spec) => [spec.id, spec.protocol]));
     const releaseUnits = Object.fromEntries(specs.map((spec) => [
         spec.id,

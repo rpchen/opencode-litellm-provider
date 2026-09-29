@@ -17,13 +17,21 @@ export interface ModelsDevRecord extends Record<string, unknown> {
     reasoning_options?: unknown;
 }
 export type ModelsDevMatchKind = "exact" | "canonical" | "alias";
+export type ModelsDevSelectionSource = "explicit-provider" | "canonical-original" | "family-original" | "openrouter-fallback" | "opencode-fallback" | "unique-match";
 export interface SelectedModelRecord {
     providerID: string;
     modelID: string;
     record: ModelsDevRecord;
     matchedCandidate?: string;
     matchKind?: ModelsDevMatchKind;
+    selectionSource?: ModelsDevSelectionSource;
 }
+/**
+ * Whether provider-scoped models.dev pricing can be treated as a plausible
+ * fallback for the deployed model. Gateway/reseller records selected only for
+ * capability enrichment must never masquerade as the LiteLLM route price.
+ */
+export declare function canUseSelectedModelsDevPrice(selected: SelectedModelRecord | undefined): boolean;
 export interface ModelVariant {
     id: string;
     settings: Record<string, unknown>;

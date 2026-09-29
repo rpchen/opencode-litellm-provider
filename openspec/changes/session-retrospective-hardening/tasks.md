@@ -1,6 +1,0 @@
-- [x] Add OpenSpec closure and release metadata CI gates.
-- [x] Correct README current-release documentation and record superseding decisions.
-- [ ] Rebuild dist from the merged retrospective-hardening Core SHA.
-- [ ] Filter non-operational Core ModelSpecs before OpenCode registration and add generic tests.
-- [ ] Run full OpenCode delivery gates.
-- [ ] Archive this change and re-run strict OpenSpec plus closure validation.
