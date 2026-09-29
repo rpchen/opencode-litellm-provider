@@ -55,3 +55,18 @@
 维护者在 Windows / OpenCode 2.0.16 上实测 d565084 正常后，明确授权“发版 PR → CI → 合并 → main CI → tag → GitHub Release”。v0.2.0 标记共享 core 迁移的阶段性发行，不表示引入破坏性行为，也不要求与 Pi 版本同步。历史 v0.1.4 不移动、不覆盖；不发布 npm。
 
 发行沿用已实测实现、完整 dist 和 core provenance 32575d4e0185ebf40fb54aa5b538a22acca4e0d3，不执行更新构建。manifest 与锁文件两处根版本统一为 0.2.0，不更新依赖解析。Release 检查既有版本 tag 与三个版本字段一致；显式 dispatch 也不得选择 branch。附件上传后下载复核校验和、归档字节及解包 dist。所有验证仅在执行后记为通过，维护者实测与自动化替身测试分别说明。Pi 与 core 仓库保持不变。
+## Discovery quality 与元数据优先级（2026-09-29，取代旧家族匹配决策）
+
+本节取代上方“推理档位原厂 → OpenCode Zen → 唯一 provider”和“完整家族表”中关于 models.dev provider 选择的旧规则；旧条目只保留历史背景，不再作为实施依据。
+
+- 插件的核心目标是让宿主正确使用模型能力，不承担计费职责。protocol、context/input/output、modalities、tools、reasoning/variants 的正确性优先于价格完整性。
+- models.dev provider 选择统一由 Core 维护：LiteLLM 显式 `models_dev_provider` → `canonical_model_id` 推导出的原厂记录 → legacy family heuristic（仅兼容缺少 canonical identity 的旧/测试 catalog）→ OpenRouter → OpenCode → 全局唯一记录；剩余 reseller 仍歧义时才 unmatched。
+- 不得因新模型家族出现就优先增加硬编码厂商正则；应首先利用 models.dev canonical identity。
+- OpenRouter/OpenCode/其他 reseller 若仅作为能力 fallback，其 provider price 不代表当前 LiteLLM route price。LiteLLM 显式价格始终优先；没有可靠价格可以为未知/零。
+- Core 可保留 limit=0 的 neutral ModelSpec 供 diagnostics/fingerprint，但 OpenCode 不得把 context/output 非正数的模型发布为 active host model。
+- 上述规则以共享 Core `docs/testing-standard.md` 和 canonical OpenSpec specs 为最终规范。
+
+## Release 与会话收尾（2026-09-29）
+
+用户可见 feat/fix 完成后必须检查 tag/Release 是否落后于 main。Release PR 同步 manifest、lockfile、README 当前 tag 示例和当前 release notes；合并后的同一 main commit 完整 CI 通过后才能打不可移动 tag。发布后核对 tag SHA、Release workflow、附件/checksum 和回读验证；任何一次性 workflow/branch 都必须清理。OpenSpec change 必须 archive 后才算 Closed。
+
