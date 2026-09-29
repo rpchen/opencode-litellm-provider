@@ -1,11 +1,18 @@
-import type { Protocol } from "./generated/discovery-core/index.js"
+import { isEndpointID, type Protocol } from "./generated/discovery-core/index.js"
 export type { Protocol } from "./generated/discovery-core/index.js"
+
+export interface EndpointDefinition {
+  readonly baseUrl: string
+  readonly protocolOverrides: Record<string, Protocol>
+}
 
 export interface PluginOptions {
   pollInterval: number
   contextTierCap: boolean
   protocolOverrides: Record<string, Protocol>
   conversationFeedback: boolean
+  /** Undefined means legacy single-endpoint mode using /connect URL configuration. */
+  endpoints?: Readonly<Record<string, EndpointDefinition>>
 }
 
 export interface OptionLogger {
@@ -23,6 +30,27 @@ const PROTOCOLS = new Set<Protocol>(["chat", "responses", "messages"])
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+export function isEndpointId(value: string): boolean {
+  return isEndpointID(value)
+}
+
+function parseProtocolOverrides(value: unknown, label: string, logger: OptionLogger): Record<string, Protocol> {
+  const protocolOverrides: Record<string, Protocol> = {}
+  if (value === undefined) return protocolOverrides
+  if (!isRecord(value)) {
+    logger.warn(`${label} 必须是对象，已忽略`)
+    return protocolOverrides
+  }
+  for (const [model, protocol] of Object.entries(value)) {
+    if (model.length > 0 && typeof protocol === "string" && PROTOCOLS.has(protocol as Protocol)) {
+      protocolOverrides[model] = protocol as Protocol
+    } else {
+      logger.warn(`${label}[${JSON.stringify(model)}] 无效，已忽略`)
+    }
+  }
+  return protocolOverrides
 }
 
 export function parseOptions(input: unknown, logger: OptionLogger = console): PluginOptions {
@@ -56,20 +84,45 @@ export function parseOptions(input: unknown, logger: OptionLogger = console): Pl
     else logger.warn("conversationFeedback 必须是布尔值，已使用默认值 false")
   }
 
-  const protocolOverrides: Record<string, Protocol> = {}
-  if (input.protocolOverrides !== undefined) {
-    if (!isRecord(input.protocolOverrides)) {
-      logger.warn("protocolOverrides 必须是对象，已忽略")
-    } else {
-      for (const [model, protocol] of Object.entries(input.protocolOverrides)) {
-        if (model.length > 0 && typeof protocol === "string" && PROTOCOLS.has(protocol as Protocol)) {
-          protocolOverrides[model] = protocol as Protocol
-        } else {
-          logger.warn(`protocolOverrides[${JSON.stringify(model)}] 无效，已忽略`)
-        }
+  const protocolOverrides = parseProtocolOverrides(input.protocolOverrides, "protocolOverrides", logger)
+
+  let endpoints: Record<string, EndpointDefinition> | undefined
+  if (input.endpoints !== undefined) {
+    endpoints = {}
+    if (Object.keys(protocolOverrides).length > 0) {
+      logger.warn("显式 endpoints 模式不能同时使用顶层 protocolOverrides；已拒绝 endpoint 配置")
+      return { pollInterval, contextTierCap, protocolOverrides: {}, conversationFeedback, endpoints }
+    }
+    if (!isRecord(input.endpoints)) {
+      logger.warn("endpoints 必须是对象；已拒绝显式 endpoint 配置")
+      return { pollInterval, contextTierCap, protocolOverrides: {}, conversationFeedback, endpoints }
+    }
+    for (const [id, raw] of Object.entries(input.endpoints)) {
+      if (!isEndpointId(id)) {
+        logger.warn(`endpoint id ${JSON.stringify(id)} 非法（必须匹配 [a-z0-9][a-z0-9-_]*），已跳过`)
+        continue
+      }
+      if (!isRecord(raw)) {
+        logger.warn(`endpoint ${id} 必须是对象，已跳过`)
+        continue
+      }
+      const baseUrl = typeof raw.baseUrl === "string" ? raw.baseUrl.trim() : ""
+      let valid = false
+      try {
+        const url = new URL(baseUrl)
+        valid = url.protocol === "http:" || url.protocol === "https:"
+      } catch {}
+      if (!valid) {
+        logger.warn(`endpoint ${id} 缺少合法 http(s) baseUrl，已跳过`)
+        continue
+      }
+      endpoints[id] = {
+        baseUrl,
+        protocolOverrides: parseProtocolOverrides(raw.protocolOverrides, `endpoints.${id}.protocolOverrides`, logger),
       }
     }
   }
 
-  return { pollInterval, contextTierCap, protocolOverrides, conversationFeedback }
+  const parsed = { pollInterval, contextTierCap, protocolOverrides, conversationFeedback }
+  return endpoints === undefined ? parsed : { ...parsed, endpoints }
 }

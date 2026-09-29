@@ -26,6 +26,34 @@ export function createDiagnosticsResultStore() {
         },
     };
 }
+export function createEndpointActivationStore() {
+    const [results, setResults] = createSignal({});
+    let seen = 0;
+    return {
+        forSession: (sessionID) => results()[sessionID],
+        accept(result) {
+            if (!result ||
+                typeof result.sequence !== "number" ||
+                !result.sessionID ||
+                (result.mode !== "all" && result.mode !== "selected") ||
+                !Array.isArray(result.endpointIds) ||
+                !Array.isArray(result.activeEndpointIds) ||
+                result.endpointIds.some((id) => typeof id !== "string") ||
+                result.activeEndpointIds.some((id) => typeof id !== "string") ||
+                result.sequence < seen)
+                return;
+            seen = result.sequence;
+            setResults((previous) => ({ ...previous, [result.sessionID]: result }));
+        },
+        dismiss(sessionID) {
+            setResults((previous) => {
+                const next = { ...previous };
+                delete next[sessionID];
+                return next;
+            });
+        },
+    };
+}
 export function createAuditResultStore() {
     const [results, setResults] = createSignal({});
     let seen = 0;
@@ -118,6 +146,20 @@ export function DiagnosticsCard(props) {
         children: (result) => _jsxs("box", { flexDirection: "column", paddingLeft: 2, paddingRight: 2, marginBottom: 1, children: [result.lines.map((line) => _jsx(Text, { wrapMode: "char", children: line })), _jsx(Text, { onMouseUp: props.onDismiss, children: "[\u5173\u95ED]" })] }),
     });
 }
+export function EndpointActivationCard(props) {
+    const Text = (text) => jsx("text", {
+        ...text,
+        get fg() { return props.foreground(); },
+    });
+    return Show({
+        get when() { return props.result(); },
+        keyed: true,
+        children: (result) => {
+            const active = new Set(result.activeEndpointIds);
+            return _jsxs("box", { flexDirection: "column", paddingLeft: 2, paddingRight: 2, marginBottom: 1, children: [_jsx(Text, { children: "LiteLLM endpoints" }), result.endpointIds.map((id) => _jsxs(Text, { onMouseUp: () => { void props.onAction("toggle", id); }, children: [active.has(id) ? "✓" : "○", " ", id] })), _jsxs("box", { flexDirection: "row", gap: 2, children: [_jsx(Text, { onMouseUp: () => { void props.onAction("all"); }, children: "[\u5168\u90E8\u542F\u7528]" }), _jsx(Text, { onMouseUp: () => { void props.onAction("none"); }, children: "[\u5168\u90E8\u505C\u7528]" }), _jsx(Text, { onMouseUp: props.onDismiss, children: "[\u5173\u95ED]" })] })] });
+        },
+    });
+}
 export function ProviderCards(props) {
-    return _jsxs("box", { flexDirection: "column", children: [_jsx(DiagnosticsCard, { result: props.diagnosticsResult, foreground: props.foreground, onDismiss: props.dismissDiagnostics }), _jsx(AuditCard, { result: props.auditResult, foreground: props.foreground, actions: props.actions, onDismiss: props.dismissAudit })] });
+    return _jsxs("box", { flexDirection: "column", children: [_jsx(EndpointActivationCard, { result: () => props.endpointResult?.(), foreground: props.foreground, onAction: (action, endpointId) => props.endpointAction?.(action, endpointId) ?? Promise.resolve(), onDismiss: () => props.dismissEndpoints?.() }), _jsx(DiagnosticsCard, { result: props.diagnosticsResult, foreground: props.foreground, onDismiss: props.dismissDiagnostics }), _jsx(AuditCard, { result: props.auditResult, foreground: props.foreground, actions: props.actions, onDismiss: props.dismissAudit })] });
 }

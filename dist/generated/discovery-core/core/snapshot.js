@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 import { modelFingerprint } from "./build.js";
 import { isRecord, normalizeLiteLLMURL } from "./litellm.js";
 export const DISCOVERY_SNAPSHOT_SCHEMA_VERSION = 1;
+export const ENDPOINT_ID_PATTERN = /^[a-z0-9][a-z0-9-_]*$/u;
+/** Stable user-facing endpoint identifiers shared by host adapters. */
+export function isEndpointID(value) {
+    return typeof value === "string" && ENDPOINT_ID_PATTERN.test(value);
+}
 function stableValue(value) {
     if (Array.isArray(value))
         return value.map(stableValue);
@@ -61,8 +66,11 @@ export function endpointFingerprint(input) {
     if (!nonEmptyString(input.credentialKey)) {
         throw new Error("credentialKey must be a non-empty string");
     }
+    if (input.endpointID !== undefined && !isEndpointID(input.endpointID)) {
+        throw new Error("endpointID must match [a-z0-9][a-z0-9-_]*");
+    }
     const rootURL = normalizeLiteLLMURL(input.baseUrl).rootURL;
-    const material = stableJSON({
+    const legacyMaterial = {
         rootURL,
         credentialKey: input.credentialKey,
         buildOptions: input.buildOptions
@@ -71,7 +79,12 @@ export function endpointFingerprint(input) {
                 protocolOverrides: input.buildOptions.protocolOverrides,
             }
             : null,
-    });
+    };
+    // Preserve the exact legacy fingerprint material when endpointID is omitted so
+    // existing single-endpoint snapshots remain restorable without migration.
+    const material = stableJSON(input.endpointID === undefined
+        ? legacyMaterial
+        : { ...legacyMaterial, endpointID: input.endpointID });
     return `sha256:${createHash("sha256").update(material).digest("hex")}`;
 }
 export function createDiscoverySnapshot(endpoint, models, discoveredAt = new Date().toISOString()) {

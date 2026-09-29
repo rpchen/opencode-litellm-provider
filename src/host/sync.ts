@@ -16,6 +16,7 @@ import {
   type DiscoverySnapshot,
 } from "../core/snapshot.js"
 import type { PluginOptions } from "../options.js"
+import { endpointIdentity, type EndpointIdentity } from "../endpoints.js"
 import {
   DiscoveryError,
   fetchLiteLLMModelInfo,
@@ -23,7 +24,7 @@ import {
   redact,
   type FetchLike,
 } from "../net/fetch.js"
-import { createRegistrationView, INTEGRATION_ID, type ProviderSnapshot, type DiscoveryStatus } from "./register.js"
+import { createRegistrationView, type ProviderSnapshot, type DiscoveryStatus } from "./register.js"
 
 interface KeyCredential {
   type: "key"
@@ -83,6 +84,7 @@ export interface DiscoveryLoop {
 }
 
 const DISCOVERY_SNAPSHOT_STORAGE_KEY = "litellm.discovery.snapshot.v1"
+const DEFAULT_ENDPOINT = endpointIdentity("default", undefined, true)
 
 const defaultScheduler: Scheduler = {
   setTimeout: (callback, milliseconds) => setTimeout(callback, milliseconds),
@@ -94,10 +96,10 @@ function isKeyCredential(value: unknown): value is KeyCredential {
     typeof (value as { key?: unknown }).key === "string"
 }
 
-function switchedForLiteLLM(event: EventLike): boolean {
+function switchedForLiteLLM(event: EventLike, integrationId: string): boolean {
   if (event.type === "credential.updated") return true
   if (event.type !== "credential.switched" || typeof event.data !== "object" || event.data === null) return false
-  return (event.data as { integrationID?: unknown }).integrationID === INTEGRATION_ID
+  return (event.data as { integrationID?: unknown }).integrationID === integrationId
 }
 
 function connectionIdentity(connection: ConnectionInfo, credential: KeyCredential, url: string): string {
@@ -110,6 +112,7 @@ export function createDiscoveryLoop(
   snapshot: ProviderSnapshot,
   options: PluginOptions,
   dependencies: DiscoveryDependencies = {},
+  endpoint: EndpointIdentity = DEFAULT_ENDPOINT,
 ): DiscoveryLoop {
   const scheduler = dependencies.scheduler ?? defaultScheduler
   const logger = dependencies.logger ?? console
@@ -154,7 +157,7 @@ export function createDiscoveryLoop(
     persistedSnapshot = undefined
     if (!context.storage) return undefined
     try {
-      const raw = await context.storage.get(DISCOVERY_SNAPSHOT_STORAGE_KEY)
+      const raw = await context.storage.get(endpoint.legacy ? DISCOVERY_SNAPSHOT_STORAGE_KEY : `${DISCOVERY_SNAPSHOT_STORAGE_KEY}.${endpoint.id}`)
       const value = typeof raw === "string" ? JSON.parse(raw) : raw
       const inspected = inspectDiscoverySnapshot(value, expectedEndpoint)
       if (inspected.compatible) persistedSnapshot = inspected.snapshot
@@ -180,7 +183,7 @@ export function createDiscoveryLoop(
       return
     }
     try {
-      await context.storage.set(DISCOVERY_SNAPSHOT_STORAGE_KEY, JSON.stringify(value))
+      await context.storage.set(endpoint.legacy ? DISCOVERY_SNAPSHOT_STORAGE_KEY : `${DISCOVERY_SNAPSHOT_STORAGE_KEY}.${endpoint.id}`, JSON.stringify(value))
       persistedIdentity = nextIdentity
       persistedSnapshot = value
     } catch (error) {
@@ -193,8 +196,8 @@ export function createDiscoveryLoop(
     persistedSnapshot = undefined
     if (!context.storage) return
     try {
-      if (context.storage.remove) await context.storage.remove(DISCOVERY_SNAPSHOT_STORAGE_KEY)
-      else await context.storage.set(DISCOVERY_SNAPSHOT_STORAGE_KEY, "null")
+      if (context.storage.remove) await context.storage.remove(endpoint.legacy ? DISCOVERY_SNAPSHOT_STORAGE_KEY : `${DISCOVERY_SNAPSHOT_STORAGE_KEY}.${endpoint.id}`)
+      else await context.storage.set(endpoint.legacy ? DISCOVERY_SNAPSHOT_STORAGE_KEY : `${DISCOVERY_SNAPSHOT_STORAGE_KEY}.${endpoint.id}`, "null")
     } catch (error) {
       logger.warn(`LiteLLM snapshot 清理失败：${redact(error instanceof Error ? error.message : String(error))}`)
     }
@@ -242,7 +245,7 @@ export function createDiscoveryLoop(
   ) => {
     const emptyFingerprint = fingerprint([])
     const changed = !snapshot.ready || lastFingerprint !== emptyFingerprint || reloadPending
-    const view = createRegistrationView([], apiBaseURL)
+    const view = createRegistrationView([], apiBaseURL, endpoint)
     snapshot.ready = true
     snapshot.connection = connection
     snapshot.apiBaseURL = apiBaseURL
@@ -260,7 +263,7 @@ export function createDiscoveryLoop(
   }
 
   const refreshOnce = async (forceRefresh: boolean) => {
-    const connection = await context.integration.connection.active(INTEGRATION_ID)
+    const connection = await context.integration.connection.active(endpoint.integrationId)
     if (!connection) {
       cancelTimer()
       await removeProvider()
@@ -304,9 +307,9 @@ export function createDiscoveryLoop(
       return
     }
 
-    const rawURL = resolved.configuration?.url
+    const rawURL = endpoint.fixedBaseUrl ?? resolved.configuration?.url
     if (typeof rawURL !== "string" || rawURL.length === 0) {
-      logger.error("LiteLLM 活动连接缺少必填地址")
+      logger.error(`LiteLLM endpoint ${endpoint.id} 缺少必填地址`)
       await removeProvider()
       return
     }
@@ -341,6 +344,7 @@ export function createDiscoveryLoop(
     identity = nextIdentity
 
     const expectedEndpoint = endpointFingerprint({
+      endpointID: endpoint.legacy ? undefined : endpoint.id,
       baseUrl: addresses.rootURL,
       credentialKey: resolved.key,
       buildOptions: {
@@ -351,7 +355,7 @@ export function createDiscoveryLoop(
     const previousPersisted = await loadPersistedSnapshot(nextIdentity, expectedEndpoint)
     if (!snapshot.ready && previousPersisted) {
       const restoredModels = previousPersisted.models.map(toOpenCodeModelSpec)
-      const restoredView = createRegistrationView(restoredModels, addresses.apiBaseURL)
+      const restoredView = createRegistrationView(restoredModels, addresses.apiBaseURL, endpoint)
       snapshot.ready = true
       snapshot.connection = connection
       snapshot.apiBaseURL = addresses.apiBaseURL
@@ -438,7 +442,7 @@ export function createDiscoveryLoop(
       }
       const changed = !snapshot.ready || lastFingerprint !== nextFingerprint || reloadPending
       const view = changed || !snapshot.registrationView
-        ? createRegistrationView(models, addresses.apiBaseURL)
+        ? createRegistrationView(models, addresses.apiBaseURL, endpoint)
         : snapshot.registrationView
       snapshot.ready = true
       snapshot.connection = connection
@@ -529,7 +533,7 @@ export function createDiscoveryLoop(
     try {
       for await (const event of context.event.subscribe({ signal: abortEvents.signal })) {
         if (disposed) break
-        if (switchedForLiteLLM(event)) {
+        if (switchedForLiteLLM(event, endpoint.integrationId)) {
           cancelTimer()
           void trigger(true)
         }

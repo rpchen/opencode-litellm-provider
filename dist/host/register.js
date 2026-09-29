@@ -1,17 +1,19 @@
 import { Model, Provider } from "@opencode/plugin";
 import { PROTOCOL_PACKAGES } from "../core/protocol.js";
+import { endpointIdentity } from "../endpoints.js";
 export const INTEGRATION_ID = "litellm";
 export const PROVIDER_ID = "litellm";
-export function applyIntegration(editor) {
-    editor.update(INTEGRATION_ID, (integration) => {
-        integration.name = "LiteLLM";
+const DEFAULT_IDENTITY = endpointIdentity("default", undefined, true);
+export function applyIntegration(editor, endpoint = DEFAULT_IDENTITY) {
+    editor.update(endpoint.integrationId, (integration) => {
+        integration.name = endpoint.displayName;
     });
     editor.method.update({
-        integrationID: INTEGRATION_ID,
+        integrationID: endpoint.integrationId,
         method: {
             type: "key",
             label: "API Key",
-            form: [
+            form: endpoint.fixedBaseUrl ? [] : [
                 {
                     key: "url",
                     type: "string",
@@ -24,8 +26,8 @@ export function applyIntegration(editor) {
         },
     });
 }
-function toModelInfo(spec) {
-    const providerID = PROVIDER_ID;
+function toModelInfo(spec, endpoint) {
+    const providerID = endpoint.providerId;
     const modelID = spec.id;
     return {
         ...Model.Info.default(providerID, modelID),
@@ -60,7 +62,7 @@ function freezeDeep(value, seen = new WeakSet()) {
         freezeDeep(item, seen);
     return Object.freeze(value);
 }
-export function createRegistrationView(models, apiBaseURL) {
+export function createRegistrationView(models, apiBaseURL, endpoint = DEFAULT_IDENTITY) {
     const specs = structuredClone(models);
     const protocols = Object.fromEntries(specs.map((spec) => [spec.id, spec.protocol]));
     const releaseUnits = Object.fromEntries(specs.map((spec) => [
@@ -69,32 +71,32 @@ export function createRegistrationView(models, apiBaseURL) {
     ]));
     return freezeDeep({
         info: {
-            ...Provider.Info.empty(PROVIDER_ID),
-            id: PROVIDER_ID,
-            integrationID: INTEGRATION_ID,
-            name: "LiteLLM",
+            ...Provider.Info.empty(endpoint.providerId),
+            id: endpoint.providerId,
+            integrationID: endpoint.integrationId,
+            name: endpoint.displayName,
             activation: "auto",
             package: PROTOCOL_PACKAGES.chat,
             settings: { baseURL: apiBaseURL },
         },
-        models: specs.map(toModelInfo),
+        models: specs.map((spec) => toModelInfo(spec, endpoint)),
         protocols,
         releaseUnits,
     });
 }
-export function applyProvider(editor, snapshot) {
+export function applyProvider(editor, snapshot, endpoint = DEFAULT_IDENTITY) {
     if (!snapshot.ready || !snapshot.connection || !snapshot.apiBaseURL)
         return;
-    const view = snapshot.registrationView ?? snapshot.audit?.view ?? createRegistrationView(snapshot.models, snapshot.apiBaseURL);
+    const view = snapshot.registrationView ?? snapshot.audit?.view ?? createRegistrationView(snapshot.models, snapshot.apiBaseURL, endpoint);
     editor.add({
         info: view.info,
         models: view.models,
         sourceConnection: snapshot.connection,
     });
 }
-export function registerIntegration(context) {
-    return context.integration.transform((editor) => applyIntegration(editor));
+export function registerIntegration(context, endpoint = DEFAULT_IDENTITY) {
+    return context.integration.transform((editor) => applyIntegration(editor, endpoint));
 }
-export function registerProvider(context, snapshot) {
-    return context.provider.transform((editor) => applyProvider(editor, snapshot));
+export function registerProvider(context, snapshot, endpoint = DEFAULT_IDENTITY) {
+    return context.provider.transform((editor) => applyProvider(editor, snapshot, endpoint));
 }

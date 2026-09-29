@@ -46,13 +46,59 @@ opencode plugin add github:rpchen/opencode-litellm-provider#v0.3.1
 
 连接完成后，模型选择器中会出现 **LiteLLM** provider 和当前 Key 可见的模型。发现和模型调用始终使用同一个活动连接。
 
+这是 legacy 单 endpoint 模式，升级 PR9 后无需迁移：它仍使用原来的 `litellm` integration、credential 和 snapshot namespace。
+
 ### 3. 选择模型并使用
 
 像使用其他 OpenCode provider 一样选择 `LiteLLM` 下的模型并发送消息即可。
 
 > 不需要在 `opencode.jsonc` 里再手工维护一个同名 `litellm` provider。若以前配置过，请先备份后移除或注释该静态配置，避免重复 provider。
 
+## 多 endpoint
+
+需要同时维护多个 LiteLLM 时，在插件 options 中配置全局 `endpoints`：
+
+```jsonc
+{
+  "plugins": [
+    {
+      "package": "github:rpchen/opencode-litellm-provider",
+      "options": {
+        "pollInterval": 300,
+        "contextTierCap": true,
+        "endpoints": {
+          "default": {
+            "baseUrl": "https://personal.example",
+            "protocolOverrides": {}
+          },
+          "company": {
+            "baseUrl": "https://company.example",
+            "protocolOverrides": {
+              "glm-5.3": "chat"
+            }
+          }
+        }
+      }
+    }
+  ]
+}
+```
+
+endpoint id 是用户定义的稳定 ASCII slug，必须匹配 `[a-z0-9][a-z0-9-_]*`。`default` 保留 `litellm` identity；其他 endpoint 映射成 `litellm-<id>`，显示名为 `LiteLLM · <id>`。显式 `endpoints` 模式中地址来自配置文件，`/connect` 只为对应 endpoint 保存 API Key；不存在按 endpoint 动态生成的环境变量。
+
+每个 endpoint 都是独立 integration/provider、独立 credential、独立 discovery/cache/snapshot/故障域。插件不会跨 endpoint 聚合模型、负载均衡或自动故障切换。
+
+### Activation
+
+执行 `/litellm-endpoints` 会在终端 TUI 显示 activation 卡片，可逐个启用/停用，也可以“全部启用”或“全部停用”。activation 是全局插件状态，与 endpoint 定义分开保存；默认全部启用，允许零个 endpoint 激活。
+
+停用会立即卸载该 endpoint 的运行时 provider/discovery loop，但保留配置、宿主 credential 和 snapshot；再次启用会重新加载。PR9 只实现 activation 管理，不实现 endpoint 完整 CRUD UI；新增、改名和删除 endpoint 仍通过配置文件完成。
+
 ## 常用命令
+
+### `/litellm-endpoints`
+
+打开 endpoint activation 管理卡片。该操作本身不会调用模型。
 
 ### `/litellm-diagnostics`
 
@@ -121,7 +167,8 @@ opencode reload
 |---|---:|---|
 | `pollInterval` | `300` | 模型发现轮询间隔，单位秒；最小 30 |
 | `contextTierCap` | `true` | 按第一个非零输入价格阶梯截断上下文窗口 |
-| `protocolOverrides` | `{}` | 按 LiteLLM `model_name` 覆盖协议 |
+| `protocolOverrides` | `{}` | legacy 单 endpoint 模式按 LiteLLM `model_name` 覆盖协议；显式模式放到各 endpoint 内 |
+| `endpoints` | 未设置 | 启用显式多 endpoint 模式；对象 key 为 endpoint id，每项至少包含 `baseUrl` |
 | `conversationFeedback` | `false` | 为 audit export 向会话提交反馈；开启后会触发一次会话/模型处理 |
 
 示例：
@@ -145,7 +192,7 @@ opencode reload
 }
 ```
 
-`protocolOverrides` 只在自动协议判断与真实 LiteLLM 路由不一致时使用。键必须与 `/v1/model/info` 中的 `model_name` 完全一致；值只能是：
+显式 `endpoints` 模式不能与顶层 `protocolOverrides` 混用；每个 endpoint 自己维护 `protocolOverrides`。`protocolOverrides` 只在自动协议判断与真实 LiteLLM 路由不一致时使用。键必须与 `/v1/model/info` 中的 `model_name` 完全一致；值只能是：
 
 - `chat`
 - `responses`

@@ -69,3 +69,44 @@ describe("parseOptions", () => {
     expect(log.warnings).toHaveLength(4)
   })
 })
+
+
+describe("PR9 endpoint options", () => {
+  test("解析显式 endpoints 并让 protocolOverrides 保持 endpoint 级", () => {
+    expect(parseOptions({
+      pollInterval: 60,
+      endpoints: {
+        default: { baseUrl: "https://primary.example", protocolOverrides: { gpt: "responses" } },
+        company: { baseUrl: "https://company.example", protocolOverrides: { claude: "messages" } },
+      },
+    })).toMatchObject({
+      pollInterval: 60,
+      endpoints: {
+        default: { baseUrl: "https://primary.example", protocolOverrides: { gpt: "responses" } },
+        company: { baseUrl: "https://company.example", protocolOverrides: { claude: "messages" } },
+      },
+    })
+  })
+
+  test("显式 endpoints 与顶层 protocolOverrides 共存时拒绝 endpoint 内容", () => {
+    const log = logger()
+    const options = parseOptions({
+      protocolOverrides: { gpt: "chat" },
+      endpoints: { company: { baseUrl: "https://company.example" } },
+    }, log)
+    expect(options.endpoints).toEqual({})
+    expect(log.warnings.some((message) => message.includes("不能同时"))).toBeTrue()
+  })
+
+  test("非法 endpoint id/baseUrl 不污染合法 sibling", () => {
+    const options = parseOptions({
+      endpoints: {
+        "team-a": { baseUrl: "https://a.example" },
+        "team_2": { baseUrl: "https://b.example" },
+        "Team A": { baseUrl: "https://bad.example" },
+        broken: { baseUrl: "ftp://bad.example" },
+      },
+    }, { warn: () => {} })
+    expect(Object.keys(options.endpoints ?? {})).toEqual(["team-a", "team_2"])
+  })
+})

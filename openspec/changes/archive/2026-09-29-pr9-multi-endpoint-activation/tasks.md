@@ -1,0 +1,8 @@
+- [x] Add global endpoint configuration with legacy/default compatibility.
+- [x] Add provider identity mapping and independent endpoint runtime state.
+- [x] Add persistent global activation state with immediate enable/disable behavior.
+- [x] Keep legacy credentials/snapshots in old namespaces and scope new endpoints independently.
+- [x] Add endpoint activation UX and endpoint-aware diagnostics.
+- [x] Update README for the user-visible configuration and activation flow.
+- [x] Add regression tests for configuration, activation and provider isolation.
+- [x] Run repository CI including typecheck, tests, package and strict OpenSpec validation.

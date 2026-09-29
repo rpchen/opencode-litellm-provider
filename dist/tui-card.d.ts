@@ -12,6 +12,13 @@ export interface DiagnosticsResult {
     sessionID: string;
     lines: string[];
 }
+export interface EndpointActivationResult {
+    sequence: number;
+    sessionID: string;
+    mode: "all" | "selected";
+    endpointIds: string[];
+    activeEndpointIds: string[];
+}
 export interface AuditCardActions {
     open: (path: string) => Promise<void>;
     copy: (path: string) => Promise<void>;
@@ -20,6 +27,11 @@ export interface AuditCardActions {
 export declare function createDiagnosticsResultStore(): {
     forSession: (sessionID: string) => DiagnosticsResult | undefined;
     accept(result: DiagnosticsResult): void;
+    dismiss(sessionID: string): void;
+};
+export declare function createEndpointActivationStore(): {
+    forSession: (sessionID: string) => EndpointActivationResult | undefined;
+    accept(result: EndpointActivationResult): void;
     dismiss(sessionID: string): void;
 };
 export declare function createAuditResultStore(): {
@@ -44,11 +56,20 @@ export declare function DiagnosticsCard(props: {
     foreground: () => NonNullable<JSX.IntrinsicElements["text"]["fg"]>;
     onDismiss: () => void;
 }): import("solid-js").JSX.Element;
+export declare function EndpointActivationCard(props: {
+    result: () => EndpointActivationResult | undefined;
+    foreground: () => NonNullable<JSX.IntrinsicElements["text"]["fg"]>;
+    onAction: (action: "all" | "none" | "toggle", endpointId?: string) => Promise<void>;
+    onDismiss: () => void;
+}): import("solid-js").JSX.Element;
 export declare function ProviderCards(props: {
     auditResult: () => AuditResult | undefined;
     diagnosticsResult: () => DiagnosticsResult | undefined;
+    endpointResult?: () => EndpointActivationResult | undefined;
     foreground: () => NonNullable<JSX.IntrinsicElements["text"]["fg"]>;
     actions: AuditCardActions;
     dismissAudit: () => void;
     dismissDiagnostics: () => void;
+    dismissEndpoints?: () => void;
+    endpointAction?: (action: "all" | "none" | "toggle", endpointId?: string) => Promise<void>;
 }): import("solid-js").JSX.Element;
