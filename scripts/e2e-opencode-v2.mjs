@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, 
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { spawnSync } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)))
 const fixture = JSON.parse(readFileSync(path.join(root, "test/fixtures/litellm-model-info.json"), "utf8"))
@@ -94,6 +94,59 @@ function jsonOutput(result, label) {
   }
 }
 
+function startOpenCodeServer() {
+  return new Promise((resolve, reject) => {
+    const child = spawn("opencode", ["serve", "--hostname", "127.0.0.1", "--port", "0"], {
+      cwd: project,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    })
+    let stdout = ""
+    let stderr = ""
+    let settled = false
+    const deadline = setTimeout(() => {
+      if (settled) return
+      settled = true
+      child.kill()
+      reject(new Error(`real OpenCode server did not become ready:\n${sanitize(stdout)}\n${sanitize(stderr)}`))
+    }, 30_000)
+
+    const inspect = () => {
+      if (settled) return
+      const url = stdout.match(/server listening on (http:\/\/\S+)/u)?.[1]
+      const password = stdout.match(/server password (\S+)/u)?.[1]
+      if (!url || !password) return
+      settled = true
+      clearTimeout(deadline)
+      resolve({
+        child,
+        url,
+        password,
+        output: () => ({ stdout: sanitize(stdout), stderr: sanitize(stderr) }),
+      })
+    }
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk)
+      inspect()
+    })
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk)
+    })
+    child.once("error", (error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(deadline)
+      reject(error)
+    })
+    child.once("exit", (code) => {
+      if (settled) return
+      settled = true
+      clearTimeout(deadline)
+      reject(new Error(`real OpenCode server exited ${code}:\n${sanitize(stdout)}\n${sanitize(stderr)}`))
+    })
+  })
+}
+
 function payload(value) {
   return value && typeof value === "object" && !Array.isArray(value) && "data" in value ? value.data : value
 }
@@ -105,8 +158,7 @@ const companyMock = await startLiteLLM(secrets[1])
 
 async function dumpFailureDiagnostics() {
   process.stderr.write("\n=== real OpenCode E2E diagnostics ===\n")
-  command(["plugin", "list", "--builtin"], { allowFailure: true })
-  command(["api", "GET", "/api/plugin"], { allowFailure: true })
+  command(["debug", "config"], { allowFailure: true })
   const logResult = command(["debug", "paths", "log"], { allowFailure: true, echo: false })
   const logPath = logResult.stdout.trim()
   if (logPath && existsSync(logPath)) {
@@ -145,11 +197,14 @@ try {
   const version = command(["--version"]).stdout.trim()
   assert.match(version, /2\.0\.16/u, `real host must be pinned to OpenCode 2.0.16, got ${version}`)
 
-  command(["service", "stop"], { allowFailure: true })
+  const server = await startOpenCodeServer()
+  env.OPENCODE_PASSWORD = server.password
+  const api = (...args) => command(["api", "--server", server.url, ...args])
+  const serverCommand = (name, ...args) => command([name, "--server", server.url, ...args])
 
-  // This is the first regression gate: v0.4.1 fails here in the real host with
-  // Integration.Info schema validation, which also empties /connect and /models.
-  const integrationsRaw = jsonOutput(command(["api", "GET", "/api/integration"]), "integration.list")
+  // This is the first regression gate: v0.4.1 should reproduce the real host
+  // Integration/provider failure here, before /connect or /models can succeed.
+  const integrationsRaw = jsonOutput(api("GET", "/api/integration"), "integration.list")
   const integrations = payload(integrationsRaw)
   assert(Array.isArray(integrations), "integration.list payload must be an array")
   const integrationIds = integrations.map((item) => item.id)
@@ -157,15 +212,15 @@ try {
   assert(integrationIds.includes("litellm-company"), `missing litellm-company integration: ${JSON.stringify(integrationIds)}`)
 
   for (const [id, key] of [["litellm", secrets[0]], ["litellm-company", secrets[1]]]) {
-    command(["api", "POST", `/api/integration/${id}/connect/key`, "--data", JSON.stringify({ key })])
+    api("POST", `/api/integration/${id}/connect/key`, "--data", JSON.stringify({ key }))
   }
 
-  command(["reload"])
+  serverCommand("reload")
 
   let providers = []
   let lastProviderError = ""
   for (let attempt = 0; attempt < 30; attempt++) {
-    const result = command(["api", "GET", "/api/provider"], { allowFailure: true, echo: attempt === 29 })
+    const result = command(["api", "--server", server.url, "GET", "/api/provider"], { allowFailure: true, echo: attempt === 29 })
     if (result.status === 0) {
       try {
         const value = payload(jsonOutput(result, "provider.list"))
@@ -185,19 +240,22 @@ try {
   assert(providerIds.includes("litellm"), `litellm provider never became available: ${lastProviderError || JSON.stringify(providerIds)}`)
   assert(providerIds.includes("litellm-company"), `litellm-company provider never became available: ${lastProviderError || JSON.stringify(providerIds)}`)
 
-  const models = command(["models"], { timeout: 120_000 })
+  const models = command(["models", "--server", server.url], { timeout: 120_000 })
   assert.match(models.stdout, /litellm\//u, "CLI models must include default LiteLLM models")
   assert.match(models.stdout, /litellm-company\//u, "CLI models must include company LiteLLM models")
 
-  const plugins = command(["plugin", "list", "--builtin"])
-  assert.match(plugins.stdout, /litellm/u, "plugin list must include litellm")
+  const pluginState = jsonOutput(api("GET", "/api/plugin"), "plugin.list")
+  const plugins = payload(pluginState)
+  assert(Array.isArray(plugins), "plugin.list payload must be an array")
+  assert(plugins.some((item) => item.id === "litellm" && item.state?.status === "active"),
+    `server plugin must be active: ${JSON.stringify(plugins.filter((item) => item.id === "litellm"))}`)
 
-  console.log("Real OpenCode 2.0.16 E2E passed: integrations, credentials, providers and models are visible.")
+  console.log("Real OpenCode 2.0.16 E2E passed: plugin, integrations, credentials, providers and models are visible.")
+  server.child.kill()
 } catch (error) {
   await dumpFailureDiagnostics()
   throw error
 } finally {
-  command(["service", "stop"], { allowFailure: true, echo: false })
   await Promise.all([
     new Promise((resolve) => defaultMock.server.close(resolve)),
     new Promise((resolve) => companyMock.server.close(resolve)),
