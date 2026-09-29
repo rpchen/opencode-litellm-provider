@@ -1,5 +1,6 @@
 import {
   buildModelSpecs as discoverModelSpecs,
+  hasOperationalLimits,
   modelFingerprint as discoveryFingerprint,
   type BuildOptions,
   type ModelSpec as DiscoveryModelSpec,
@@ -18,12 +19,22 @@ export function toOpenCodeModelSpec(spec: DiscoveryModelSpec): ModelSpec {
   return { id, name, protocol, package: PROTOCOL_PACKAGES[protocol], ...metadata }
 }
 
+export function filterOperationalModelSpecs<T extends Pick<DiscoveryModelSpec, "limit">>(
+  models: readonly T[],
+): T[] {
+  return models.filter(hasOperationalLimits)
+}
+
+export function toOperationalOpenCodeModelSpecs(specs: readonly DiscoveryModelSpec[]): ModelSpec[] {
+  return filterOperationalModelSpecs(specs).map(toOpenCodeModelSpec)
+}
+
 export function buildModelSpecs(
   litellmResponse: unknown,
   modelsDevCatalog: unknown,
   options: BuildOptions,
 ): ModelSpec[] {
-  return discoverModelSpecs(litellmResponse, modelsDevCatalog, options).map(toOpenCodeModelSpec)
+  return toOperationalOpenCodeModelSpecs(discoverModelSpecs(litellmResponse, modelsDevCatalog, options))
 }
 
 // Keep the host-facing signature, including package-sensitive fingerprints, unchanged.
