@@ -6,7 +6,12 @@ import {
   normalizeLiteLLMURL,
   type Protocol,
 } from "../src/generated/discovery-core/index.js"
-import { buildModelSpecs, modelFingerprint, toOpenCodeModelSpec } from "../src/host/models.js"
+import {
+  buildModelSpecs,
+  filterOperationalModelSpecs,
+  modelFingerprint,
+  toOpenCodeModelSpec,
+} from "../src/host/models.js"
 import { PROTOCOL_PACKAGES } from "../src/host/protocol.js"
 import { normalizeLiteLLMURL as compatibilityURL } from "../src/core/litellm.js"
 import type { Protocol as OptionsProtocol } from "../src/options.js"
@@ -80,6 +85,34 @@ test("hy4-preview 通过 OpenRouter 能力 fallback 保持可用限制", () => {
   expect(hy4.cost.input).toBeCloseTo(0.834)
   expect(hy4.cost.output).toBeCloseTo(2.501)
   expect(hy4.package).toBe("@opencode/ai/providers/openai-compatible")
+})
+
+test("非正数 operational limits 在 OpenCode adapter 边界被过滤", () => {
+  const valid = {
+    id: "valid",
+    name: "valid",
+    protocol: "chat" as const,
+    capabilities: { tools: true, input: ["text"], output: ["text"] },
+    variants: [],
+    released: 0,
+    releaseUnit: "none" as const,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    limit: { context: 128000, input: 128000, output: 32000 },
+  }
+  const zeroContext = {
+    ...structuredClone(valid),
+    id: "zero-context",
+    name: "zero-context",
+    limit: { context: 0, input: 0, output: 32000 },
+  }
+  const zeroOutput = {
+    ...structuredClone(valid),
+    id: "zero-output",
+    name: "zero-output",
+    limit: { context: 128000, input: 128000, output: 0 },
+  }
+
+  expect(filterOperationalModelSpecs([zeroContext, valid, zeroOutput]).map((item) => item.id)).toEqual(["valid"])
 })
 
 test("宿主 SDK 映射与迁移前完全相同，Protocol 来自公共入口", () => {
