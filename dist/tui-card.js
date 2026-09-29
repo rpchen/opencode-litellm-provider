@@ -32,7 +32,15 @@ export function createEndpointActivationStore() {
     return {
         forSession: (sessionID) => results()[sessionID],
         accept(result) {
-            if (result.sequence < seen || !result.sessionID)
+            if (!result ||
+                typeof result.sequence !== "number" ||
+                !result.sessionID ||
+                (result.mode !== "all" && result.mode !== "selected") ||
+                !Array.isArray(result.endpointIds) ||
+                !Array.isArray(result.activeEndpointIds) ||
+                result.endpointIds.some((id) => typeof id !== "string") ||
+                result.activeEndpointIds.some((id) => typeof id !== "string") ||
+                result.sequence < seen)
                 return;
             seen = result.sequence;
             setResults((previous) => ({ ...previous, [result.sessionID]: result }));
