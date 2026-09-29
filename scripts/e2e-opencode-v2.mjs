@@ -207,6 +207,11 @@ try {
   const version = command(["--version"]).stdout.trim()
   assert.match(version, /2\.0\.16/u, `real host must be pinned to OpenCode 2.0.16, got ${version}`)
 
+  // Match the user's real installation path. plugin add performs OpenCode's own
+  // Git package install/cache and validates the server entrypoint. Because the
+  // same package is already present in our config object, it preserves endpoint options.
+  command(["plugin", "add", packageSpec], { timeout: 240_000 })
+
   openCodeServer = await startOpenCodeServer()
   env.OPENCODE_PASSWORD = openCodeServer.password
   const api = (...args) => command(["api", "--server", openCodeServer.url, ...args])
