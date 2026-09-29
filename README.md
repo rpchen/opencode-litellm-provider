@@ -24,7 +24,7 @@ opencode plugin add github:rpchen/opencode-litellm-provider
 锁定当前发行版：
 
 ```bash
-opencode plugin add github:rpchen/opencode-litellm-provider#v0.2.0
+opencode plugin add github:rpchen/opencode-litellm-provider#v0.3.0
 ```
 
 要求：
@@ -168,7 +168,7 @@ opencode reload
 
 `/v1/model/info` 是模型发现的事实来源；`/v1/models` 不作为发现源。embedding、图像生成等非对话模型不会注册。models.dev 能力补缺优先使用原厂记录；原厂 provider 记录不可用时依次使用 OpenRouter、OpenCode，再考虑全局唯一记录，避免多网关同名模型因为 provider 歧义而丢失 context、输出上限或 reasoning 等关键能力。
 
-模型上限按 PR8 的发现规则合并：总 context 与最大 input 分开处理；models.dev 可补充总 context，LiteLLM 的 `max_input_tokens` 仍作为 input 限制。两者冲突时不会再把 input 上限误当成总 context。models.dev 未命中的私有模型仍会保留。
+模型上限按 PR8 的发现规则合并：总 context 与最大 input 分开处理；models.dev 可补充总 context，LiteLLM 的 `max_input_tokens` 仍作为 input 限制。两者冲突时不会再把 input 上限误当成总 context。Core diagnostics 会保留 models.dev 未命中的私有模型用于解释，但若最终仍无法得到正数 context/output，OpenCode 不会把该模型发布成 `context: 0` / `output: 0` 的不可用配置。
 
 ## 升级与回滚
 
@@ -189,7 +189,7 @@ opencode reload
 如果配置里使用固定 tag，`check/update` 参数也必须使用完整的固定来源，例如：
 
 ```text
-github:rpchen/opencode-litellm-provider#v0.2.0
+github:rpchen/opencode-litellm-provider#v0.3.0
 ```
 
 需要回滚时，将现有插件来源改回目标 tag 并重新加载即可。不要同时启用 Git 安装和本地 `file://` 两份 LiteLLM 插件。
@@ -233,4 +233,4 @@ github:rpchen/opencode-litellm-provider#v0.2.0
 
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [litellm-discovery-core](https://github.com/rpchen/litellm-discovery-core)
-- [v0.2.0 release notes](docs/releases/v0.2.0.md)
+- [v0.3.0 release notes](docs/releases/v0.3.0.md)
