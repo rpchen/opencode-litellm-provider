@@ -187,6 +187,79 @@ try {
 }
 assert.deepEqual(connected.state.disposed.sort(), ["command", "command", "integration", "provider", "rpc", "rpc"])
 assert.equal(connected.state.eventAborts, 1)
+
+function multiEndpointHostContext() {
+  const state = { disposed: [], integrations: new Map(), methods: [], commands: [], activeCalls: [], eventAborts: 0 }
+  const registration = (kind) => ({ dispose: async () => { state.disposed.push(kind) } })
+  const context = {
+    options: {
+      pollInterval: 30,
+      endpoints: {
+        default: { baseUrl: "https://personal.example" },
+        company: { baseUrl: "https://company.example" },
+      },
+    },
+    integration: {
+      transform: async (callback) => {
+        callback({
+          update: (id, update) => {
+            const value = state.integrations.get(id) ?? { id, name: id }
+            update(value)
+            state.integrations.set(id, value)
+          },
+          method: { update: (value) => { state.methods.push(value) } },
+        })
+        return registration("integration")
+      },
+      connection: {
+        active: async (id) => { state.activeCalls.push(id); return undefined },
+        resolve: async () => undefined,
+      },
+    },
+    provider: {
+      transform: async (callback) => { callback({ add: () => {} }); return registration("provider") },
+      reload: async () => {},
+    },
+    rpc: { register: async () => ({ ...registration("rpc"), events: { emit: async () => {} } }) },
+    command: {
+      transform: async (callback) => {
+        callback({ add: (value) => { state.commands.push(value.name) } })
+        return registration("command")
+      },
+    },
+    event: {
+      subscribe: ({ signal }) => ({
+        [Symbol.asyncIterator]: () => ({
+          next: () => new Promise((resolve) => {
+            const finish = () => { state.eventAborts++; resolve({ value: undefined, done: true }) }
+            if (signal.aborted) finish()
+            else signal.addEventListener("abort", finish, { once: true })
+          }),
+        }),
+      }),
+    },
+    storage: { get: async () => undefined, set: async () => {} },
+    // No plugin.add/remove on purpose: public OpenCode V2 PluginContext only supports plugin.list().
+  }
+  return { context, state }
+}
+
+const multi = multiEndpointHostContext()
+const closeMulti = await plugin.default.setup(multi.context)
+await new Promise((resolve) => setTimeout(resolve, 0))
+assert.deepEqual([...multi.state.integrations.entries()], [
+  ["litellm", { id: "litellm", name: "LiteLLM" }],
+  ["litellm-company", { id: "litellm-company", name: "LiteLLM · company" }],
+])
+assert.deepEqual(multi.state.methods.map((item) => item.integrationID), ["litellm", "litellm-company"])
+assert(multi.state.activeCalls.includes("litellm"))
+assert(multi.state.activeCalls.includes("litellm-company"))
+assert.deepEqual(multi.state.commands.sort(), ["litellm-audit-export", "litellm-diagnostics", "litellm-endpoints"])
+await closeMulti()
+assert.equal(multi.state.eventAborts, 2)
+assert.deepEqual(multi.state.disposed.sort(), ["command", "command", "integration", "provider", "provider", "rpc", "rpc"])
+assert.equal(modelRequests + catalogRequests, 2, "explicit disconnected endpoints must not add network discovery")
+
 const { buildModelSpecs } = await installedModule("dist/generated/discovery-core/index.js")
 assert(buildModelSpecs(input.litellm, input.modelsDev, { contextTierCap: true, protocolOverrides: {} })
   .every((model) => !Object.hasOwn(model, "package")))
