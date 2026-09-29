@@ -18,12 +18,18 @@ export function toOpenCodeModelSpec(spec: DiscoveryModelSpec): ModelSpec {
   return { id, name, protocol, package: PROTOCOL_PACKAGES[protocol], ...metadata }
 }
 
+export function hasOperationalLimits(spec: DiscoveryModelSpec): boolean {
+  return spec.limit.context > 0 && spec.limit.output > 0
+}
+
 export function buildModelSpecs(
   litellmResponse: unknown,
   modelsDevCatalog: unknown,
   options: BuildOptions,
 ): ModelSpec[] {
-  return discoverModelSpecs(litellmResponse, modelsDevCatalog, options).map(toOpenCodeModelSpec)
+  return discoverModelSpecs(litellmResponse, modelsDevCatalog, options)
+    .filter(hasOperationalLimits)
+    .map(toOpenCodeModelSpec)
 }
 
 // Keep the host-facing signature, including package-sensitive fingerprints, unchanged.
