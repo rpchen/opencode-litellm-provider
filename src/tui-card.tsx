@@ -33,6 +33,15 @@ export function createDiagnosticsResultStore() {
       seen = result.sequence
       setResults((previous) => ({ ...previous, [result.sessionID]: result }))
     },
+    dismiss(sessionID: string) {
+      if (!sessionID) return
+      setResults((previous) => {
+        if (!(sessionID in previous)) return previous
+        const next = { ...previous }
+        delete next[sessionID]
+        return next
+      })
+    },
   }
 }
 
@@ -45,6 +54,15 @@ export function createAuditResultStore() {
       if (result.sequence <= seen || !result.sessionID) return
       seen = result.sequence
       setResults((previous) => ({ ...previous, [result.sessionID]: result }))
+    },
+    dismiss(sessionID: string) {
+      if (!sessionID) return
+      setResults((previous) => {
+        if (!(sessionID in previous)) return previous
+        const next = { ...previous }
+        delete next[sessionID]
+        return next
+      })
     },
   }
 }
@@ -79,6 +97,7 @@ export function AuditCard(props: {
   result: () => AuditResult | undefined
   foreground: () => NonNullable<JSX.IntrinsicElements["text"]["fg"]>
   actions: AuditCardActions
+  onDismiss: () => void
 }) {
   // 自动 JSX runtime 需要 getter，才能让已挂载文本跟随宿主主题变化。
   const Text = (text: JSX.IntrinsicElements["text"]) => jsx("text", {
@@ -101,8 +120,12 @@ export function AuditCard(props: {
           <box flexDirection="row" gap={2}>
             <Text onMouseUp={() => { void controller.act("open", result.path) }}>[打开报告]</Text>
             <Text onMouseUp={() => { void controller.act("copy", result.path) }}>[复制路径]</Text>
+            <Text onMouseUp={props.onDismiss}>[关闭]</Text>
           </box>
-        </> : <Text>{result.error}</Text>}
+        </> : <>
+          <Text>{result.error}</Text>
+          <Text onMouseUp={props.onDismiss}>[关闭]</Text>
+        </>}
         {Show({
           get when() { return controller.feedback() || undefined },
           keyed: true,
@@ -124,6 +147,7 @@ export function auditCardActions(context: Pick<Context, "ui">): AuditCardActions
 export function DiagnosticsCard(props: {
   result: () => DiagnosticsResult | undefined
   foreground: () => NonNullable<JSX.IntrinsicElements["text"]["fg"]>
+  onDismiss: () => void
 }) {
   const Text = (text: JSX.IntrinsicElements["text"]) => jsx("text", {
     ...text,
@@ -135,6 +159,7 @@ export function DiagnosticsCard(props: {
     children: (result: DiagnosticsResult) =>
       <box flexDirection="column" paddingLeft={2} paddingRight={2} marginBottom={1}>
         {result.lines.map((line) => <Text wrapMode="char">{line}</Text>)}
+        <Text onMouseUp={props.onDismiss}>[关闭]</Text>
       </box>,
   })
 }
@@ -145,9 +170,20 @@ export function ProviderCards(props: {
   diagnosticsResult: () => DiagnosticsResult | undefined
   foreground: () => NonNullable<JSX.IntrinsicElements["text"]["fg"]>
   actions: AuditCardActions
+  dismissAudit: () => void
+  dismissDiagnostics: () => void
 }) {
   return <box flexDirection="column">
-    <DiagnosticsCard result={props.diagnosticsResult} foreground={props.foreground} />
-    <AuditCard result={props.auditResult} foreground={props.foreground} actions={props.actions} />
+    <DiagnosticsCard
+      result={props.diagnosticsResult}
+      foreground={props.foreground}
+      onDismiss={props.dismissDiagnostics}
+    />
+    <AuditCard
+      result={props.auditResult}
+      foreground={props.foreground}
+      actions={props.actions}
+      onDismiss={props.dismissAudit}
+    />
   </box>
 }
