@@ -23,6 +23,7 @@ import {
   redact,
   type FetchLike,
 } from "../net/fetch.js"
+import { filterOperationalModelSpecs, toOperationalOpenCodeModelSpecs } from "./models.js"
 import { createRegistrationView, INTEGRATION_ID, type ProviderSnapshot, type DiscoveryStatus } from "./register.js"
 
 interface KeyCredential {
@@ -350,7 +351,7 @@ export function createDiscoveryLoop(
     })
     const previousPersisted = await loadPersistedSnapshot(nextIdentity, expectedEndpoint)
     if (!snapshot.ready && previousPersisted) {
-      const restoredModels = previousPersisted.models.map(toOpenCodeModelSpec)
+      const restoredModels = toOperationalOpenCodeModelSpecs(previousPersisted.models)
       const restoredView = createRegistrationView(restoredModels, addresses.apiBaseURL)
       snapshot.ready = true
       snapshot.connection = connection
@@ -383,11 +384,11 @@ export function createDiscoveryLoop(
             logger,
           })
           if (dependencies.buildModels) {
-            const models = buildModels(response, catalog, options)
+            const models = filterOperationalModelSpecs(buildModels(response, catalog, options))
             return { models, fingerprint: fingerprint(models) }
           }
           const diagnosed = diagnoseModelSpecs(response, catalog, options)
-          const models = diagnosed.models.map(toOpenCodeModelSpec)
+          const models = toOperationalOpenCodeModelSpecs(diagnosed.models)
           return {
             models,
             fingerprint: fingerprint(models),
