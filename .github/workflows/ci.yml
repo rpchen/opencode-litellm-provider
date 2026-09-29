@@ -57,6 +57,12 @@ jobs:
       - name: Validate OpenSpec
         run: npm run validate:spec
 
+      - name: Reject completed active OpenSpec changes
+        run: npm run test:openspec-closure
+
+      - name: Verify release metadata consistency
+        run: npm run test:release-metadata
+
       - name: Install and initialize the delivered tarball without lifecycle scripts
         run: npm run test:package
 
