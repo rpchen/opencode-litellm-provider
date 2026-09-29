@@ -112,14 +112,14 @@ try {
 
 let latest: AuditResult = { sequence: 0, sessionID: "", ok: false, path: "", error: "" }
 let tick!: () => void
-let completed!: (event: { data: AuditResult }) => void
+let auditCompleted!: (event: { data: AuditResult }) => void
 let render!: (input: { sessionID: string }) => ReturnType<typeof AuditCard>
 let stopped = 0
 const context = {
   get theme() { return { text: { base: foreground() } } },
   client: { rpc: () => ({
     latest: async () => latest,
-    events: { on: (_name: string, listener: typeof completed) => { completed = listener; return () => { stopped++ } } },
+    events: { on: (name: string, listener: typeof auditCompleted) => {\n      if (name === "completed") auditCompleted = listener\n      return () => { stopped++ }\n    } },
   }) },
   ui: {
     slot: (claim: { render: typeof render }) => {
@@ -168,7 +168,7 @@ try {
   await live.renderOnce()
   assert.doesNotMatch(live.captureCharFrame(), /审查报告/, "dismissed latest result must not reappear on polling")
 
-  completed({ data: { sequence: 3, sessionID: "current", ok: true, path: "C:/second.json", error: "" } })
+  auditCompleted({ data: { sequence: 3, sessionID: "current", ok: true, path: "C:/second.json", error: "" } })
   await Bun.sleep(0)
   assert.equal(assertTextColors(live.renderer.root, lightText), 5)
   setForeground(darkText)
@@ -247,7 +247,7 @@ try {
       register: async () => ({
         events: {
           emit: async (_event: string, value: unknown) => {
-            completed({ data: value as AuditResult })
+            auditCompleted({ data: value as AuditResult })
           },
         },
         dispose: async () => {},
