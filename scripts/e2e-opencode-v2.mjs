@@ -27,6 +27,7 @@ const secrets = ["sk-e2e-default", "sk-e2e-company"]
 const sanitize = (value) => secrets.reduce((text, secret) => text.replaceAll(secret, "***"), String(value))
 
 function startLiteLLM(expectedKey) {
+  let acceptedRequests = 0
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1")
     if (url.pathname === "/v1/model/info" || url.pathname === "/model/info") {
@@ -35,6 +36,7 @@ function startLiteLLM(expectedKey) {
         res.end(JSON.stringify({ error: "unauthorized" }))
         return
       }
+      acceptedRequests += 1
       res.writeHead(200, { "content-type": "application/json" })
       res.end(JSON.stringify(fixture))
       return
@@ -50,6 +52,7 @@ function startLiteLLM(expectedKey) {
       resolve({
         server,
         baseUrl: `http://127.0.0.1:${address.port}`,
+        acceptedRequests: () => acceptedRequests,
       })
     })
   })
@@ -241,9 +244,28 @@ try {
   const integrationIds = integrations.map((item) => item.id)
   assert(integrationIds.includes("litellm"), `missing litellm integration: ${JSON.stringify(integrationIds)}`)
   assert(integrationIds.includes("litellm-company"), `missing litellm-company integration: ${JSON.stringify(integrationIds)}`)
+  for (const id of ["litellm", "litellm-company"]) {
+    const integration = integrations.find((item) => item.id === id)
+    const keyMethod = integration?.methods?.find((method) => method.type === "key")
+    assert(keyMethod, `${id} must expose a key auth method`)
+    assert(!("form" in keyMethod), `${id} fixed-baseUrl key method must omit form instead of emitting form: []`)
+  }
+
+  const commands = payload(jsonOutput(api("command.list"), "command.list"))
+  assert(Array.isArray(commands), "command.list payload must be an array")
+  const commandNames = commands.map((item) => item.name)
+  for (const name of ["litellm-endpoints", "litellm-diagnostics", "litellm-audit-export"]) {
+    assert(commandNames.includes(name), `missing real host command ${name}: ${JSON.stringify(commandNames)}`)
+  }
 
   for (const [id, key] of [["litellm", secrets[0]], ["litellm-company", secrets[1]]]) {
     api("POST", `/api/integration/${id}/connect/key`, "--data", JSON.stringify({ key }))
+  }
+
+  const connected = payload(jsonOutput(api("GET", "/api/integration"), "integration.list after connect"))
+  for (const id of ["litellm", "litellm-company"]) {
+    const integration = connected.find((item) => item.id === id)
+    assert.equal(integration?.connections?.length, 1, `${id} must have exactly one independent saved credential connection`)
   }
 
   serverCommand("reload")
@@ -270,6 +292,8 @@ try {
   const providerIds = providers.map((item) => item.id)
   assert(providerIds.includes("litellm"), `litellm provider never became available: ${lastProviderError || JSON.stringify(providerIds)}`)
   assert(providerIds.includes("litellm-company"), `litellm-company provider never became available: ${lastProviderError || JSON.stringify(providerIds)}`)
+  assert(defaultMock.acceptedRequests() > 0, "default fake LiteLLM must receive an authenticated discovery request")
+  assert(companyMock.acceptedRequests() > 0, "company fake LiteLLM must receive an authenticated discovery request")
 
   const models = command(["models", "--server", openCodeServer.url], { timeout: 120_000 })
   assert.match(models.stdout, /litellm\//u, "CLI models must include default LiteLLM models")
