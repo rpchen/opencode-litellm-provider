@@ -155,10 +155,16 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const defaultMock = await startLiteLLM(secrets[0])
 const companyMock = await startLiteLLM(secrets[1])
+let openCodeServer
 
 async function dumpFailureDiagnostics() {
   process.stderr.write("\n=== real OpenCode E2E diagnostics ===\n")
-  command(["debug", "config"], { allowFailure: true })
+  if (openCodeServer) {
+    const output = openCodeServer.output()
+    process.stderr.write(`--- foreground server stdout ---\n${output.stdout}\n`)
+    process.stderr.write(`--- foreground server stderr ---\n${output.stderr}\n`)
+    command(["api", "--server", openCodeServer.url, "GET", "/api/plugin"], { allowFailure: true })
+  }
   const logResult = command(["debug", "paths", "log"], { allowFailure: true, echo: false })
   const logPath = logResult.stdout.trim()
   if (logPath && existsSync(logPath)) {
@@ -197,10 +203,10 @@ try {
   const version = command(["--version"]).stdout.trim()
   assert.match(version, /2\.0\.16/u, `real host must be pinned to OpenCode 2.0.16, got ${version}`)
 
-  const server = await startOpenCodeServer()
-  env.OPENCODE_PASSWORD = server.password
-  const api = (...args) => command(["api", "--server", server.url, ...args])
-  const serverCommand = (name, ...args) => command([name, "--server", server.url, ...args])
+  openCodeServer = await startOpenCodeServer()
+  env.OPENCODE_PASSWORD = openCodeServer.password
+  const api = (...args) => command(["api", "--server", openCodeServer.url, ...args])
+  const serverCommand = (name, ...args) => command([name, "--server", openCodeServer.url, ...args])
 
   // This is the first regression gate: v0.4.1 should reproduce the real host
   // Integration/provider failure here, before /connect or /models can succeed.
@@ -220,7 +226,7 @@ try {
   let providers = []
   let lastProviderError = ""
   for (let attempt = 0; attempt < 30; attempt++) {
-    const result = command(["api", "--server", server.url, "GET", "/api/provider"], { allowFailure: true, echo: attempt === 29 })
+    const result = command(["api", "--server", openCodeServer.url, "GET", "/api/provider"], { allowFailure: true, echo: attempt === 29 })
     if (result.status === 0) {
       try {
         const value = payload(jsonOutput(result, "provider.list"))
@@ -240,7 +246,7 @@ try {
   assert(providerIds.includes("litellm"), `litellm provider never became available: ${lastProviderError || JSON.stringify(providerIds)}`)
   assert(providerIds.includes("litellm-company"), `litellm-company provider never became available: ${lastProviderError || JSON.stringify(providerIds)}`)
 
-  const models = command(["models", "--server", server.url], { timeout: 120_000 })
+  const models = command(["models", "--server", openCodeServer.url], { timeout: 120_000 })
   assert.match(models.stdout, /litellm\//u, "CLI models must include default LiteLLM models")
   assert.match(models.stdout, /litellm-company\//u, "CLI models must include company LiteLLM models")
 
@@ -251,11 +257,11 @@ try {
     `server plugin must be active: ${JSON.stringify(plugins.filter((item) => item.id === "litellm"))}`)
 
   console.log("Real OpenCode 2.0.16 E2E passed: plugin, integrations, credentials, providers and models are visible.")
-  server.child.kill()
 } catch (error) {
   await dumpFailureDiagnostics()
   throw error
 } finally {
+  openCodeServer?.child.kill()
   await Promise.all([
     new Promise((resolve) => defaultMock.server.close(resolve)),
     new Promise((resolve) => companyMock.server.close(resolve)),
