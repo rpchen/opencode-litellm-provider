@@ -4,6 +4,7 @@ import { RGBA, TextRenderable, type Renderable } from "@opentui/core"
 import { createSignal } from "solid-js"
 import type { Context } from "@opencode/plugin/tui/plugin"
 import { registerAudit } from "../src/host/audit-command.js"
+import { registerEndpointActivation } from "../src/host/endpoint-command.js"
 import { createDiscoveryLoop } from "../src/host/sync.js"
 import type { ProviderSnapshot } from "../src/host/register.js"
 import { setupAuditTui } from "../src/tui.js"
@@ -113,17 +114,27 @@ try {
 let latest: AuditResult = { sequence: 0, sessionID: "", ok: false, path: "", error: "" }
 let tick!: () => void
 let auditCompleted!: (event: { data: AuditResult }) => void
+let endpointShown!: (event: { data: unknown }) => void
 let render!: (input: { sessionID: string }) => ReturnType<typeof AuditCard>
 let stopped = 0
 const context = {
   get theme() { return { text: { base: foreground() } } },
-  client: { rpc: () => ({
-    latest: async () => latest,
-    events: { on: (name: string, listener: typeof auditCompleted) => {
-      if (name === "completed") auditCompleted = listener
-      return () => { stopped++ }
-    } },
-  }) },
+  client: { rpc: (schema: { id?: string }) => schema.id === "litellm-endpoints"
+    ? ({
+        state: async () => ({ sequence: 0, sessionID: "", mode: "all", endpointIds: [], activeEndpointIds: [] }),
+        set: async () => ({ sequence: 0, sessionID: "", mode: "all", endpointIds: [], activeEndpointIds: [] }),
+        events: { on: (name: string, listener: typeof endpointShown) => {
+          if (name === "shown") endpointShown = listener
+          return () => { stopped++ }
+        } },
+      })
+    : ({
+        latest: async () => latest,
+        events: { on: (name: string, listener: typeof auditCompleted) => {
+          if (name === "completed") auditCompleted = listener
+          return () => { stopped++ }
+        } },
+      }) },
   ui: {
     slot: (claim: { render: typeof render }) => {
       render = claim.render
@@ -295,12 +306,56 @@ try {
 
     await clickLive("[关闭]")
     assert.doesNotMatch(live.captureCharFrame(), /LiteLLM Diagnostics/, "diagnostics card must be dismissible")
+
+    // PR9 vertical closure: real endpoint command -> RPC event -> endpoint store -> visible TUI card.
+    let endpointCommand: { execute(input: { sessionID: string }): Promise<void> } | undefined
+    let activation = { mode: "all" as const }
+    const endpointRegistration = await registerEndpointActivation({
+      rpc: {
+        register: async () => ({
+          events: {
+            emit: async (_event: string, value: unknown) => {
+              endpointShown({ data: value })
+            },
+          },
+          dispose: async () => {},
+        }),
+      },
+      command: {
+        transform: async (callback: (editor: { add(value: { name: string; execute(input: { sessionID: string }): Promise<void> }): void }) => void) => {
+          callback({
+            add(value) {
+              if (value.name === "litellm-endpoints") endpointCommand = value
+            },
+          })
+          return { dispose: async () => {} }
+        },
+      },
+    } as never, ["default", "company"], () => activation, async (next) => {
+      activation = next as typeof activation
+    })
+    try {
+      assert.ok(endpointCommand)
+      await endpointCommand!.execute({ sessionID: "current" })
+      await Bun.sleep(0)
+      await live.renderOnce()
+      const endpointFrame = live.captureCharFrame()
+      assert.match(endpointFrame, /LiteLLM endpoints/)
+      assert.match(endpointFrame, /✓ default/)
+      assert.match(endpointFrame, /✓ company/)
+      assert.match(endpointFrame, /\[全部启用\]/)
+      assert.match(endpointFrame, /\[全部停用\]/)
+      await clickLive("[关闭]")
+      assert.doesNotMatch(live.captureCharFrame(), /LiteLLM endpoints/)
+    } finally {
+      await endpointRegistration.dispose()
+    }
   } finally {
     await serverRegistration.dispose()
     await diagnosticLoop.dispose()
   }
 
-  console.log("TUI latest recovery, live polling and PR7 diagnostics vertical path passed")
+  console.log("TUI latest recovery, diagnostics and PR9 endpoint command vertical paths passed")
 } finally {
   live.renderer.destroy()
   cleanup()
