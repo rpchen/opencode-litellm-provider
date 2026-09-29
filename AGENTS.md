@@ -39,6 +39,8 @@ npm test
 npm run test:tui-render
 npm run test:distribution
 npm run test:package
+# Host API/schema 变更还必须通过 CI 的 Real OpenCode 2.0.16 E2E；
+# 本地手工运行需先安装 opencode 2.0.16，并设置固定 E2E_PACKAGE_SPEC。
 npm run validate:spec
 npm run test:openspec-closure
 npm run test:release-metadata
@@ -53,7 +55,7 @@ npm run test:release-metadata
 1. 临时文件放 `.tmp/`；隔离构建与安装消费者必须位于工作区以外的系统临时目录。不得把本机路径或凭据写入 provenance。
 2. 不得在仓库、fixtures、文档或日志写入真实 Key、内网地址、PAT、npm token；示例使用 `sk-xxx`、`http://litellm.example:4000`。CI/package smoke 不接触真实 LiteLLM 服务。
 3. 真实 LiteLLM 验证仅使用 `~/.agents/skills/opencode-litellm-config-sync/.env` 中的 `LITELLM_BASE_URL` / `LITELLM_API_KEY`，只在运行时读取并留在内存。不得输出或持久化；不要读取 `~/.config/opencode` 中用户自己的 Key，不修改用户配置。无需真实服务的任务不要读取这些凭据。
-4. 提交前执行适用验证；环境阻断时记录具体未运行项，不把部分编译、替身测试或 pending CI 说成完整通过。隔离安装提供实际 peer；模拟 host context/HTTP 不等于真实 OpenCode 验收。
+4. 提交前执行适用验证；环境阻断时记录具体未运行项，不把部分编译、替身测试或 pending CI 说成完整通过。隔离安装提供实际 peer；模拟 host context/HTTP 不等于真实 OpenCode 验收。 涉及 PluginContext、integration/provider/model/command schema、插件安装/加载或用户可见宿主行为的变更，必须让 CI 的 **Real OpenCode 2.0.16 E2E** 通过；该门禁使用固定 Git commit、OpenCode 自己的 plugin installer、独立 HOME/XDG 和本地 fake LiteLLM。
 5. 从最新 main 建功能分支并经 PR；已有同任务分支/PR先检查后续做，不强推、不覆盖他人工作。Conventional Commits，OpenSpec 随实施维护，完成后同步主规格并归档。
 6. 安装只使用已提交 dist，不依赖生命周期脚本、core 下载、本地缓存或平级仓库。禁止精确 `scripts.build` 及 Git preparation 生命周期。普通迁移不自行合并、打 tag、创建 Release 或发布 npm；跨仓库触发不属于本次迁移。
 7. **测试完成标准**：共享规范以 `rpchen/litellm-discovery-core/docs/testing-standard.md` 为权威来源。本仓库每个 OpenSpec Scenario 必须有可追踪自动化证据；安全/失败边界必须有真实负向输入；新增用户可见能力至少有一条贯穿 Core → ProviderSnapshot → command/RPC → TUI 的纵向自动化链路。禁止仅因 CI 全绿就宣称 Scenario 已闭环。
