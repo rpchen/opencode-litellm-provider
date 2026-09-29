@@ -28,6 +28,15 @@ jobs:
           writeFileSync(file, text.replaceAll("- [ ]", "- [x]"))
           NODE
           npx openspec archive fix-v041-multi-endpoint-runtime --yes
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from "node:fs"
+          const file = "openspec/specs/multi-endpoint-activation/spec.md"
+          const text = readFileSync(file, "utf8")
+          const purpose = "Defines how the OpenCode plugin exposes multiple globally configured LiteLLM endpoints as isolated integrations/providers, manages their independent credentials and activation state, and keeps diagnostics/UI behavior available without unsupported runtime child-plugin APIs."
+          const next = text.replace(/## Purpose\n[\s\S]*?\n## Requirements/u, `## Purpose\n${purpose}\n\n## Requirements`)
+          if (next === text) throw new Error("canonical multi-endpoint Purpose placeholder was not found")
+          writeFileSync(file, next)
+          NODE
           npm run validate:spec
           npm run test:openspec-closure
       - name: Commit archive
