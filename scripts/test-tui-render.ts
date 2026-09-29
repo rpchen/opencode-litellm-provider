@@ -301,5 +301,5 @@ try {
 } finally {
   live.renderer.destroy()
   cleanup()
-  assert.equal(stopped, 3, "polling, events and slot must be cleaned up")
+  assert.equal(stopped, 4, "polling, audit events, endpoint events and slot must be cleaned up")
 }
