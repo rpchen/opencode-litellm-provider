@@ -33,6 +33,7 @@
     "test:distribution": "node scripts/test-distribution.mjs",
     "test:tui-render": "bun --conditions=browser scripts/test-tui-render.ts",
     "test:package": "bun scripts/test-package.ts",
+    "test:e2e:opencode-v2": "node scripts/e2e-opencode-v2.mjs",
     "validate:spec": "openspec validate --all --strict --no-interactive",
     "test:openspec-closure": "node scripts/check-openspec-closure.mjs",
     "test:release-metadata": "node scripts/check-release-metadata.mjs"
