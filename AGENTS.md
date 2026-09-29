@@ -53,4 +53,8 @@ npm run validate:spec
 3. 真实 LiteLLM 验证仅使用 `~/.agents/skills/opencode-litellm-config-sync/.env` 中的 `LITELLM_BASE_URL` / `LITELLM_API_KEY`，只在运行时读取并留在内存。不得输出或持久化；不要读取 `~/.config/opencode` 中用户自己的 Key，不修改用户配置。无需真实服务的任务不要读取这些凭据。
 4. 提交前执行适用验证；环境阻断时记录具体未运行项，不把部分编译、替身测试或 pending CI 说成完整通过。隔离安装提供实际 peer；模拟 host context/HTTP 不等于真实 OpenCode 验收。
 5. 从最新 main 建功能分支并经 PR；已有同任务分支/PR先检查后续做，不强推、不覆盖他人工作。Conventional Commits，OpenSpec 随实施维护，完成后同步主规格并归档。
-6. 安装只使用已提交 dist，不依赖生命周期脚本、core 下载、本地缓存或平级仓库。禁止精确 `scripts.build` 及 Git preparation 生命周期。普通迁移不自行合并、打 tag、创建 Release 或发布 npm；跨仓库触发不属于本次迁移。\n7. **测试完成标准**：共享规范以 `rpchen/litellm-discovery-core/docs/testing-standard.md` 为权威来源。本仓库每个 OpenSpec Scenario 必须有可追踪自动化证据；安全/失败边界必须有真实负向输入；新增用户可见能力至少有一条贯穿 Core → ProviderSnapshot → command/RPC → TUI 的纵向自动化链路。禁止仅因 CI 全绿就宣称 Scenario 已闭环。
+6. 安装只使用已提交 dist，不依赖生命周期脚本、core 下载、本地缓存或平级仓库。禁止精确 `scripts.build` 及 Git preparation 生命周期。普通迁移不自行合并、打 tag、创建 Release 或发布 npm；跨仓库触发不属于本次迁移。
+7. **测试完成标准**：共享规范以 `rpchen/litellm-discovery-core/docs/testing-standard.md` 为权威来源。本仓库每个 OpenSpec Scenario 必须有可追踪自动化证据；安全/失败边界必须有真实负向输入；新增用户可见能力至少有一条贯穿 Core → ProviderSnapshot → command/RPC → TUI 的纵向自动化链路。禁止仅因 CI 全绿就宣称 Scenario 已闭环。
+
+8. **模型发布边界**：必须遵守共享 testing-standard 的 Discovery 不变量。Core 可以保留 limit 未知的模型用于 diagnostics，但宿主 `buildModelSpecs` 不得向 OpenCode 发布 `limit.context <= 0` 或 `limit.output <= 0` 的模型；必须用通用 adapter 测试锁住该边界，不得只针对某个具体模型。
+9. **发版与跨会话事实基线**：用户可见 `feat:`/`fix:` 合入后检查 Release/tag 是否落后于 main；release PR 必须同步 package/lockfile、README 当前固定版本和 release notes。下一会话开工前重新核对 main、最新 Release/tag、README、`dist/core-provenance.json`、active OpenSpec 和共享 testing-standard；结束前执行 retrospective，不能把“规范已写但实现未通用保证”的状态带入下一会话。
