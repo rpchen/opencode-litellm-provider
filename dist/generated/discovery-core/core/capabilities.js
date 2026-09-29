@@ -2,7 +2,7 @@
  * Host-independent capability, limit, modality, and price mapping.
  */
 import { isRecord, optionalBoolean, optionalNumber, positiveInteger, stripRoutePrefix, } from "./litellm.js";
-import { candidateModelIDs } from "./modelsdev.js";
+import { canUseSelectedModelsDevPrice, candidateModelIDs, } from "./modelsdev.js";
 const INPUT_MODALITIES = [
     ["supports_vision", "image"],
     ["supports_pdf_input", "pdf"],
@@ -21,6 +21,8 @@ function modelsDevLimit(selected, key) {
     return isRecord(limit) ? positiveInteger(limit[key]) : undefined;
 }
 function modelsDevCost(selected, key) {
+    if (!canUseSelectedModelsDevPrice(selected))
+        return undefined;
     const cost = selected?.record.cost;
     if (!isRecord(cost))
         return undefined;

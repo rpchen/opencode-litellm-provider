@@ -2,6 +2,19 @@
  * Host-independent models.dev record selection and reasoning variant extraction.
  */
 import { isRecord, optionalBoolean, optionalNumber, optionalString, stripRoutePrefix, } from "./litellm.js";
+/**
+ * Whether provider-scoped models.dev pricing can be treated as a plausible
+ * fallback for the deployed model. Gateway/reseller records selected only for
+ * capability enrichment must never masquerade as the LiteLLM route price.
+ */
+export function canUseSelectedModelsDevPrice(selected) {
+    // Undefined is kept for backwards-compatible direct callers/tests that
+    // construct SelectedModelRecord manually without going through the selector.
+    return selected?.selectionSource === undefined ||
+        selected.selectionSource === "explicit-provider" ||
+        selected.selectionSource === "canonical-original" ||
+        selected.selectionSource === "family-original";
+}
 const FAMILY_RULES = [
     [/^(?:gpt-|o\d|.*codex)/, { primary: "openai", alternatives: [] }],
     [/^claude-/, { primary: "anthropic", alternatives: [] }],
@@ -98,13 +111,14 @@ export function familyProviders(group) {
     }
     return undefined;
 }
-function selected(providerID, candidate, match) {
+function selected(providerID, candidate, match, selectionSource) {
     return {
         providerID,
         modelID: match[0],
         record: match[1],
         matchedCandidate: candidate,
         matchKind: match[2],
+        selectionSource,
     };
 }
 function canonicalProviderCandidates(matches) {
@@ -138,7 +152,7 @@ export function selectModelsDevRecord(group, catalog) {
         if (explicitProvider) {
             const explicit = matches.find((match) => match.providerID.toLowerCase() === explicitProvider);
             if (explicit)
-                return explicit;
+                return { ...explicit, selectionSource: "explicit-provider" };
         }
         // 2. Prefer an original provider inferred from models.dev's own
         // canonical_model_id metadata. This avoids requiring a hard-coded family
@@ -147,27 +161,27 @@ export function selectModelsDevRecord(group, catalog) {
         if (canonicalProviders.length === 1) {
             const original = matches.find((match) => match.providerID.toLowerCase() === canonicalProviders[0]);
             if (original)
-                return original;
+                return { ...original, selectionSource: "canonical-original" };
         }
         // 3. Legacy family heuristics remain only as a compatibility fallback for
         // older/synthetic catalogs that do not carry canonical_model_id.
         for (const providerID of heuristicPreferred) {
             const preferred = matches.find((match) => match.providerID.toLowerCase() === providerID.toLowerCase());
             if (preferred)
-                return preferred;
+                return { ...preferred, selectionSource: "family-original" };
         }
         // 4. When the original provider is not present, prefer capability-rich,
         // broadly maintained gateway records in the agreed stable order.
         const openRouter = matches.find((match) => match.providerID.toLowerCase() === "openrouter");
         if (openRouter)
-            return openRouter;
+            return { ...openRouter, selectionSource: "openrouter-fallback" };
         const openCode = matches.find((match) => match.providerID.toLowerCase() === "opencode");
         if (openCode)
-            return openCode;
+            return { ...openCode, selectionSource: "opencode-fallback" };
         // 5. A genuinely unique remaining match is safe; otherwise keep the
         // ambiguity observable instead of choosing an arbitrary reseller.
         if (matches.length === 1)
-            return matches[0];
+            return { ...matches[0], selectionSource: "unique-match" };
     }
     return undefined;
 }
