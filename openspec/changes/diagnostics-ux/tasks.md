@@ -1,0 +1,5 @@
+- [x] Render diagnostics absolute timestamps in the OpenCode host timezone.
+- [x] Make diagnostics cards dismissible per session.
+- [x] Make audit export cards dismissible without latest-poll resurrection.
+- [x] Add deterministic timestamp tests plus TUI mouse/vertical dismissal coverage.
+- [x] Update README for the timezone and close-button behavior.
