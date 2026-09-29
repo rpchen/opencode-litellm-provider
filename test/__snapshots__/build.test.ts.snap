@@ -245,35 +245,6 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "cost": {
       "cacheRead": 0,
       "cacheWrite": 0,
-      "input": 0,
-      "output": 0,
-    },
-    "id": "invalid-fields",
-    "limit": {
-      "context": 0,
-      "input": 0,
-      "output": 0,
-    },
-    "name": "invalid-fields",
-    "package": "@opencode/ai/providers/openai-compatible",
-    "protocol": "chat",
-    "releaseUnit": "none",
-    "released": 0,
-    "variants": [],
-  },
-  {
-    "capabilities": {
-      "input": [
-        "text",
-      ],
-      "output": [
-        "text",
-      ],
-      "tools": true,
-    },
-    "cost": {
-      "cacheRead": 0,
-      "cacheWrite": 0,
       "input": 1,
       "output": 4,
     },
