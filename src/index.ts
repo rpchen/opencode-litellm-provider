@@ -1,6 +1,7 @@
 import { Plugin } from "@opencode/plugin"
 import { registerAudit } from "./host/audit-command.js"
 import { registerEndpointActivation } from "./host/endpoint-command.js"
+import { registerMultiEndpointAudit } from "./host/multi-audit-command.js"
 import { registerIntegration, registerProvider, type ProviderSnapshot } from "./host/register.js"
 import { createDiscoveryLoop, type DiscoveryDependencies, type SyncContext } from "./host/sync.js"
 import {
@@ -173,6 +174,13 @@ export async function setupLiteLLM(
 
   await reconcile()
 
+  const auditRegistration = await registerMultiEndpointAudit(
+    context,
+    endpointIds,
+    () => activeEndpointIds(endpointIds, activation),
+    snapshots,
+  )
+
   const activationRegistration = await registerEndpointActivation(
     context,
     endpointIds,
@@ -186,6 +194,7 @@ export async function setupLiteLLM(
 
   return async () => {
     await activationRegistration.dispose()
+    await auditRegistration.dispose()
     for (const id of [...disposers.keys()]) await deactivateOne(id)
   }
 }
