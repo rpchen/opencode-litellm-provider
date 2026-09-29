@@ -87,7 +87,7 @@ test("cleanup 停止发现并释放注册", async () => {
   const scheduled = scheduler.all[0]!
 
   await cleanup()
-  expect(disposed).toBe(4)
+  expect(disposed).toBe(6)
   expect(scheduler.active).toHaveLength(0)
 
   scheduled()
