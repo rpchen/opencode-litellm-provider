@@ -15,7 +15,8 @@ const config = path.join(workspace, "config")
 const data = path.join(workspace, "data")
 const cache = path.join(workspace, "cache")
 const state = path.join(workspace, "state")
-for (const dir of [project, home, config, data, cache, state]) mkdirSync(dir, { recursive: true })
+const opencodeConfig = path.join(config, "opencode")
+for (const dir of [project, home, config, data, cache, state, opencodeConfig]) mkdirSync(dir, { recursive: true })
 
 const secrets = ["sk-e2e-default", "sk-e2e-company"]
 const sanitize = (value) => secrets.reduce((text, secret) => text.replaceAll(secret, "***"), String(value))
@@ -123,7 +124,7 @@ async function dumpFailureDiagnostics() {
 }
 
 try {
-  writeFileSync(path.join(project, "opencode.jsonc"), JSON.stringify({
+  writeFileSync(path.join(opencodeConfig, "opencode.jsonc"), JSON.stringify({
     $schema: "https://opencode.ai/config.json",
     plugins: [{
       package: root,
