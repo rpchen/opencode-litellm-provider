@@ -124,5 +124,6 @@ export function parseOptions(input: unknown, logger: OptionLogger = console): Pl
     }
   }
 
-  return { pollInterval, contextTierCap, protocolOverrides, conversationFeedback, endpoints }
+  const parsed = { pollInterval, contextTierCap, protocolOverrides, conversationFeedback }
+  return endpoints === undefined ? parsed : { ...parsed, endpoints }
 }
