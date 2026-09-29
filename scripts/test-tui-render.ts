@@ -39,6 +39,7 @@ const ui = await testRender(() => AuditCard({
     },
     manualCopy: async (path) => { actions.push(`manual:${path}`) },
   },
+  onDismiss: () => store.dismiss("current"),
 }), { width: 110, height: 12 })
 
 async function frame() {
@@ -64,20 +65,20 @@ try {
   store.accept({ sequence: 2, sessionID: "current", ok: true, path: report, error: "" })
   assert.match(await frame(), /审查报告已导出/)
   assert.ok((await frame()).includes(report), "full path must be rendered")
-  assert.equal(assertTextColors(ui.renderer.root, lightText), 4, "title, path and both buttons must be visible in light mode")
+  assert.equal(assertTextColors(ui.renderer.root, lightText), 5, "title, path and all three buttons must be visible in light mode")
   setForeground(darkText)
   await Bun.sleep(0)
-  assert.equal(assertTextColors(ui.renderer.root, darkText), 4, "mounted text must follow theme changes without renderOnce")
+  assert.equal(assertTextColors(ui.renderer.root, darkText), 5, "mounted text must follow theme changes without renderOnce")
   setForeground(lightText)
   await Bun.sleep(0)
-  assert.equal(assertTextColors(ui.renderer.root, lightText), 4)
+  assert.equal(assertTextColors(ui.renderer.root, lightText), 5)
 
   await click("[打开报告]")
   assert.deepEqual(actions, [`open:${report}`])
   await click("[复制路径]")
   assert.deepEqual(actions, [`open:${report}`, `copy:${report}`])
   assert.match(await frame(), /路径已复制到剪贴板/)
-  assert.equal(assertTextColors(ui.renderer.root, lightText), 5, "operation feedback must also use the theme")
+  assert.equal(assertTextColors(ui.renderer.root, lightText), 6, "operation feedback must also use the theme")
 
   copyFails = true
   await click("[复制路径]")
@@ -96,8 +97,15 @@ try {
   assert.match(await frame(), /报告目录不可写/)
   assert.doesNotMatch(await frame(), /复制失败/)
   assert.doesNotMatch(await frame(), /C:\/other\.json/)
-  assert.equal(assertTextColors(ui.renderer.root, lightText), 2, "failure title and reason must use the theme")
-  console.log("TUI rendering and mouse actions passed")
+  assert.equal(assertTextColors(ui.renderer.root, lightText), 3, "failure title, reason and close action must use the theme")
+
+  await click("[关闭]")
+  assert.doesNotMatch(await frame(), /审查报告/)
+  store.accept({ sequence: 4, sessionID: "current", ok: true, path: "C:/same-sequence.json", error: "" })
+  assert.doesNotMatch(await frame(), /same-sequence/)
+  store.accept({ sequence: 5, sessionID: "current", ok: true, path: "C:/new-sequence.json", error: "" })
+  assert.match(await frame(), /new-sequence/)
+  console.log("TUI rendering, dismiss and mouse actions passed")
 } finally {
   ui.renderer.destroy()
 }
@@ -126,6 +134,16 @@ const cleanup = await setupAuditTui(context, (callback) => {
   return () => { stopped++ }
 })
 const live = await testRender(() => render({ sessionID: "current" }), { width: 110, height: 20 })
+async function clickLive(label: string) {
+  await live.renderOnce()
+  const lines = live.captureCharFrame().split("\n")
+  const y = lines.findIndex((line) => line.includes(label))
+  assert.notEqual(y, -1, `missing live action: ${label}`)
+  const prefix = lines[y]!.slice(0, lines[y]!.indexOf(label))
+  const x = [...prefix].reduce((width, char) => width + (/\p{Script=Han}/u.test(char) ? 2 : 1), 0)
+  await live.mockMouse.click(x + 2, y)
+  await live.renderOnce()
+}
 try {
   await live.renderOnce()
   assert.doesNotMatch(live.captureCharFrame(), /审查报告/)
@@ -141,12 +159,21 @@ try {
   await live.renderOnce()
   assert.match(live.captureCharFrame(), /审查报告已导出/)
   assert.ok(live.captureCharFrame().includes(report), "polling must update the mounted card")
+  assert.equal(assertTextColors(live.renderer.root, lightText), 5)
+
+  await clickLive("[关闭]")
+  assert.doesNotMatch(live.captureCharFrame(), /审查报告/)
+  tick()
+  await Bun.sleep(0)
+  await live.renderOnce()
+  assert.doesNotMatch(live.captureCharFrame(), /审查报告/, "dismissed latest result must not reappear on polling")
+
   completed({ data: { sequence: 3, sessionID: "current", ok: true, path: "C:/second.json", error: "" } })
   await Bun.sleep(0)
-  assert.equal(assertTextColors(live.renderer.root, lightText), 4)
+  assert.equal(assertTextColors(live.renderer.root, lightText), 5)
   setForeground(darkText)
   await Bun.sleep(0)
-  assert.equal(assertTextColors(live.renderer.root, darkText), 4, "setup must forward the live host theme getter")
+  assert.equal(assertTextColors(live.renderer.root, darkText), 5, "setup must forward the live host theme getter")
   await live.renderOnce()
   assert.match(live.captureCharFrame(), /C:\/second\.json/)
   assert.ok(!live.captureCharFrame().includes(report), "the next event must replace the previous path")
@@ -262,6 +289,9 @@ try {
     assert.match(diagnosticsFrame, /协议 fallback：0/)
     assert.doesNotMatch(diagnosticsFrame, /sk-diagnostics-fixture/)
     assert.equal(sessionPrompts, 0)
+
+    await clickLive("[关闭]")
+    assert.doesNotMatch(live.captureCharFrame(), /LiteLLM Diagnostics/, "diagnostics card must be dismissible")
   } finally {
     await serverRegistration.dispose()
     await diagnosticLoop.dispose()
