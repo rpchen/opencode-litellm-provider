@@ -3,7 +3,7 @@ import type { EndpointActivation } from "../endpoints.js"
 import { endpointRpc } from "./endpoint-rpc.js"
 import type { Registration } from "./register.js"
 
-export interface EndpointActivationView {
+export type EndpointActivationView = {
   sequence: number
   sessionID: string
   mode: "all" | "selected"
