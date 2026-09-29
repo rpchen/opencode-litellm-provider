@@ -2,6 +2,7 @@ import type { ConnectionInfo } from "@opencode/client";
 import { Model, Plugin, Provider } from "@opencode/plugin";
 import type { ModelSpec } from "../core/build.js";
 import type { DiscoveryCacheDiagnostics, DiscoveryDiagnostics } from "../generated/discovery-core/index.js";
+import { type EndpointIdentity } from "../endpoints.js";
 export interface Registration {
     readonly dispose: () => Promise<void>;
 }
@@ -63,8 +64,8 @@ export interface ProviderSnapshot {
     audit?: AuditSnapshot;
     diagnostics?: ProviderDiagnosticsSnapshot;
 }
-export declare function applyIntegration(editor: IntegrationEditorLike): void;
-export declare function createRegistrationView(models: readonly ModelSpec[], apiBaseURL: string): RegistrationView;
-export declare function applyProvider(editor: ProviderEditorLike, snapshot: ProviderSnapshot): void;
-export declare function registerIntegration(context: Pick<Plugin.Context, "integration">): Promise<Registration>;
-export declare function registerProvider(context: Pick<Plugin.Context, "provider">, snapshot: ProviderSnapshot): Promise<Registration>;
+export declare function applyIntegration(editor: IntegrationEditorLike, endpoint?: EndpointIdentity): void;
+export declare function createRegistrationView(models: readonly ModelSpec[], apiBaseURL: string, endpoint?: EndpointIdentity): RegistrationView;
+export declare function applyProvider(editor: ProviderEditorLike, snapshot: ProviderSnapshot, endpoint?: EndpointIdentity): void;
+export declare function registerIntegration(context: Pick<Plugin.Context, "integration">, endpoint?: EndpointIdentity): Promise<Registration>;
+export declare function registerProvider(context: Pick<Plugin.Context, "provider">, snapshot: ProviderSnapshot, endpoint?: EndpointIdentity): Promise<Registration>;

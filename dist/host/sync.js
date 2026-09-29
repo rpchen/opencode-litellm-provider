@@ -3,9 +3,11 @@ import { createDiscoveryCacheDiagnostics, diagnoseModelSpecs, } from "../core/di
 import { normalizeLiteLLMURL } from "../core/litellm.js";
 import { createDiscoveryCoordinator } from "../core/refresh.js";
 import { compareDiscoverySnapshots, createDiscoverySnapshot, endpointFingerprint, inspectDiscoverySnapshot, } from "../core/snapshot.js";
+import { endpointIdentity } from "../endpoints.js";
 import { DiscoveryError, fetchLiteLLMModelInfo, getModelsDevCatalog, redact, } from "../net/fetch.js";
-import { createRegistrationView, INTEGRATION_ID } from "./register.js";
+import { createRegistrationView } from "./register.js";
 const DISCOVERY_SNAPSHOT_STORAGE_KEY = "litellm.discovery.snapshot.v1";
+const DEFAULT_ENDPOINT = endpointIdentity("default", undefined, true);
 const defaultScheduler = {
     setTimeout: (callback, milliseconds) => setTimeout(callback, milliseconds),
     clearTimeout: (handle) => clearTimeout(handle),
@@ -14,18 +16,18 @@ function isKeyCredential(value) {
     return typeof value === "object" && value !== null && value.type === "key" &&
         typeof value.key === "string";
 }
-function switchedForLiteLLM(event) {
+function switchedForLiteLLM(event, integrationId) {
     if (event.type === "credential.updated")
         return true;
     if (event.type !== "credential.switched" || typeof event.data !== "object" || event.data === null)
         return false;
-    return event.data.integrationID === INTEGRATION_ID;
+    return event.data.integrationID === integrationId;
 }
 function connectionIdentity(connection, credential, url) {
     const connectionID = connection.type === "credential" ? connection.id : connection.name;
     return `${connection.type}\u0000${connectionID}\u0000${url}\u0000${credential.key}`;
 }
-export function createDiscoveryLoop(context, snapshot, options, dependencies = {}) {
+export function createDiscoveryLoop(context, snapshot, options, dependencies = {}, endpoint = DEFAULT_ENDPOINT) {
     const scheduler = dependencies.scheduler ?? defaultScheduler;
     const logger = dependencies.logger ?? console;
     const fetchModelInfo = dependencies.fetchLiteLLM ?? fetchLiteLLMModelInfo;
@@ -59,7 +61,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
         if (!context.storage)
             return undefined;
         try {
-            const raw = await context.storage.get(DISCOVERY_SNAPSHOT_STORAGE_KEY);
+            const raw = await context.storage.get(endpoint.legacy ? DISCOVERY_SNAPSHOT_STORAGE_KEY : `${DISCOVERY_SNAPSHOT_STORAGE_KEY}.${endpoint.id}`);
             const value = typeof raw === "string" ? JSON.parse(raw) : raw;
             const inspected = inspectDiscoverySnapshot(value, expectedEndpoint);
             if (inspected.compatible)
@@ -83,7 +85,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
             return;
         }
         try {
-            await context.storage.set(DISCOVERY_SNAPSHOT_STORAGE_KEY, JSON.stringify(value));
+            await context.storage.set(endpoint.legacy ? DISCOVERY_SNAPSHOT_STORAGE_KEY : `${DISCOVERY_SNAPSHOT_STORAGE_KEY}.${endpoint.id}`, JSON.stringify(value));
             persistedIdentity = nextIdentity;
             persistedSnapshot = value;
         }
@@ -98,9 +100,9 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
             return;
         try {
             if (context.storage.remove)
-                await context.storage.remove(DISCOVERY_SNAPSHOT_STORAGE_KEY);
+                await context.storage.remove(endpoint.legacy ? DISCOVERY_SNAPSHOT_STORAGE_KEY : `${DISCOVERY_SNAPSHOT_STORAGE_KEY}.${endpoint.id}`);
             else
-                await context.storage.set(DISCOVERY_SNAPSHOT_STORAGE_KEY, "null");
+                await context.storage.set(endpoint.legacy ? DISCOVERY_SNAPSHOT_STORAGE_KEY : `${DISCOVERY_SNAPSHOT_STORAGE_KEY}.${endpoint.id}`, "null");
         }
         catch (error) {
             logger.warn(`LiteLLM snapshot 清理失败：${redact(error instanceof Error ? error.message : String(error))}`);
@@ -145,7 +147,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
     const clearModels = async (connection, apiBaseURL, status) => {
         const emptyFingerprint = fingerprint([]);
         const changed = !snapshot.ready || lastFingerprint !== emptyFingerprint || reloadPending;
-        const view = createRegistrationView([], apiBaseURL);
+        const view = createRegistrationView([], apiBaseURL, endpoint);
         snapshot.ready = true;
         snapshot.connection = connection;
         snapshot.apiBaseURL = apiBaseURL;
@@ -163,7 +165,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
         lastFingerprint = emptyFingerprint;
     };
     const refreshOnce = async (forceRefresh) => {
-        const connection = await context.integration.connection.active(INTEGRATION_ID);
+        const connection = await context.integration.connection.active(endpoint.integrationId);
         if (!connection) {
             cancelTimer();
             await removeProvider();
@@ -204,9 +206,9 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
             await removeProvider();
             return;
         }
-        const rawURL = resolved.configuration?.url;
+        const rawURL = endpoint.fixedBaseUrl ?? resolved.configuration?.url;
         if (typeof rawURL !== "string" || rawURL.length === 0) {
-            logger.error("LiteLLM 活动连接缺少必填地址");
+            logger.error(`LiteLLM endpoint ${endpoint.id} 缺少必填地址`);
             await removeProvider();
             return;
         }
@@ -251,7 +253,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
         const previousPersisted = await loadPersistedSnapshot(nextIdentity, expectedEndpoint);
         if (!snapshot.ready && previousPersisted) {
             const restoredModels = previousPersisted.models.map(toOpenCodeModelSpec);
-            const restoredView = createRegistrationView(restoredModels, addresses.apiBaseURL);
+            const restoredView = createRegistrationView(restoredModels, addresses.apiBaseURL, endpoint);
             snapshot.ready = true;
             snapshot.connection = connection;
             snapshot.apiBaseURL = addresses.apiBaseURL;
@@ -326,7 +328,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
             }
             const changed = !snapshot.ready || lastFingerprint !== nextFingerprint || reloadPending;
             const view = changed || !snapshot.registrationView
-                ? createRegistrationView(models, addresses.apiBaseURL)
+                ? createRegistrationView(models, addresses.apiBaseURL, endpoint)
                 : snapshot.registrationView;
             snapshot.ready = true;
             snapshot.connection = connection;
@@ -419,7 +421,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
             for await (const event of context.event.subscribe({ signal: abortEvents.signal })) {
                 if (disposed)
                     break;
-                if (switchedForLiteLLM(event)) {
+                if (switchedForLiteLLM(event, endpoint.integrationId)) {
                     cancelTimer();
                     void trigger(true);
                 }

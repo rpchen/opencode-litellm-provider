@@ -1,6 +1,7 @@
 import type { ConnectionInfo } from "@opencode/client";
 import { buildModelSpecs, modelFingerprint } from "../core/build.js";
 import type { PluginOptions } from "../options.js";
+import { type EndpointIdentity } from "../endpoints.js";
 import { fetchLiteLLMModelInfo, getModelsDevCatalog, type FetchLike } from "../net/fetch.js";
 import { type ProviderSnapshot } from "./register.js";
 interface EventLike {
@@ -50,5 +51,5 @@ export interface DiscoveryLoop {
     trigger(forceRefresh?: boolean): Promise<void>;
     dispose(): Promise<void>;
 }
-export declare function createDiscoveryLoop(context: SyncContext, snapshot: ProviderSnapshot, options: PluginOptions, dependencies?: DiscoveryDependencies): DiscoveryLoop;
+export declare function createDiscoveryLoop(context: SyncContext, snapshot: ProviderSnapshot, options: PluginOptions, dependencies?: DiscoveryDependencies, endpoint?: EndpointIdentity): DiscoveryLoop;
 export {};
