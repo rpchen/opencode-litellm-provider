@@ -96,13 +96,15 @@ endpoint id 是用户定义的稳定 ASCII slug，必须匹配 `[a-z0-9][a-z0-9-
 
 因此需要分别执行 `/connect` 并逐个选择对应的 LiteLLM integration，分别保存各自的 API Key。显式 `endpoints` 已经在插件 options 中固定 `baseUrl`，所以 `/connect` 只需要输入 API Key，不会再次询问地址。各 endpoint 的 credential 由 OpenCode 按 integration id 独立保存和切换。
 
+在 endpoint 还没有保存 API Key 时，它虽然会出现在 `/connect` 和 `/litellm-endpoints` 中，但不会发布 provider/model；因此此时 `/models` 里看不到对应 LiteLLM 模型是正常状态。完成 `/connect` 后 discovery 成功，模型才会出现。
+
 固定 `baseUrl` 的 endpoint 会向 OpenCode 注册**无附加表单字段**的 key 认证方式；不会发送 `form: []`。这是 OpenCode 2.0.16 的运行时 Schema 要求：认证表单如果存在必须至少包含一个字段。当前仓库 CI 会用真实 OpenCode 2.0.16、固定 Git commit 安装、两个独立 fake LiteLLM endpoint 验证 `/connect` 底层 integration、独立 credential、provider 与 `opencode models`。
 
 每个 endpoint 都是独立 integration/provider、独立 credential、独立 discovery/cache/snapshot/故障域。插件在**同一个 OpenCode V2 plugin 实例**中注册这些 integration/provider；activation 只启停对应 provider/discovery，不会删除 endpoint 定义或已保存 credential。插件不会跨 endpoint 聚合模型、负载均衡或自动故障切换。
 
 ### Activation
 
-执行 `/litellm-endpoints` 会在终端 TUI 显示 activation 卡片，可逐个启用/停用，也可以“全部启用”或“全部停用”。activation 是全局插件状态，与 endpoint 定义分开保存；默认全部启用，允许零个 endpoint 激活。
+执行 `/litellm-endpoints` 会打开 OpenCode 原生选择器，可逐个启用/停用，也可以“全部启用”或“全部停用”。使用 `↑` / `↓` 移动选择，`Enter` 执行，`Esc` 关闭；鼠标选择由 OpenCode 原生选择器处理。activation 是全局插件状态，与 endpoint 定义分开保存；默认全部启用，允许零个 endpoint 激活。
 
 停用会立即卸载该 endpoint 的运行时 provider/discovery loop，但保留配置、宿主 credential 和 snapshot；再次启用会重新加载。PR9 只实现 activation 管理，不实现 endpoint 完整 CRUD UI；新增、改名和删除 endpoint 仍通过配置文件完成。
 
@@ -110,7 +112,7 @@ endpoint id 是用户定义的稳定 ASCII slug，必须匹配 `[a-z0-9][a-z0-9-
 
 ### `/litellm-endpoints`
 
-打开 endpoint activation 管理卡片。该操作本身不会调用模型。
+打开 OpenCode 原生 endpoint activation 选择器。该操作本身不会调用模型。若命令恰好在 TUI 插件初始化/订阅事件之前执行，插件会从服务端保存的 state 恢复这次显示请求，不需要再次执行命令。
 
 ### `/litellm-diagnostics`
 
@@ -127,6 +129,8 @@ endpoint id 是用户定义的稳定 ASCII slug，必须匹配 `[a-z0-9][a-z0-9-
 “最近成功发现”“下次允许重试”等绝对时间按**当前运行 OpenCode 的宿主机器时区**显示，并附带 UTC 偏移；内部 discovery/snapshot/cache 时间仍保持标准 UTC/epoch。
 
 终端 TUI 中的诊断卡片提供 **[关闭]**，关闭只隐藏当前会话里的当前诊断结果；再次执行 `/litellm-diagnostics` 会显示新的结果。当前诊断卡片依赖 OpenCode 终端 TUI；Desktop / Web 等不加载 TUI 卡片的客户端不会显示该卡片。
+
+诊断结果同时保留为可恢复的 latest state：即使命令完成时 TUI 事件监听尚未就绪，TUI 初始化后的同步也会把结果显示出来，不需要重新执行命令。
 
 ### `/litellm-audit-export`
 
