@@ -19,7 +19,7 @@ export interface AuditDependencies {
   createSubmitter?: (session: Pick<Plugin.Context["session"], "prompt">) => FeedbackSubmitter
 }
 
-interface LatestVisibleResult {
+type LatestVisibleResult = {
   sequence: number
   sessionID: string
   ok: boolean
