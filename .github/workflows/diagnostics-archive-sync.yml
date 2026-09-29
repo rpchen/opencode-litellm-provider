@@ -1,0 +1,74 @@
+name: Diagnostics UX archive and dist sync
+
+on:
+  push:
+    branches: [fix/diagnostics-ux-and-archive]
+
+permissions:
+  contents: write
+
+jobs:
+  maintain:
+    if: "!startsWith(github.event.head_commit.message, 'build: archive specs and sync diagnostics dist')"
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: fix/diagnostics-ux-and-archive
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.14.0
+          cache: npm
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.3.10
+      - run: npm ci
+      - name: Archive completed changes in implementation order
+        run: |
+          npx openspec archive pr4-cross-repo-verification --yes
+          npx openspec archive pr5-refresh-coordinator --yes
+          npx openspec archive pr6-persisted-snapshot --yes
+          npx openspec archive pr7-diagnostics --yes
+          npx openspec archive pr8-discovery-quality-integration --yes
+          npx openspec archive diagnostics-ux --yes
+      - name: Fill canonical spec purposes
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs")
+          const purposes = {
+            "core-compatibility": "Defines how the OpenCode plugin validates an immutable litellm-discovery-core commit through compatibility workflows, complete consumer delivery checks, and provenance evidence before shared Core changes are considered compatible.",
+            "refresh-coordinator": "Defines how OpenCode consumes the shared refresh coordinator while preserving host-owned connection lifecycle, reload behavior, snapshot usage, failure classification, and last-known-good semantics.",
+            "discovery-snapshot": "Defines how OpenCode persists and restores endpoint-bound discovery snapshots, validates Core compatibility and integrity, and observes drift without moving host persistence concerns into the shared Core.",
+            "provider-diagnostics": "Defines OpenCode LiteLLM diagnostics from discovery state through command, RPC event, TUI store and rendered card, including safe cache, metadata, protocol, provenance, and failure summaries.",
+            "discovery-quality-integration": "Defines how OpenCode preserves discovery-quality semantics selected by Core, including distinct token limits and neutral metadata, while adding only OpenCode-specific SDK package mapping.",
+            "diagnostics-ui": "Defines terminal diagnostics and audit presentation, including host-local absolute timestamps and session-scoped dismissal that prevents the same polled result from reappearing until a newer sequence arrives."
+          }
+          for (const [name, purpose] of Object.entries(purposes)) {
+            const path = `openspec/specs/${name}/spec.md`
+            let content = fs.readFileSync(path, "utf8")
+            content = content.replace(/## Purpose\n[\s\S]*?\n## Requirements/, `## Purpose\n${purpose}\n\n## Requirements`)
+            fs.writeFileSync(path, content)
+          }
+          NODE
+      - name: Build committed distribution
+        run: npm run build:dist
+      - name: Verify implementation and archive
+        run: |
+          npm run verify:dist
+          npm run test:delivery
+          npm run typecheck
+          npm test
+          npm run test:tui-render
+          npm run test:distribution
+          npm run test:package
+          npm run validate:spec
+      - name: Commit generated distribution and archives
+        run: |
+          git add dist openspec
+          git diff --cached --exit-code && exit 0 || true
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "build: archive specs and sync diagnostics dist"
+          git push origin HEAD:fix/diagnostics-ux-and-archive
