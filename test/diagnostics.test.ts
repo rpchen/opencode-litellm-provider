@@ -1,8 +1,41 @@
 import { describe, expect, test } from "bun:test"
-import { createDiagnosticsLines } from "../src/host/diagnostics.js"
+import { createDiagnosticsLines, formatHostDateTime } from "../src/host/diagnostics.js"
 import type { ProviderSnapshot } from "../src/host/register.js"
 
 describe("OpenCode diagnostics", () => {
+  test("renders absolute timestamps in the host timezone without changing the stored instant", () => {
+    const instant = "2026-09-29T01:07:32.160Z"
+    expect(formatHostDateTime(instant, -480)).toBe("2026-09-29 09:07:32 UTC+08:00")
+
+    const snapshot: ProviderSnapshot = {
+      ready: true,
+      models: [],
+      audit: {
+        status: "ready",
+        lastSuccessfulDiscoveryAt: instant,
+      },
+      diagnostics: {
+        cache: {
+          source: "stale",
+          stale: true,
+          refreshedAt: Date.parse(instant),
+          ageMs: 0,
+          failureCount: 1,
+          nextRetryAt: Date.parse("2026-09-29T01:10:00.000Z"),
+          pending: false,
+        },
+      },
+    }
+    const text = createDiagnosticsLines(
+      snapshot,
+      Date.parse("2026-09-29T01:08:32.160Z"),
+      -480,
+    ).join("\n")
+    expect(text).toContain("最近成功发现：2026-09-29 09:07:32 UTC+08:00")
+    expect(text).toContain("下次允许重试：2026-09-29 09:10:00 UTC+08:00")
+    expect(snapshot.audit?.lastSuccessfulDiscoveryAt).toBe(instant)
+  })
+
   test("renders safe shared discovery and cache summary", () => {
     const snapshot: ProviderSnapshot = {
       ready: true,

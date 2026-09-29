@@ -41,6 +41,8 @@ export async function setupAuditTui(
       diagnosticsResult: () => sessionID ? diagnosticsStore.forSession(sessionID) : undefined,
       foreground: () => context.theme.text.base,
       actions,
+      dismissAudit: () => { if (sessionID) store.dismiss(sessionID) },
+      dismissDiagnostics: () => { if (sessionID) diagnosticsStore.dismiss(sessionID) },
     }),
   })
   let refreshing = false

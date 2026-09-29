@@ -66,13 +66,15 @@ opencode plugin add github:rpchen/opencode-litellm-provider#v0.2.0
 
 这个命令只读取现有状态，**不会发起模型请求，也不会产生额外 token 消耗**。
 
-当前诊断卡片依赖 OpenCode 终端 TUI；Desktop / Web 等不加载 TUI 卡片的客户端不会显示该卡片。
+“最近成功发现”“下次允许重试”等绝对时间按**当前运行 OpenCode 的宿主机器时区**显示，并附带 UTC 偏移；内部 discovery/snapshot/cache 时间仍保持标准 UTC/epoch。
+
+终端 TUI 中的诊断卡片提供 **[关闭]**，关闭只隐藏当前会话里的当前诊断结果；再次执行 `/litellm-diagnostics` 会显示新的结果。当前诊断卡片依赖 OpenCode 终端 TUI；Desktop / Web 等不加载 TUI 卡片的客户端不会显示该卡片。
 
 ### `/litellm-audit-export`
 
 导出当前插件提交给 OpenCode 的 LiteLLM 模型视图。每次执行都会生成一个新 JSON 文件，不覆盖已有报告，也不会上传报告。
 
-终端 TUI 会显示结果卡片，并提供“打开报告”“复制路径”。
+终端 TUI 会显示结果卡片，并提供“打开报告”“复制路径”和“关闭”。关闭后当前结果不会因 TUI 的 latest 轮询再次弹回；下一次导出产生新结果时会重新显示。
 
 默认报告目录：
 

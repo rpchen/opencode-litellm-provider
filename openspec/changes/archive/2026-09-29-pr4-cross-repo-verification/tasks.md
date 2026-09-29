@@ -1,0 +1,2 @@
+- [x] Add compatibility workflow.
+- [x] Validate workflow syntax and existing checks.
