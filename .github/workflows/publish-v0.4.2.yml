@@ -1,0 +1,49 @@
+name: Publish v0.4.2 tag
+
+on:
+  push:
+    branches: [automation/release-v0.4.2]
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  tag-and-dispatch:
+    runs-on: ubuntu-latest
+    env:
+      EXPECTED_MAIN_SHA: 9ce93ed3351cadffe376b9c337e60fdf0286b57c
+      RELEASE_TAG: v0.4.2
+    steps:
+      - name: Check out verified main commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Verify release target
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_MAIN_SHA"
+          version="$(node --print 'require("./package.json").version')"
+          test "$RELEASE_TAG" = "v$version"
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Tag already exists: $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+      - name: Create immutable release tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/tags/$RELEASE_TAG" \
+            -f sha="$EXPECTED_MAIN_SHA"
+
+      - name: Dispatch verified Release workflow
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_TAG"
