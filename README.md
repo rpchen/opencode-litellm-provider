@@ -84,7 +84,7 @@ opencode plugin add github:rpchen/opencode-litellm-provider#v0.3.1
 }
 ```
 
-endpoint id 是用户定义的稳定 ASCII slug。`default` 保留 `litellm` identity；其他 endpoint 映射成 `litellm-<id>`，显示名为 `LiteLLM · <id>`。显式 `endpoints` 模式中地址来自配置文件，`/connect` 只为对应 endpoint 保存 API Key；不存在按 endpoint 动态生成的环境变量。
+endpoint id 是用户定义的稳定 ASCII slug，必须匹配 `[a-z0-9][a-z0-9-_]*`。`default` 保留 `litellm` identity；其他 endpoint 映射成 `litellm-<id>`，显示名为 `LiteLLM · <id>`。显式 `endpoints` 模式中地址来自配置文件，`/connect` 只为对应 endpoint 保存 API Key；不存在按 endpoint 动态生成的环境变量。
 
 每个 endpoint 都是独立 integration/provider、独立 credential、独立 discovery/cache/snapshot/故障域。插件不会跨 endpoint 聚合模型、负载均衡或自动故障切换。
 
