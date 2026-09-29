@@ -7,6 +7,10 @@ import { fileURLToPath } from "node:url"
 import { spawn, spawnSync } from "node:child_process"
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)))
+const packageSpec = process.env.E2E_PACKAGE_SPEC
+if (!packageSpec || !/^github:rpchen\/opencode-litellm-provider#[0-9a-f]{40}$/u.test(packageSpec)) {
+  throw new Error("E2E_PACKAGE_SPEC must pin this repository to a full Git commit")
+}
 const fixture = JSON.parse(readFileSync(path.join(root, "test/fixtures/litellm-model-info.json"), "utf8"))
 const workspace = mkdtempSync(path.join(os.tmpdir(), "opencode-v2-real-e2e-"))
 const project = path.join(workspace, "project")
@@ -186,7 +190,7 @@ try {
   const e2eConfig = {
     $schema: "https://opencode.ai/config.json",
     plugins: [{
-      package: root,
+      package: packageSpec,
       options: {
         pollInterval: 30,
         endpoints: {
