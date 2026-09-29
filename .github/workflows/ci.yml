@@ -108,4 +108,5 @@ jobs:
       - name: Run real host E2E
         env:
           OPENCODE_DISABLE_AUTOUPDATE: "1"
+          E2E_PACKAGE_SPEC: github:${{ github.repository }}#${{ github.event.pull_request.head.sha || github.sha }}
         run: npm run test:e2e:opencode-v2
