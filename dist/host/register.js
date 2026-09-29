@@ -101,9 +101,8 @@ export function registerIntegration(context, endpoint = DEFAULT_IDENTITY) {
 }
 export function registerIntegrations(context, endpoints) {
     return context.integration.transform((editor) => {
-        const target = editor;
         for (const endpoint of endpoints)
-            applyIntegration(target, endpoint);
+            applyIntegration(editor, endpoint);
     });
 }
 export function registerProvider(context, snapshot, endpoint = DEFAULT_IDENTITY) {

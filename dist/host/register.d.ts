@@ -6,29 +6,7 @@ import { type EndpointIdentity } from "../endpoints.js";
 export interface Registration {
     readonly dispose: () => Promise<void>;
 }
-export interface IntegrationEditorLike {
-    update(id: string, update: (integration: {
-        id: string;
-        name: string;
-    }) => void): void;
-    readonly method: {
-        update(input: {
-            integrationID: string;
-            method: {
-                type: "key";
-                label: string;
-                form?: Array<{
-                    key: string;
-                    type: "string";
-                    format: "uri";
-                    required: boolean;
-                    title: string;
-                    placeholder: string;
-                }>;
-            };
-        }): void;
-    };
-}
+export type IntegrationEditorLike = Parameters<Parameters<Plugin.Context["integration"]["transform"]>[0]>[0];
 export interface ProviderEditorLike {
     add(input: {
         info: Provider.Info;
