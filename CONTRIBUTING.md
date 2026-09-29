@@ -70,6 +70,11 @@ core/main 更新不会自动改变已发布插件；下一次插件更新构建�
 
 ### 发行版本与显式重试
 
-发行准备经 PR 同步 package.json、package-lock.json 顶层和 packages[""] 的 version，不重新解析无关依赖。`test:delivery` 同时覆盖发行 ref/版本正负向检查。已有版本 tag 可显式 dispatch Release workflow；必须选择 tag，选择 main 或其他分支会失败，且不会自行创建 tag。该入口与 tag push 使用相同固定 provenance 门禁，不是跳过测试的捷径。
+发行准备经 PR 同步 package.json、package-lock.json 顶层和 packages[""] 的 version，并同步 README “当前发行版”固定 tag 示例与 `docs/releases/vX.Y.Z.md`；`test:release-metadata` 必须通过。不重新解析无关依赖。`test:delivery` 同时覆盖发行 ref/版本正负向检查。已有版本 tag 可显式 dispatch Release workflow；必须选择 tag，选择 main 或其他分支会失败，且不会自行创建 tag。该入口与 tag push 使用相同固定 provenance 门禁，不是跳过测试的捷径。
 
 可在 docs/releases/vX.Y.Z.md 维护发行说明，workflow 会将其与自动变更记录一起发布。上传后 workflow 下载附件核验 SHA-256、打包字节和解包 dist。不要移动旧 tag、覆盖已经发布的不同内容，或把旧提交/维护者单机反馈扩大成新提交/全平台测试证据。
+
+
+## OpenSpec 完成门禁
+
+`npm run test:openspec-closure` 会拒绝 tasks 已全部完成但仍留在 active `openspec/changes/` 的 change。实现完成后必须使用 OpenSpec CLI archive，再执行 strict validation；不得手工移动目录代替 archive。
