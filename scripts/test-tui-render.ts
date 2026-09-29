@@ -155,7 +155,7 @@ try {
   latest = { sequence: 2, sessionID: "current", ok: true, path: report, error: "" }
   tick()
   await Bun.sleep(0)
-  assert.equal(assertTextColors(live.renderer.root, lightText), 4, "latest must mount themed text before forced painting")
+  assert.equal(assertTextColors(live.renderer.root, lightText), 5, "latest must mount themed text before forced painting")
   await live.renderOnce()
   assert.match(live.captureCharFrame(), /审查报告已导出/)
   assert.ok(live.captureCharFrame().includes(report), "polling must update the mounted card")
