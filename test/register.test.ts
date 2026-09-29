@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { ModelSpec } from "../src/core/build.js"
+import { endpointIdentity } from "../src/endpoints.js"
 import {
   applyIntegration,
   applyProvider,
@@ -75,6 +76,31 @@ describe("integration 注册", () => {
           ],
         },
       },
+    ])
+  })
+
+  test("显式 endpoint 使用独立 integration id，固定地址时 /connect 只收 API Key", () => {
+    const integrations = new Map<string, { id: string; name: string }>()
+    const methods: unknown[] = []
+    const editor = {
+      update: (id: string, update: (value: { id: string; name: string }) => void) => {
+        const value = integrations.get(id) ?? { id, name: id }
+        update(value)
+        integrations.set(id, value)
+      },
+      method: { update: (input: unknown) => methods.push(input) },
+    } as unknown as IntegrationEditorLike
+
+    applyIntegration(editor, endpointIdentity("default", "https://personal.example", false))
+    applyIntegration(editor, endpointIdentity("company", "https://company.example", false))
+
+    expect([...integrations.entries()]).toEqual([
+      ["litellm", { id: "litellm", name: "LiteLLM" }],
+      ["litellm-company", { id: "litellm-company", name: "LiteLLM · company" }],
+    ])
+    expect(methods).toEqual([
+      { integrationID: "litellm", method: { type: "key", label: "API Key", form: [] } },
+      { integrationID: "litellm-company", method: { type: "key", label: "API Key", form: [] } },
     ])
   })
 })

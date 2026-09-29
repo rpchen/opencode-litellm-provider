@@ -97,6 +97,13 @@ export function applyProvider(editor, snapshot, endpoint = DEFAULT_IDENTITY) {
 export function registerIntegration(context, endpoint = DEFAULT_IDENTITY) {
     return context.integration.transform((editor) => applyIntegration(editor, endpoint));
 }
+export function registerIntegrations(context, endpoints) {
+    return context.integration.transform((editor) => {
+        const target = editor;
+        for (const endpoint of endpoints)
+            applyIntegration(target, endpoint);
+    });
+}
 export function registerProvider(context, snapshot, endpoint = DEFAULT_IDENTITY) {
     return context.provider.transform((editor) => applyProvider(editor, snapshot, endpoint));
 }
