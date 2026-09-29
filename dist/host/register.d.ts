@@ -17,7 +17,7 @@ export interface IntegrationEditorLike {
             method: {
                 type: "key";
                 label: string;
-                form: Array<{
+                form?: Array<{
                     key: string;
                     type: "string";
                     format: "uri";
