@@ -17,7 +17,7 @@ export const PLUGIN_ID = "litellm"
 
 type EndpointContext = Plugin.Context & SyncContext & {
   plugin?: {
-    add(plugin: { id: string; setup(context: Plugin.Context): Promise<void> | void }): Promise<void>
+    add(plugin: ReturnType<typeof Plugin.define>): Promise<void>
     remove(id: string): Promise<void>
   }
   storage?: {
