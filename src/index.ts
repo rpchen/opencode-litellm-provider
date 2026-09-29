@@ -32,8 +32,9 @@ async function setupEndpoint(
   options: PluginOptions,
   dependencies: DiscoveryDependencies,
   snapshots?: Map<string, ProviderSnapshot>,
+  snapshotOverride?: ProviderSnapshot,
 ): Promise<() => Promise<void>> {
-  const snapshot: ProviderSnapshot = { ready: false, models: [], audit: { status: "disconnected" } }
+  const snapshot: ProviderSnapshot = snapshotOverride ?? { ready: false, models: [], audit: { status: "disconnected" } }
   snapshots?.set(endpoint.id, snapshot)
   const endpointOptions: PluginOptions = {
     ...options,
@@ -78,27 +79,50 @@ export async function setupLiteLLM(
   const context = rawContext as EndpointContext
   const options = parseOptions(context.options)
 
-  // Legacy mode is deliberately unchanged: one LiteLLM integration, old credential
-  // namespace, old snapshot key and old audit/diagnostics behavior.
+  // Legacy mode keeps the old integration/credential/snapshot namespaces, while the
+  // new global activation state defaults to "all" so existing users migrate with no action.
   if (options.endpoints === undefined) {
-    const snapshot: ProviderSnapshot = { ready: false, models: [], audit: { status: "disconnected" } }
     const endpoint = endpointIdentity("default", undefined, true)
-    const [integrationRegistration, providerRegistration] = await Promise.all([
-      registerIntegration(context, endpoint),
-      registerProvider(context, snapshot, endpoint),
-    ])
+    const snapshot: ProviderSnapshot = { ready: false, models: [], audit: { status: "disconnected" } }
+    let activation = await readActivation(context)
+    let endpointDispose: (() => Promise<void>) | undefined
+
+    const reconcileLegacy = async () => {
+      const active = activeEndpointIds(["default"], activation).includes("default")
+      if (active && !endpointDispose) {
+        endpointDispose = await setupEndpoint(context, endpoint, options, dependencies, undefined, snapshot)
+      } else if (!active && endpointDispose) {
+        const dispose = endpointDispose
+        endpointDispose = undefined
+        await dispose()
+        snapshot.ready = false
+        snapshot.connection = undefined
+        snapshot.apiBaseURL = undefined
+        snapshot.models = []
+        snapshot.registrationView = undefined
+        snapshot.audit = { status: "disconnected" }
+      }
+    }
+
+    await reconcileLegacy()
     const auditRegistration = await registerAudit(context, snapshot, {
       conversationFeedback: options.conversationFeedback,
     })
-    const loop = createDiscoveryLoop(context, snapshot, options, dependencies, endpoint)
-    const startup = loop.start()
+    const activationRegistration = await registerEndpointActivation(
+      context,
+      ["default"],
+      () => activation,
+      async (next) => {
+        activation = next
+        await writeActivation(context, next)
+        await reconcileLegacy()
+      },
+    )
 
     return async () => {
-      await loop.dispose()
-      await startup
+      await activationRegistration.dispose()
       await auditRegistration.dispose()
-      await providerRegistration.dispose()
-      await integrationRegistration.dispose()
+      await endpointDispose?.()
     }
   }
 
