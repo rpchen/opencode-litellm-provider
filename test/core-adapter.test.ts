@@ -37,6 +37,51 @@ test("PR8 的总 context 语义贯穿 Core 到 OpenCode 模型", () => {
   expect(shared?.package).toBe("@opencode/ai/providers/openai-compatible")
 })
 
+test("hy4-preview 通过 OpenRouter 能力 fallback 保持可用限制", () => {
+  const neutral = discover({
+    data: [{
+      model_name: "hy4-preview",
+      litellm_params: { model: "openai/hy4-preview" },
+      model_info: {
+        mode: "chat",
+        input_cost_per_token: 0.000000834,
+        output_cost_per_token: 0.000002501,
+        cache_read_input_token_cost: 0.000000042,
+      },
+    }],
+  }, {
+    openrouter: {
+      models: {
+        "hy4-preview": {
+          id: "hy4-preview",
+          canonical_model_id: "tencent/hy4-preview",
+          tool_call: true,
+          reasoning: true,
+          modalities: { input: ["text"], output: ["text"] },
+          limit: { context: 1024000, output: 64000 },
+        },
+      },
+    },
+    opencode: {
+      models: {
+        "hy4-preview": {
+          id: "hy4-preview",
+          canonical_model_id: "tencent/hy4-preview",
+          limit: { context: 1000000, output: 32000 },
+        },
+      },
+    },
+  }, options)
+  const adapted = neutral.map(toOpenCodeModelSpec)
+  const hy4 = adapted[0]!
+  expect(hy4.limit).toEqual({ context: 1024000, input: 1024000, output: 64000 })
+  expect(hy4.limit.context).toBeGreaterThan(0)
+  expect(hy4.limit.output).toBeGreaterThan(0)
+  expect(hy4.cost.input).toBeCloseTo(0.834)
+  expect(hy4.cost.output).toBeCloseTo(2.501)
+  expect(hy4.package).toBe("@opencode/ai/providers/openai-compatible")
+})
+
 test("宿主 SDK 映射与迁移前完全相同，Protocol 来自公共入口", () => {
   const fromOptions = (protocol: OptionsProtocol): Protocol => protocol
   const fromCore = (protocol: Protocol): OptionsProtocol => protocol

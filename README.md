@@ -166,7 +166,7 @@ opencode reload
 | 成功返回空清单 | 撤下旧模型 |
 | 断开 LiteLLM 连接 | 撤下 provider 模型 |
 
-`/v1/model/info` 是模型发现的事实来源；`/v1/models` 不作为发现源。embedding、图像生成等非对话模型不会注册。
+`/v1/model/info` 是模型发现的事实来源；`/v1/models` 不作为发现源。embedding、图像生成等非对话模型不会注册。models.dev 能力补缺优先使用原厂记录；原厂 provider 记录不可用时依次使用 OpenRouter、OpenCode，再考虑全局唯一记录，避免多网关同名模型因为 provider 歧义而丢失 context、输出上限或 reasoning 等关键能力。
 
 模型上限按 PR8 的发现规则合并：总 context 与最大 input 分开处理；models.dev 可补充总 context，LiteLLM 的 `max_input_tokens` 仍作为 input 限制。两者冲突时不会再把 input 上限误当成总 context。models.dev 未命中的私有模型仍会保留。
 
