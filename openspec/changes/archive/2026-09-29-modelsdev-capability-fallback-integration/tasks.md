@@ -1,0 +1,5 @@
+- [x] Add Core-to-OpenCode hy4-preview vertical regression coverage.
+- [x] Update README with the capability fallback order.
+- [x] Rebuild committed dist from merged capability-fallback Core SHA.
+- [x] Run complete OpenCode delivery gates and strict OpenSpec validation.
+- [x] Archive this change and re-run strict validation.

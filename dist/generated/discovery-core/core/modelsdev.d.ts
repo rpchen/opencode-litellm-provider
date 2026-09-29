@@ -7,6 +7,7 @@ export interface ModelsDevRecord extends Record<string, unknown> {
     id?: unknown;
     name?: unknown;
     aliases?: unknown;
+    canonical_model_id?: unknown;
     reasoning?: unknown;
     release_date?: unknown;
     modalities?: unknown;
