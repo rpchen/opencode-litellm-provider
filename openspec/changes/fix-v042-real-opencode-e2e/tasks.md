@@ -4,6 +4,6 @@
 - [x] Derive the integration editor type from the OpenCode Plugin.Context API.
 - [x] Add a permanent real OpenCode 2.0.16 E2E CI job using a fixed Git commit package.
 - [x] Cover independent integrations, credentials, fake HTTP discovery, providers, models and command registration in the real host.
-- [ ] Update user/research documentation with the compatibility incident and verification contract.
+- [x] Update user/research documentation with the compatibility incident and verification contract.
 - [ ] Run final committed-dist, typecheck, unit, TUI, package and real-host E2E gates on the final head.
 - [ ] Archive this change through OpenSpec CLI and rerun strict validation/closure.
