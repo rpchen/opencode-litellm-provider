@@ -17,6 +17,14 @@ export interface DiagnosticsResult {
   lines: string[]
 }
 
+export interface EndpointActivationResult {
+  sequence: number
+  sessionID: string
+  mode: "all" | "selected"
+  endpointIds: string[]
+  activeEndpointIds: string[]
+}
+
 export interface AuditCardActions {
   open: (path: string) => Promise<void>
   copy: (path: string) => Promise<void>
@@ -37,6 +45,26 @@ export function createDiagnosticsResultStore() {
       if (!sessionID) return
       setResults((previous) => {
         if (!(sessionID in previous)) return previous
+        const next = { ...previous }
+        delete next[sessionID]
+        return next
+      })
+    },
+  }
+}
+
+export function createEndpointActivationStore() {
+  const [results, setResults] = createSignal<Record<string, EndpointActivationResult>>({})
+  let seen = 0
+  return {
+    forSession: (sessionID: string) => results()[sessionID],
+    accept(result: EndpointActivationResult) {
+      if (result.sequence < seen || !result.sessionID) return
+      seen = result.sequence
+      setResults((previous) => ({ ...previous, [result.sessionID]: result }))
+    },
+    dismiss(sessionID: string) {
+      setResults((previous) => {
         const next = { ...previous }
         delete next[sessionID]
         return next
@@ -165,15 +193,57 @@ export function DiagnosticsCard(props: {
 }
 
 
+
+export function EndpointActivationCard(props: {
+  result: () => EndpointActivationResult | undefined
+  foreground: () => NonNullable<JSX.IntrinsicElements["text"]["fg"]>
+  onAction: (action: "all" | "none" | "toggle", endpointId?: string) => Promise<void>
+  onDismiss: () => void
+}) {
+  const Text = (text: JSX.IntrinsicElements["text"]) => jsx("text", {
+    ...text,
+    get fg() { return props.foreground() },
+  })
+  return Show({
+    get when() { return props.result() },
+    keyed: true,
+    children: (result: EndpointActivationResult) => {
+      const active = new Set(result.activeEndpointIds)
+      return <box flexDirection="column" paddingLeft={2} paddingRight={2} marginBottom={1}>
+        <Text>LiteLLM endpoints</Text>
+        {result.endpointIds.map((id) =>
+          <Text onMouseUp={() => { void props.onAction("toggle", id) }}>
+            {active.has(id) ? "✓" : "○"} {id}
+          </Text>
+        )}
+        <box flexDirection="row" gap={2}>
+          <Text onMouseUp={() => { void props.onAction("all") }}>[全部启用]</Text>
+          <Text onMouseUp={() => { void props.onAction("none") }}>[全部停用]</Text>
+          <Text onMouseUp={props.onDismiss}>[关闭]</Text>
+        </box>
+      </box>
+    },
+  })
+}
+
 export function ProviderCards(props: {
   auditResult: () => AuditResult | undefined
   diagnosticsResult: () => DiagnosticsResult | undefined
+  endpointResult?: () => EndpointActivationResult | undefined
   foreground: () => NonNullable<JSX.IntrinsicElements["text"]["fg"]>
   actions: AuditCardActions
   dismissAudit: () => void
   dismissDiagnostics: () => void
+  dismissEndpoints?: () => void
+  endpointAction?: (action: "all" | "none" | "toggle", endpointId?: string) => Promise<void>
 }) {
   return <box flexDirection="column">
+    <EndpointActivationCard
+      result={() => props.endpointResult?.()}
+      foreground={props.foreground}
+      onAction={(action, endpointId) => props.endpointAction?.(action, endpointId) ?? Promise.resolve()}
+      onDismiss={() => props.dismissEndpoints?.()}
+    />
     <DiagnosticsCard
       result={props.diagnosticsResult}
       foreground={props.foreground}
