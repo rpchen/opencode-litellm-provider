@@ -17,7 +17,7 @@ export interface IntegrationEditorLike {
       method: {
         type: "key"
         label: string
-        form: Array<{
+        form?: Array<{
           key: string
           type: "string"
           format: "uri"
@@ -90,16 +90,18 @@ export function applyIntegration(editor: IntegrationEditorLike, endpoint: Endpoi
     method: {
       type: "key",
       label: "API Key",
-      form: endpoint.fixedBaseUrl ? [] : [
-        {
-          key: "url",
-          type: "string",
-          format: "uri",
-          required: true,
-          title: "LiteLLM 地址",
-          placeholder: "http://litellm.example:4000",
-        },
-      ],
+      ...(endpoint.fixedBaseUrl ? {} : {
+        form: [
+          {
+            key: "url",
+            type: "string",
+            format: "uri",
+            required: true,
+            title: "LiteLLM 地址",
+            placeholder: "http://litellm.example:4000",
+          },
+        ],
+      }),
     },
   })
 }
