@@ -344,6 +344,7 @@ export function createDiscoveryLoop(
     identity = nextIdentity
 
     const expectedEndpoint = endpointFingerprint({
+      endpointID: endpoint.legacy ? undefined : endpoint.id,
       baseUrl: addresses.rootURL,
       credentialKey: resolved.key,
       buildOptions: {
