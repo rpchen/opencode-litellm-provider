@@ -32,6 +32,36 @@ function ageText(ageMs: number | undefined): string {
   return `${Math.floor(ageMs / 3_600_000)}小时`
 }
 
+function pad2(value: number): string {
+  return String(value).padStart(2, "0")
+}
+
+/**
+ * Format an instant in the timezone configured on the running OpenCode host.
+ * The optional offset exists only for deterministic tests.
+ */
+export function formatHostDateTime(
+  value: string | number | Date,
+  timezoneOffsetMinutes?: number,
+): string {
+  const instant = value instanceof Date ? new Date(value.getTime()) : new Date(value)
+  if (!Number.isFinite(instant.getTime())) return String(value)
+
+  const offset = timezoneOffsetMinutes ?? instant.getTimezoneOffset()
+  const local = new Date(instant.getTime() - offset * 60_000)
+  const displayOffset = -offset
+  const sign = displayOffset >= 0 ? "+" : "-"
+  const absoluteOffset = Math.abs(displayOffset)
+  const offsetHours = Math.floor(absoluteOffset / 60)
+  const offsetMinutes = absoluteOffset % 60
+
+  return [
+    `${local.getUTCFullYear()}-${pad2(local.getUTCMonth() + 1)}-${pad2(local.getUTCDate())}`,
+    `${pad2(local.getUTCHours())}:${pad2(local.getUTCMinutes())}:${pad2(local.getUTCSeconds())}`,
+    `UTC${sign}${pad2(offsetHours)}:${pad2(offsetMinutes)}`,
+  ].join(" ")
+}
+
 const STATUS_TEXT = {
   disconnected: "未连接",
   pending: "等待首次发现",
@@ -43,7 +73,11 @@ const STATUS_TEXT = {
   "cleared-notfound": "model/info 不可用，模型已清空",
 } as const
 
-export function createDiagnosticsLines(snapshot: ProviderSnapshot, now = Date.now()): string[] {
+export function createDiagnosticsLines(
+  snapshot: ProviderSnapshot,
+  now = Date.now(),
+  timezoneOffsetMinutes?: number,
+): string[] {
   const build = runtimeBuildInfo()
   const audit = snapshot.audit ?? { status: "disconnected" as const }
   const lines = [
@@ -52,7 +86,9 @@ export function createDiagnosticsLines(snapshot: ProviderSnapshot, now = Date.no
     `已注册模型：${audit.view?.models.length ?? snapshot.models.length}`,
   ]
 
-  if (audit.lastSuccessfulDiscoveryAt) lines.push(`最近成功发现：${audit.lastSuccessfulDiscoveryAt}`)
+  if (audit.lastSuccessfulDiscoveryAt) {
+    lines.push(`最近成功发现：${formatHostDateTime(audit.lastSuccessfulDiscoveryAt, timezoneOffsetMinutes)}`)
+  }
 
   const cache = snapshot.diagnostics?.cache
   if (cache) {
@@ -60,7 +96,9 @@ export function createDiagnosticsLines(snapshot: ProviderSnapshot, now = Date.no
     lines.push(
       `缓存：${cache.source} · stale=${cache.stale ? "是" : "否"} · age=${ageText(age)} · failures=${cache.failureCount}`,
     )
-    if (cache.nextRetryAt !== undefined) lines.push(`下次允许重试：${new Date(cache.nextRetryAt).toISOString()}`)
+    if (cache.nextRetryAt !== undefined) {
+      lines.push(`下次允许重试：${formatHostDateTime(cache.nextRetryAt, timezoneOffsetMinutes)}`)
+    }
   }
 
   const discovery = snapshot.diagnostics?.discovery
