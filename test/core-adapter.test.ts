@@ -21,12 +21,13 @@ const options = { contextTierCap: true, protocolOverrides: {} }
 test("共享 ModelSpec 保持中立，OpenCode 适配只增加 SDK package", () => {
   const neutral = discover(litellm, modelsDev, options)
   const original = structuredClone(neutral)
-  const adapted = neutral.map(toOpenCodeModelSpec)
+  const operational = filterOperationalModelSpecs(neutral)
+  const adapted = operational.map(toOpenCodeModelSpec)
   expect(neutral).toEqual(original)
   expect(adapted).toEqual(buildModelSpecs(litellm, modelsDev, options))
   for (const model of adapted) {
     const { package: sdk, ...metadata } = model
-    const expected = neutral.find((item) => item.id === model.id)
+    const expected = operational.find((item) => item.id === model.id)
     if (!expected) throw new Error(`missing neutral fixture model: ${model.id}`)
     expect(metadata).toEqual(expected)
     expect(sdk).toBe(PROTOCOL_PACKAGES[model.protocol])
