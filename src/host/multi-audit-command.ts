@@ -10,6 +10,15 @@ interface MultiAuditDependencies {
   now?: () => Date
 }
 
+interface LatestVisibleResult {
+  sequence: number
+  sessionID: string
+  ok: boolean
+  path: string
+  error: string
+  lines?: string[]
+}
+
 function failureMessage(error: unknown): string {
   const code = typeof error === "object" && error !== null && "code" in error
     ? (error as { code?: unknown }).code
@@ -39,7 +48,7 @@ export async function registerMultiEndpointAudit(
   const writeFile = dependencies.writeFile ?? writeAuditFile
   let sequence = 0
   let diagnosticSequence = 0
-  let latest = { sequence, sessionID: "", ok: false, path: "", error: "" }
+  let latest: LatestVisibleResult = { sequence, sessionID: "", ok: false, path: "", error: "" }
   let rpc: Awaited<ReturnType<typeof context.rpc.register<typeof auditRpc>>>
 
   const performExport = async (sessionID: string) => {
@@ -104,14 +113,15 @@ export async function registerMultiEndpointAudit(
               }),
             ]
           }
-          await rpc.events.emit("completed", {
+          latest = {
             sequence: ++diagnosticSequence,
             sessionID: record.sessionID,
             ok: true,
             path: "",
             error: "",
             lines,
-          })
+          }
+          await rpc.events.emit("completed", latest)
         },
       })
       editor.add({
