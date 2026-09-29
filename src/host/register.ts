@@ -178,6 +178,16 @@ export function registerIntegration(context: Pick<Plugin.Context, "integration">
   return context.integration.transform((editor) => applyIntegration(editor as unknown as IntegrationEditorLike, endpoint))
 }
 
+export function registerIntegrations(
+  context: Pick<Plugin.Context, "integration">,
+  endpoints: readonly EndpointIdentity[],
+): Promise<Registration> {
+  return context.integration.transform((editor) => {
+    const target = editor as unknown as IntegrationEditorLike
+    for (const endpoint of endpoints) applyIntegration(target, endpoint)
+  })
+}
+
 export function registerProvider(
   context: Pick<Plugin.Context, "provider">,
   snapshot: ProviderSnapshot,
