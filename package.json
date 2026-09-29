@@ -1,6 +1,6 @@
 {
   "name": "opencode-litellm-provider",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "OpenCode v2 plugin that auto-discovers providers, protocols, models and reasoning variants from a LiteLLM proxy",
   "type": "module",
   "license": "MIT",
