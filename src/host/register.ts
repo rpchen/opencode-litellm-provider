@@ -3,6 +3,7 @@ import { Model, Plugin, Provider } from "@opencode/plugin"
 import type { ModelSpec } from "../core/build.js"
 import type { DiscoveryCacheDiagnostics, DiscoveryDiagnostics } from "../generated/discovery-core/index.js"
 import { PROTOCOL_PACKAGES } from "../core/protocol.js"
+import { filterOperationalModelSpecs } from "./models.js"
 
 export interface Registration {
   readonly dispose: () => Promise<void>
@@ -139,7 +140,7 @@ function freezeDeep<T>(value: T, seen = new WeakSet<object>()): T {
 }
 
 export function createRegistrationView(models: readonly ModelSpec[], apiBaseURL: string): RegistrationView {
-  const specs = structuredClone(models) as ModelSpec[]
+  const specs = filterOperationalModelSpecs(structuredClone(models) as ModelSpec[])
   const protocols = Object.fromEntries(specs.map((spec) => [spec.id, spec.protocol]))
   const releaseUnits = Object.fromEntries(specs.map((spec) => [
     spec.id,
