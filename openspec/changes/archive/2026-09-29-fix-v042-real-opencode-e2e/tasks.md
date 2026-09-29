@@ -1,0 +1,9 @@
+- [x] Reproduce the user-visible failure against the exact OpenCode 2.0.16 runtime schema.
+- [x] Identify `form: []` as invalid against `Form.Fields = NonEmptyArray`.
+- [x] Omit `form` for fixed-baseUrl endpoint key methods.
+- [x] Derive the integration editor type from the OpenCode Plugin.Context API.
+- [x] Add a permanent real OpenCode 2.0.16 E2E CI job using a fixed Git commit package.
+- [x] Cover independent integrations, credentials, fake HTTP discovery, providers, models and command registration in the real host.
+- [x] Update user/research documentation with the compatibility incident and verification contract.
+- [x] Run final committed-dist, typecheck, unit, TUI, package and real-host E2E gates on the final head.
+- [x] Archive this change through OpenSpec CLI and rerun strict validation/closure.

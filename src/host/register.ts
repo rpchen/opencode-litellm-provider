@@ -9,26 +9,8 @@ export interface Registration {
   readonly dispose: () => Promise<void>
 }
 
-export interface IntegrationEditorLike {
-  update(id: string, update: (integration: { id: string; name: string }) => void): void
-  readonly method: {
-    update(input: {
-      integrationID: string
-      method: {
-        type: "key"
-        label: string
-        form: Array<{
-          key: string
-          type: "string"
-          format: "uri"
-          required: boolean
-          title: string
-          placeholder: string
-        }>
-      }
-    }): void
-  }
-}
+export type IntegrationEditorLike =
+  Parameters<Parameters<Plugin.Context["integration"]["transform"]>[0]>[0]
 
 export interface ProviderEditorLike {
   add(input: {
@@ -90,16 +72,18 @@ export function applyIntegration(editor: IntegrationEditorLike, endpoint: Endpoi
     method: {
       type: "key",
       label: "API Key",
-      form: endpoint.fixedBaseUrl ? [] : [
-        {
-          key: "url",
-          type: "string",
-          format: "uri",
-          required: true,
-          title: "LiteLLM 地址",
-          placeholder: "http://litellm.example:4000",
-        },
-      ],
+      ...(endpoint.fixedBaseUrl ? {} : {
+        form: [
+          {
+            key: "url",
+            type: "string",
+            format: "uri",
+            required: true,
+            title: "LiteLLM 地址",
+            placeholder: "http://litellm.example:4000",
+          },
+        ],
+      }),
     },
   })
 }
@@ -175,7 +159,7 @@ export function applyProvider(editor: ProviderEditorLike, snapshot: ProviderSnap
 }
 
 export function registerIntegration(context: Pick<Plugin.Context, "integration">, endpoint: EndpointIdentity = DEFAULT_IDENTITY): Promise<Registration> {
-  return context.integration.transform((editor) => applyIntegration(editor as unknown as IntegrationEditorLike, endpoint))
+  return context.integration.transform((editor) => applyIntegration(editor, endpoint))
 }
 
 export function registerIntegrations(
@@ -183,8 +167,7 @@ export function registerIntegrations(
   endpoints: readonly EndpointIdentity[],
 ): Promise<Registration> {
   return context.integration.transform((editor) => {
-    const target = editor as unknown as IntegrationEditorLike
-    for (const endpoint of endpoints) applyIntegration(target, endpoint)
+    for (const endpoint of endpoints) applyIntegration(editor, endpoint)
   })
 }
 

@@ -43,6 +43,24 @@ v0.4.0 的首次 multi-endpoint 实现错误假设 `ctx.plugin.add/remove` 存�
 
 本项目从 v0.4.1 起把这条作为真实宿主不变量：显式 multi-endpoint 测试 context **故意不提供** `plugin.add/remove`，installed-package probe 也必须覆盖两个 integration id。
 
+### 2.1.1 OpenCode 2.0.16 `Integration.KeyMethod.form` 非空约束（2026-09-29 实机回归）
+
+v0.4.1 又暴露了第二个 mock 无法发现的宿主兼容问题：显式 endpoint 已在 options 中固定 `baseUrl` 时，插件注册了 `{ type: "key", form: [] }`。真实 OpenCode 2.0.16 的运行时 Schema 定义为：
+
+- `Integration.KeyMethod.form?: Form.Fields`
+- `Form.Fields = Schema.NonEmptyArray(Form.Field)`
+
+所以“没有额外字段”必须**省略 `form`**，不能传空数组。非法 `form: []` 会在 `Integration.list()` 投影 `Integration.Info` 时触发 Schema validation failed；内置 `opencode.config.provider` 随后无法构建 provider snapshot，表现为：
+
+- `/plugins` 中 `opencode.config.provider` failed；
+- `/connect` 看不到 LiteLLM integration；
+- `/models` 中没有 LiteLLM 模型。
+
+修复从 v0.4.2 开始同时采用两层防线：
+
+1. `IntegrationEditorLike` 不再手写认证 method 结构，而直接从 `Plugin.Context.integration.transform` 推导 editor 类型；
+2. CI 永久运行真实 `@opencode/cli@2.0.16` E2E：通过 `opencode plugin add github:<repo>#<full-sha>` 安装当前交付物，启动独立真实 server，写入两个独立测试 Key，并验证 integration、connection、provider、models 和 command registry。测试使用本地 fake LiteLLM，不读取真实用户配置或凭据。
+
 `Transform<T>` 返回 `Registration`（带 `dispose`）；transform 回调是**同步**的，异步发现需先在外部完成、缓存结果，
 再在回调中写入，然后 `reload()` —— 上游 `plugin/provider/opencode.ts` 正是此模式（`load()` 拉取 → 缓存 → `catalog.reload()`）。
 

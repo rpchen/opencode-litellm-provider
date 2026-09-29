@@ -13,16 +13,18 @@ export function applyIntegration(editor, endpoint = DEFAULT_IDENTITY) {
         method: {
             type: "key",
             label: "API Key",
-            form: endpoint.fixedBaseUrl ? [] : [
-                {
-                    key: "url",
-                    type: "string",
-                    format: "uri",
-                    required: true,
-                    title: "LiteLLM 地址",
-                    placeholder: "http://litellm.example:4000",
-                },
-            ],
+            ...(endpoint.fixedBaseUrl ? {} : {
+                form: [
+                    {
+                        key: "url",
+                        type: "string",
+                        format: "uri",
+                        required: true,
+                        title: "LiteLLM 地址",
+                        placeholder: "http://litellm.example:4000",
+                    },
+                ],
+            }),
         },
     });
 }
@@ -99,9 +101,8 @@ export function registerIntegration(context, endpoint = DEFAULT_IDENTITY) {
 }
 export function registerIntegrations(context, endpoints) {
     return context.integration.transform((editor) => {
-        const target = editor;
         for (const endpoint of endpoints)
-            applyIntegration(target, endpoint);
+            applyIntegration(editor, endpoint);
     });
 }
 export function registerProvider(context, snapshot, endpoint = DEFAULT_IDENTITY) {

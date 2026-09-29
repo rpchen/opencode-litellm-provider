@@ -99,8 +99,8 @@ describe("integration 注册", () => {
       ["litellm-company", { id: "litellm-company", name: "LiteLLM · company" }],
     ])
     expect(methods).toEqual([
-      { integrationID: "litellm", method: { type: "key", label: "API Key", form: [] } },
-      { integrationID: "litellm-company", method: { type: "key", label: "API Key", form: [] } },
+      { integrationID: "litellm", method: { type: "key", label: "API Key" } },
+      { integrationID: "litellm-company", method: { type: "key", label: "API Key" } },
     ])
   })
 })

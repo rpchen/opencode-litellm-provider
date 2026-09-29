@@ -78,3 +78,35 @@ jobs:
           git diff --exit-code -- dist test/fixtures test/__snapshots__
           test -z "$(git ls-files --others --exclude-standard -- dist)"
           test -z "$(git ls-files -- src/core src/generated/discovery-core)"
+
+
+  real-opencode-v2:
+    name: Real OpenCode 2.0.16 E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.14.0
+          cache: npm
+
+      - name: Install plugin dependencies
+        run: npm ci
+
+      - name: Install real OpenCode v2 host
+        run: npm install --global @opencode/cli@2.0.16
+
+      - name: Verify real host version
+        run: opencode --version
+
+      - name: Run real host E2E
+        env:
+          OPENCODE_DISABLE_AUTOUPDATE: "1"
+          E2E_PACKAGE_SPEC: github:${{ github.repository }}#${{ github.event.pull_request.head.sha || github.sha }}
+        run: npm run test:e2e:opencode-v2
