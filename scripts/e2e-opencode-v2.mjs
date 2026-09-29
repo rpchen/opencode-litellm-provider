@@ -208,8 +208,24 @@ try {
   const api = (...args) => command(["api", "--server", openCodeServer.url, ...args])
   const serverCommand = (name, ...args) => command([name, "--server", openCodeServer.url, ...args])
 
-  // This is the first regression gate: v0.4.1 should reproduce the real host
-  // Integration/provider failure here, before /connect or /models can succeed.
+  // Server listen readiness precedes external plugin activation in OpenCode 2.0.16.
+  // Wait until the real host has either activated or failed the LiteLLM plugin before
+  // asserting integration/provider behavior.
+  let litellmPlugin
+  for (let attempt = 0; attempt < 60; attempt++) {
+    const state = payload(jsonOutput(api("GET", "/api/plugin"), "plugin.list"))
+    if (Array.isArray(state)) {
+      litellmPlugin = state.find((item) => item.id === "litellm")
+      if (litellmPlugin?.state?.status === "active" || litellmPlugin?.state?.status === "failed") break
+    }
+    await sleep(500)
+  }
+  assert(litellmPlugin, "LiteLLM server plugin was never discovered by the real OpenCode host")
+  assert.equal(litellmPlugin.state?.status, "active",
+    `LiteLLM server plugin failed to activate: ${JSON.stringify(litellmPlugin)}`)
+
+  // This is the next regression gate: v0.4.1 reproduces the real host
+  // Integration/provider schema failure here, which also empties /connect and /models.
   const integrationsRaw = jsonOutput(api("GET", "/api/integration"), "integration.list")
   const integrations = payload(integrationsRaw)
   assert(Array.isArray(integrations), "integration.list payload must be an array")
