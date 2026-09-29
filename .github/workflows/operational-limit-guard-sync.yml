@@ -37,8 +37,10 @@ jobs:
           npm run validate:spec
       - name: Close and archive OpenSpec change
         run: |
-          node -e "const fs=require('node:fs'); const p='openspec/changes/operational-limit-publication-guard/tasks.md'; let s=fs.readFileSync(p,'utf8'); s=s.replaceAll('- [ ] ','- [x] '); fs.writeFileSync(p,s)"
-          npx openspec archive operational-limit-publication-guard --yes
+          if test -f openspec/changes/operational-limit-publication-guard/tasks.md; then
+            node -e "const fs=require('node:fs'); const p='openspec/changes/operational-limit-publication-guard/tasks.md'; let s=fs.readFileSync(p,'utf8'); s=s.replaceAll('- [ ] ','- [x] '); fs.writeFileSync(p,s)"
+            npx openspec archive operational-limit-publication-guard --yes
+          fi
           npm run validate:spec
       - name: Commit generated distribution and archive
         run: |
