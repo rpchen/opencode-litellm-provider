@@ -3,6 +3,7 @@ import { Model, Plugin, Provider } from "@opencode/plugin"
 import type { ModelSpec } from "../core/build.js"
 import type { DiscoveryCacheDiagnostics, DiscoveryDiagnostics } from "../generated/discovery-core/index.js"
 import { PROTOCOL_PACKAGES } from "../core/protocol.js"
+import { endpointIdentity, type EndpointIdentity } from "../endpoints.js"
 
 export interface Registration {
   readonly dispose: () => Promise<void>
@@ -39,6 +40,7 @@ export interface ProviderEditorLike {
 
 export const INTEGRATION_ID = "litellm"
 export const PROVIDER_ID = "litellm"
+const DEFAULT_IDENTITY = endpointIdentity("default", undefined, true)
 
 export type DiscoveryStatus =
   | "disconnected"
@@ -79,16 +81,16 @@ export interface ProviderSnapshot {
   diagnostics?: ProviderDiagnosticsSnapshot
 }
 
-export function applyIntegration(editor: IntegrationEditorLike): void {
-  editor.update(INTEGRATION_ID, (integration) => {
-    integration.name = "LiteLLM"
+export function applyIntegration(editor: IntegrationEditorLike, endpoint: EndpointIdentity = DEFAULT_IDENTITY): void {
+  editor.update(endpoint.integrationId, (integration) => {
+    integration.name = endpoint.displayName
   })
   editor.method.update({
-    integrationID: INTEGRATION_ID,
+    integrationID: endpoint.integrationId,
     method: {
       type: "key",
       label: "API Key",
-      form: [
+      form: endpoint.fixedBaseUrl ? [] : [
         {
           key: "url",
           type: "string",
@@ -102,8 +104,8 @@ export function applyIntegration(editor: IntegrationEditorLike): void {
   })
 }
 
-function toModelInfo(spec: ModelSpec): Model.Info {
-  const providerID = PROVIDER_ID as Provider.ID
+function toModelInfo(spec: ModelSpec, endpoint: EndpointIdentity): Model.Info {
+  const providerID = endpoint.providerId as Provider.ID
   const modelID = spec.id as Model.ID
   return {
     ...Model.Info.default(providerID, modelID),
@@ -138,7 +140,7 @@ function freezeDeep<T>(value: T, seen = new WeakSet<object>()): T {
   return Object.freeze(value)
 }
 
-export function createRegistrationView(models: readonly ModelSpec[], apiBaseURL: string): RegistrationView {
+export function createRegistrationView(models: readonly ModelSpec[], apiBaseURL: string, endpoint: EndpointIdentity = DEFAULT_IDENTITY): RegistrationView {
   const specs = structuredClone(models) as ModelSpec[]
   const protocols = Object.fromEntries(specs.map((spec) => [spec.id, spec.protocol]))
   const releaseUnits = Object.fromEntries(specs.map((spec) => [
@@ -147,23 +149,23 @@ export function createRegistrationView(models: readonly ModelSpec[], apiBaseURL:
   ]))
   return freezeDeep({
     info: {
-      ...Provider.Info.empty(PROVIDER_ID as Provider.ID),
-      id: PROVIDER_ID as Provider.ID,
-      integrationID: INTEGRATION_ID,
-      name: "LiteLLM",
+      ...Provider.Info.empty(endpoint.providerId as Provider.ID),
+      id: endpoint.providerId as Provider.ID,
+      integrationID: endpoint.integrationId,
+      name: endpoint.displayName,
       activation: "auto",
       package: PROTOCOL_PACKAGES.chat,
       settings: { baseURL: apiBaseURL },
     } as unknown as Provider.Info,
-    models: specs.map(toModelInfo),
+    models: specs.map((spec) => toModelInfo(spec, endpoint)),
     protocols,
     releaseUnits,
   })
 }
 
-export function applyProvider(editor: ProviderEditorLike, snapshot: ProviderSnapshot): void {
+export function applyProvider(editor: ProviderEditorLike, snapshot: ProviderSnapshot, endpoint: EndpointIdentity = DEFAULT_IDENTITY): void {
   if (!snapshot.ready || !snapshot.connection || !snapshot.apiBaseURL) return
-  const view = snapshot.registrationView ?? snapshot.audit?.view ?? createRegistrationView(snapshot.models, snapshot.apiBaseURL)
+  const view = snapshot.registrationView ?? snapshot.audit?.view ?? createRegistrationView(snapshot.models, snapshot.apiBaseURL, endpoint)
 
   editor.add({
     info: view.info,
@@ -172,13 +174,14 @@ export function applyProvider(editor: ProviderEditorLike, snapshot: ProviderSnap
   })
 }
 
-export function registerIntegration(context: Pick<Plugin.Context, "integration">): Promise<Registration> {
-  return context.integration.transform((editor) => applyIntegration(editor as unknown as IntegrationEditorLike))
+export function registerIntegration(context: Pick<Plugin.Context, "integration">, endpoint: EndpointIdentity = DEFAULT_IDENTITY): Promise<Registration> {
+  return context.integration.transform((editor) => applyIntegration(editor as unknown as IntegrationEditorLike, endpoint))
 }
 
 export function registerProvider(
   context: Pick<Plugin.Context, "provider">,
   snapshot: ProviderSnapshot,
+  endpoint: EndpointIdentity = DEFAULT_IDENTITY,
 ): Promise<Registration> {
-  return context.provider.transform((editor) => applyProvider(editor, snapshot))
+  return context.provider.transform((editor) => applyProvider(editor, snapshot, endpoint))
 }
