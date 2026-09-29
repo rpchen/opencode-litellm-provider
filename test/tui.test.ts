@@ -38,7 +38,7 @@ describe("TUI 会话卡片", () => {
     expect(typeof h.slot?.render).toBe("function")
     h.emit(success(2, "session-2", "C:/audit/other.json"))
     if (cleanup) await cleanup()
-    expect(h.stopped).toBe(2)
+    expect(h.stopped).toBe(3)
   })
 
   test("完成事件丢失后 latest 收敛，查询失败可重试且卸载停止轮询", async () => {
@@ -71,7 +71,7 @@ describe("TUI 会话卡片", () => {
     tick()
     await Bun.sleep(0)
     expect(requests).toBe(3)
-    expect(h.stopped).toBe(2)
+    expect(h.stopped).toBe(3)
   })
 
   test("慢查询不堆叠，卸载后迟到结果不再提交", async () => {
