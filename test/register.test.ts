@@ -133,6 +133,19 @@ describe("provider 注册", () => {
     expect(view.models[0]?.name).toBe("model-b")
   })
 
+  test("注册视图防御性过滤 context/output 非正数模型", () => {
+    const valid = model("valid")
+    const zeroContext = { ...model("zero-context"), limit: { context: 0, input: 0, output: 32000 } }
+    const zeroOutput = { ...model("zero-output"), limit: { context: 128000, input: 128000, output: 0 } }
+
+    const view = createRegistrationView([zeroContext, valid, zeroOutput], "https://litellm.example/v1")
+    expect(view.models.map((item) => String(item.id))).toEqual(["valid"])
+
+    const fake = fakeProvider()
+    applyProvider(fake.editor, snapshot([zeroContext, valid, zeroOutput]))
+    expect(fake.value?.models.map((item) => String(item.id))).toEqual(["valid"])
+  })
+
   test("下一次 add 整体替换旧模型", () => {
     const fake = fakeProvider()
     applyProvider(fake.editor, snapshot([model("old"), model("kept")]))
