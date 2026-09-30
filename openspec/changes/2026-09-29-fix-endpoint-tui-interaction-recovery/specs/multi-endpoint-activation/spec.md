@@ -5,6 +5,10 @@
 ### Requirement: multi-endpoint commands remain visibly actionable
 The plugin SHALL keep diagnostics, activation, and audit command results visibly actionable in the terminal TUI when explicit multi-endpoint mode is configured. Endpoint activation SHALL use a host-native selectable control rather than text that merely looks clickable, and a command executed before the TUI event listener is ready SHALL be recoverable from server state without a model turn.
 
+#### Scenario: command executes after multi-endpoint setup
+- **WHEN** an explicit multi-endpoint configuration loads successfully and the user executes a LiteLLM command
+- **THEN** the server RPC/event path reaches the TUI result card without requiring a model turn
+
 #### Scenario: command executes immediately after multi-endpoint startup
 - **WHEN** an explicit multi-endpoint configuration loads and the user executes a LiteLLM command before or during TUI plugin initialization
 - **THEN** the result becomes visible through the live RPC event or subsequent state/latest recovery
