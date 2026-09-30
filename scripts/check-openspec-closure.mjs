@@ -24,6 +24,15 @@ const compatFile = path.resolve(
 const requirementHeader = /^###\s+Requirement:\s*(.+?)\s*$/i
 const scenarioHeader = /^####\s+(.+?)\s*$/
 
+// OpenSpec 1.13.2 applies a delta's operations in this order (RENAMED, then
+// REMOVED, then MODIFIED, then ADDED), with file order inside each section.
+// See @fission-ai/openspec specs-apply.js: "Apply operations in order:
+// RENAMED -> REMOVED -> MODIFIED -> ADDED". Cross-section conflicts for one
+// requirement name are rejected by OpenSpec validation, so the only legitimate
+// multi-operation chains inside one delta (RENAMED then REMOVED/MODIFIED of the
+// new title, chained RENAMED pairs) replay deterministically under this order.
+const operationRank = { RENAMED: 0, REMOVED: 1, MODIFIED: 2, ADDED: 3 }
+
 function normalizeLineEndings(content) {
   return content.replace(/^﻿/, "").replace(/\r\n?/g, "\n")
 }
@@ -255,6 +264,83 @@ function parseDeltaSpec(content, source) {
   return operations
 }
 
+// OpenSpec 1.13.2 rejects a delta that gives one requirement name conflicting
+// state transitions (`openspec validate`: "Requirement present in both ...").
+// The gate mirrors those grammar rules so a hand-written archive cannot smuggle
+// an ambiguous transition past the closure check.
+function validateDeltaOperations(operations, source) {
+  const added = []
+  const modified = []
+  const removed = []
+  const renamed = []
+
+  for (const operation of operations) {
+    if (operation.operation === "RENAMED") renamed.push(operation)
+    else if (operation.operation === "REMOVED") removed.push(operation.name)
+    else if (operation.operation === "MODIFIED") modified.push(operation.requirement.name)
+    else added.push(operation.requirement.name)
+  }
+
+  const duplicate = (names, section) => {
+    const seen = new Set()
+    for (const name of names) {
+      if (seen.has(name)) {
+        throw new Error(
+          source + ": duplicate requirement in " + section + ' for "### Requirement: ' + name + '"',
+        )
+      }
+      seen.add(name)
+    }
+  }
+  duplicate(added, "ADDED")
+  duplicate(modified, "MODIFIED")
+  duplicate(removed, "REMOVED")
+
+  const renamedFrom = []
+  const renamedTo = []
+  for (const pair of renamed) {
+    if (renamedFrom.includes(pair.from)) {
+      throw new Error(source + ': duplicate FROM in RENAMED for "### Requirement: ' + pair.from + '"')
+    }
+    if (renamedTo.includes(pair.to)) {
+      throw new Error(source + ': duplicate TO in RENAMED for "### Requirement: ' + pair.to + '"')
+    }
+    renamedFrom.push(pair.from)
+    renamedTo.push(pair.to)
+  }
+
+  const conflictingSections = (name, first, second) => {
+    throw new Error(
+      source +
+        ": requirement present in multiple sections (" +
+        first +
+        " and " +
+        second +
+        ') for "### Requirement: ' +
+        name +
+        '"; a single delta must not give one requirement conflicting state transitions',
+    )
+  }
+  for (const name of modified) {
+    if (removed.includes(name)) conflictingSections(name, "MODIFIED", "REMOVED")
+    if (added.includes(name)) conflictingSections(name, "MODIFIED", "ADDED")
+  }
+  for (const name of added) {
+    if (removed.includes(name)) conflictingSections(name, "ADDED", "REMOVED")
+  }
+  for (const pair of renamed) {
+    if (modified.includes(pair.from)) {
+      conflictingSections(pair.from, "RENAMED", "MODIFIED")
+    }
+    if (added.includes(pair.to)) {
+      conflictingSections(pair.to, "RENAMED", "ADDED")
+    }
+    if (removed.includes(pair.from)) {
+      conflictingSections(pair.from, "RENAMED", "REMOVED")
+    }
+  }
+}
+
 function collectSpecFiles(root) {
   const files = []
   if (!existsSync(root)) return files
@@ -344,6 +430,10 @@ function loadCompatibilityData(file) {
   return { requirementAliases }
 }
 
+// ---------------------------------------------------------------------------
+// Archive chronology is a PARTIAL order derived from Git ancestry
+// ---------------------------------------------------------------------------
+
 function gitIsAncestor(left, right) {
   try {
     execFileSync("git", ["merge-base", "--is-ancestor", left, right], { stdio: "ignore" })
@@ -353,72 +443,172 @@ function gitIsAncestor(left, right) {
   }
 }
 
-function resolveArchiveChronology(archiveEntries) {
-  const archiveNames = archiveEntries.map((entry) => entry.name)
-  const commitByArchive = new Map()
-  let totalOrder = null
+// First commit that introduced a file under the archived change. A missing or
+// unusable Git history yields null and is NEVER interpreted as an order: it
+// cannot make an archive older or newer than another one.
+function gitIntroductionCommit(archiveName) {
+  const pathspec = path.posix.join("openspec/changes/archive", archiveName, "**/spec.md")
+  let output
+  try {
+    output = execFileSync("git", ["log", "--diff-filter=A", "--format=%H", "--", pathspec], {
+      encoding: "utf8",
+    })
+  } catch {
+    return null
+  }
+  return (
+    output
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .at(-1) ?? null
+  )
+}
 
-  // Determine the first commit that introduced each archived change directory
-  // by inspecting the delta spec files themselves. Git topology, not
-  // timestamps or lexical order, provides chronology.
-  for (const name of archiveNames) {
-    const archivePath = path.posix.join("openspec/changes/archive", name)
-    const specGlob = archivePath + "/**/spec.md"
-    let commit = ""
-    try {
-      commit = execFileSync(
-        "git",
-        ["log", "--diff-filter=A", "--format=%H", "--", specGlob],
-        { encoding: "utf8" },
-      )
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .at(-1)
-    } catch {
-      // Git unavailable or path not found; chronology remains unresolved.
+// Fixture injection for unit tests. The model is a partial order, never a
+// forced total order:
+//   { "groups": [["a"], ["b", "c"]] }  -> a before both; b and c are tied
+//   { "edges": [["a", "b"]] }          -> a before b; unrelated names stay
+//                                         incomparable instead of being sorted
+function parseChronologyFixture(raw) {
+  let parsed
+  try {
+    parsed = JSON.parse(raw)
+  } catch (error) {
+    throw new Error(
+      "OPENSPEC_CLOSURE_ORDER_JSON: invalid JSON: " +
+        (error instanceof Error ? error.message : String(error)),
+    )
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(
+      "OPENSPEC_CLOSURE_ORDER_JSON: must be an object with optional groups/edges expressing a partial order",
+    )
+  }
+  for (const key of Object.keys(parsed)) {
+    if (key !== "groups" && key !== "edges") {
+      throw new Error("OPENSPEC_CLOSURE_ORDER_JSON: unknown key " + JSON.stringify(key))
     }
-    if (commit) commitByArchive.set(name, commit)
   }
 
-  if (archiveNames.length > 0 && commitByArchive.size === archiveNames.length) {
-    const commits = new Map()
-    for (const [archive, commit] of commitByArchive) {
-      if (!commits.has(commit)) commits.set(commit, [])
-      commits.get(commit).push(archive)
+  const layerOf = new Map()
+  const nodes = new Set()
+  const edges = []
+  const groups = parsed.groups ?? []
+  if (!Array.isArray(groups)) {
+    throw new Error("OPENSPEC_CLOSURE_ORDER_JSON: groups must be an array of layers")
+  }
+  groups.forEach((layer, index) => {
+    if (!Array.isArray(layer)) {
+      throw new Error("OPENSPEC_CLOSURE_ORDER_JSON: groups[" + index + "] must be an array of archive names")
     }
-    const uniqueCommits = [...commits.keys()]
-    if (uniqueCommits.length === 1) {
-      totalOrder = [...archiveNames]
-    } else {
-      // Determine whether commits form a strict total order by ancestry. If
-      // commits are not comparable, we cannot derive a strict order.
-      const comparable = uniqueCommits.every((left) =>
-        uniqueCommits.every(
-          (right) =>
-            left === right ||
-            gitIsAncestor(left, right) ||
-            gitIsAncestor(right, left),
-        ),
+    for (const name of layer) {
+      if (typeof name !== "string" || name.trim() === "") {
+        throw new Error(
+          "OPENSPEC_CLOSURE_ORDER_JSON: groups[" + index + "] must contain non-empty archive names",
+        )
+      }
+      if (layerOf.has(name)) {
+        throw new Error(
+          "OPENSPEC_CLOSURE_ORDER_JSON: archive " + JSON.stringify(name) + " appears in more than one layer",
+        )
+      }
+      layerOf.set(name, index)
+      nodes.add(name)
+    }
+  })
+
+  const rawEdges = parsed.edges ?? []
+  if (!Array.isArray(rawEdges)) {
+    throw new Error("OPENSPEC_CLOSURE_ORDER_JSON: edges must be an array of [before, after] pairs")
+  }
+  rawEdges.forEach((edge, index) => {
+    if (!Array.isArray(edge) || edge.length !== 2) {
+      throw new Error("OPENSPEC_CLOSURE_ORDER_JSON: edges[" + index + "] must be a [before, after] pair")
+    }
+    const [from, to] = edge
+    if (
+      typeof from !== "string" ||
+      typeof to !== "string" ||
+      from.trim() === "" ||
+      to.trim() === ""
+    ) {
+      throw new Error(
+        "OPENSPEC_CLOSURE_ORDER_JSON: edges[" + index + "] must contain non-empty archive names",
       )
-      if (comparable) {
-        const sortedCommits = [...uniqueCommits].sort((left, right) => {
-          if (left === right) return 0
-          if (gitIsAncestor(left, right)) return -1
-          return 1
-        })
-        totalOrder = sortedCommits.flatMap((commit) => commits.get(commit))
+    }
+    if (from === to) {
+      throw new Error("OPENSPEC_CLOSURE_ORDER_JSON: edges[" + index + "] must not order an archive against itself")
+    }
+    nodes.add(from)
+    nodes.add(to)
+    edges.push([from, to])
+  })
+
+  if (nodes.size === 0) {
+    throw new Error("OPENSPEC_CLOSURE_ORDER_JSON: expresses no archives")
+  }
+
+  // Later layers are after earlier layers; explicit edges add to that.
+  const reach = new Map([...nodes].map((name) => [name, new Set()]))
+  for (const [from, to] of edges) reach.get(from).add(to)
+  const names = [...nodes]
+  for (const earlier of names) {
+    for (const later of names) {
+      if (layerOf.has(earlier) && layerOf.has(later) && layerOf.get(earlier) < layerOf.get(later)) {
+        reach.get(earlier).add(later)
       }
     }
   }
+  for (const middle of names) {
+    for (const from of names) {
+      if (!reach.get(from).has(middle)) continue
+      for (const to of reach.get(middle)) reach.get(from).add(to)
+    }
+  }
+  for (const name of names) {
+    if (reach.get(name).has(name)) {
+      throw new Error("OPENSPEC_CLOSURE_ORDER_JSON: chronology edges contain a cycle")
+    }
+  }
 
-  // Fixture injection for unit tests: OPENSPEC_CLOSURE_ORDER_JSON may provide
-  // an explicit total order of archive names when no Git history is available.
-  const fixtureOrder = process.env.OPENSPEC_CLOSURE_ORDER_JSON
-    ? JSON.parse(process.env.OPENSPEC_CLOSURE_ORDER_JSON)
-    : null
+  const relation = (left, right) => {
+    if (left === right) return "same"
+    if (!nodes.has(left) || !nodes.has(right)) return "unknown"
+    if (reach.get(left).has(right)) return "before"
+    if (reach.get(right).has(left)) return "after"
+    if (layerOf.has(left) && layerOf.get(left) === layerOf.get(right)) return "same"
+    return "incomparable"
+  }
+  return { relation }
+}
 
-  return { totalOrder, fixtureOrder }
+function resolveArchiveChronology(archiveNames) {
+  const commitByArchive = new Map()
+  for (const name of archiveNames) {
+    const commit = gitIntroductionCommit(name)
+    if (commit) commitByArchive.set(name, commit)
+  }
+
+  const fixtureRaw = process.env.OPENSPEC_CLOSURE_ORDER_JSON
+  const fixture = fixtureRaw ? parseChronologyFixture(fixtureRaw) : null
+
+  const relation = (left, right) => {
+    if (fixture) return fixture.relation(left, right)
+    const leftCommit = commitByArchive.get(left)
+    const rightCommit = commitByArchive.get(right)
+    if (!leftCommit || !rightCommit) return "unknown"
+    if (leftCommit === rightCommit) return "same"
+    if (gitIsAncestor(leftCommit, rightCommit)) return "before"
+    if (gitIsAncestor(rightCommit, leftCommit)) return "after"
+    return "incomparable"
+  }
+
+  return {
+    relation,
+    source: fixture ? "fixture" : "git",
+    commitByArchive,
+  }
 }
 
 function buildOperationGroups(records, aliases) {
@@ -436,7 +626,13 @@ function buildOperationGroups(records, aliases) {
   let compatibilityAliases = 0
 
   for (const [capability, capabilityRecords] of byCapability) {
-    const names = [...new Set(capabilityRecords.map((record) => record.name))]
+    const names = [
+      ...new Set(
+        capabilityRecords.flatMap((record) =>
+          record.operation === "RENAMED" ? [record.from, record.to] : [record.name],
+        ),
+      ),
+    ]
     const parent = new Map(names.map((name) => [name, name]))
     const find = (name) => {
       let current = name
@@ -526,6 +722,7 @@ function buildOperationGroups(records, aliases) {
         grouped.set(root, group)
       }
       group.names.add(record.name)
+      if (record.operation === "RENAMED") group.names.add(record.to)
       group.records.push(record)
     }
     groups.set(capability, grouped)
@@ -544,6 +741,147 @@ function buildOperationGroups(records, aliases) {
 
   return { groups, compatibilityAliases }
 }
+
+// ---------------------------------------------------------------------------
+// Requirement history is a state machine replayed under the partial order
+// ---------------------------------------------------------------------------
+
+function semanticsKey(requirement) {
+  if (!requirement) return ""
+  return (
+    requirement.statement +
+    "\u0000" +
+    requirement.scenarios
+      .map((scenario) => scenario.name + "\u0001" + scenario.body)
+      .join("\u0002")
+  )
+}
+
+// ABSENT -> ADDED -> PRESENT(title, semantics) -> MODIFIED -> PRESENT(...)
+// PRESENT -> RENAMED -> PRESENT(new title, same semantics)
+// PRESENT -> REMOVED -> ABSENT -> ADDED -> PRESENT again
+// A state whose history is not known yet is `unknown`, never `absent`: an
+// archived MODIFIED only proves the requirement existed before it.
+function initialState() {
+  return { kind: "unknown" }
+}
+
+function conflictState(event, reason) {
+  return {
+    kind: "conflict",
+    reason:
+      reason +
+      ' (change ' +
+      event.change +
+      ": " +
+      event.operation +
+      " " +
+      (event.operation === "RENAMED"
+        ? '"' + event.from + '" -> "' + event.to + '"'
+        : '"' + event.name + '"') +
+      ")",
+  }
+}
+
+function applyOperation(state, event) {
+  if (state.kind === "conflict") return state
+  switch (event.operation) {
+    case "ADDED":
+      return { kind: "present", title: event.name, semantics: event.requirement }
+    case "MODIFIED":
+      if (state.kind === "absent") {
+        return conflictState(
+          event,
+          "MODIFIED applies to requirement \"" + event.name + '" which is absent in the recorded history',
+        )
+      }
+      return { kind: "present", title: event.name, semantics: event.requirement }
+    case "REMOVED":
+      if (state.kind === "absent") return state
+      return { kind: "absent", title: event.name }
+    case "RENAMED": {
+      if (state.kind === "absent") {
+        return conflictState(
+          event,
+          "RENAMED applies to requirement \"" + event.from + '" which is absent in the recorded history',
+        )
+      }
+      if (state.kind === "unknown") {
+        return { kind: "present", title: event.to, semantics: null }
+      }
+      if (state.title === event.from) {
+        return { kind: "present", title: event.to, semantics: state.semantics }
+      }
+      if (state.title === event.to) return state
+      return conflictState(
+        event,
+        "conflicting RENAMED operations: \"" +
+          event.from +
+          '" -> "' +
+          event.to +
+          '" does not continue the recorded title "' +
+          state.title +
+          '"',
+      )
+    }
+    default:
+      return conflictState(event, "unknown operation " + event.operation)
+  }
+}
+
+function stateKey(state) {
+  if (state.kind === "conflict") return "conflict\u0000" + state.reason
+  if (state.kind === "absent") return "absent"
+  if (state.kind === "unknown") return "unknown"
+  return "present\u0000" + state.title + "\u0000" + semanticsKey(state.semantics)
+}
+
+function describeState(state) {
+  if (state.kind === "conflict") return "conflict (" + state.reason + ")"
+  if (state.kind === "absent") return "absent"
+  if (state.kind === "unknown") return "unknown"
+  return 'present "' + state.title + '"' + (state.semantics ? "" : " (title only)")
+}
+
+// Every linear extension of the proven partial order must reach the same final
+// state; otherwise the history is ambiguous and the gate fails closed. The
+// replay never breaks a tie by archive name, lexical order, or array order.
+function replayOutcomes(events, isBefore) {
+  const total = events.length
+  const fullMask = (1 << total) - 1
+  const memo = new Map()
+
+  const outcomes = (mask) => {
+    if (mask === 0) {
+      return new Map([[stateKey(initialState()), initialState()]])
+    }
+    if (memo.has(mask)) return memo.get(mask)
+    const result = new Map()
+    for (let index = 0; index < total; index += 1) {
+      const bit = 1 << index
+      if ((mask & bit) === 0) continue
+      const prior = mask ^ bit
+      let ready = true
+      for (let other = 0; other < total; other += 1) {
+        if (isBefore(other, index) && (prior & (1 << other)) === 0) {
+          ready = false
+          break
+        }
+      }
+      if (!ready) continue
+      for (const state of outcomes(prior).values()) {
+        const next = applyOperation(state, events[index])
+        result.set(stateKey(next), next)
+      }
+    }
+    memo.set(mask, result)
+    return result
+  }
+
+  return [...outcomes(fullMask).values()]
+}
+
+const maxReplayEvents = 20
 
 function formatFailure({ change, capability, operation, requirement, reason }) {
   const requirementLine = requirement ? "\nrequirement: " + requirement : ""
@@ -585,6 +923,7 @@ function main() {
         .filter((entry) => entry.isDirectory())
         .sort((left, right) => left.name.localeCompare(right.name))
     : []
+  const archiveNames = archiveEntries.map((entry) => entry.name)
   const legacyArtifacts = []
   let capabilitiesChecked = 0
   let requirementsChecked = 0
@@ -649,13 +988,22 @@ function main() {
           readFileSync(deltaFile, "utf8"),
           archiveEntry.name + "/" + path.relative(changeDir, deltaFile),
         )
+        validateDeltaOperations(
+          operations,
+          archiveEntry.name + "/" + path.relative(changeDir, deltaFile),
+        )
         capabilitiesChecked += 1
         requirementsChecked += operations.length
         scenariosChecked += operations.reduce(
           (total, operation) => total + (operation.requirement?.scenarios.length ?? 0),
           0,
         )
+        const sectionCounters = { RENAMED: 0, REMOVED: 0, MODIFIED: 0, ADDED: 0 }
         for (const operation of operations) {
+          const applyRank =
+            operationRank[operation.operation] * 1000 +
+            sectionCounters[operation.operation]
+          sectionCounters[operation.operation] += 1
           if (operation.operation === "RENAMED") {
             archivedOperations.push({
               capability,
@@ -664,16 +1012,7 @@ function main() {
               name: operation.from,
               from: operation.from,
               to: operation.to,
-              present: false,
-            })
-            archivedOperations.push({
-              capability,
-              change: archiveEntry.name,
-              operation: "RENAMED",
-              name: operation.to,
-              from: operation.from,
-              to: operation.to,
-              present: true,
+              applyRank,
             })
           } else if (operation.operation === "REMOVED") {
             archivedOperations.push({
@@ -681,7 +1020,7 @@ function main() {
               change: archiveEntry.name,
               operation: "REMOVED",
               name: operation.name,
-              present: false,
+              applyRank,
             })
           } else {
             archivedOperations.push({
@@ -689,8 +1028,8 @@ function main() {
               change: archiveEntry.name,
               operation: operation.operation,
               name: operation.requirement.name,
-              present: true,
               requirement: operation.requirement,
+              applyRank,
             })
           }
         }
@@ -741,126 +1080,153 @@ function main() {
   }
 
   let compatibilityAliases = 0
-  let chronologyReconciliations = 0
+  let ancestryResolved = 0
+  let fixtureResolved = 0
+  let ambiguousHistories = 0
+
+  let compat = { requirementAliases: [] }
   try {
-    const compat = loadCompatibilityData(compatFile)
-    const chronology = resolveArchiveChronology(archiveEntries)
-    const operationGroups = buildOperationGroups(
-      archivedOperations,
-      compat.requirementAliases,
+    compat = loadCompatibilityData(compatFile)
+  } catch (error) {
+    failures.push(
+      "Compatibility mapping is invalid:\n" +
+        (error instanceof Error ? error.message : String(error)),
     )
-    compatibilityAliases = operationGroups.compatibilityAliases
+  }
 
-    for (const [capability, groups] of operationGroups.groups) {
-      const canonical = readCanonical(capability)
-      for (const group of groups.values()) {
-        // Semantic chronology must be provable. Exact same archive records
-        // remain in file order; different archives are ordered by Git
-        // introduction commits or an injected fixture order. Lexicographic
-        // order is never used for semantics. Ambiguous states fail closed.
-        const semanticRecords = group.records.filter(
-          (record) => record.requirement,
-        )
-        const distinctSemanticStates = []
-        for (const record of semanticRecords) {
-          const existing = distinctSemanticStates.find(
-            (state) =>
-              state.operation === record.operation &&
-              sameRequirement(state.requirement, record.requirement, {
-                ignoreName: true,
-              }),
+  let chronology = null
+  try {
+    chronology = resolveArchiveChronology(archiveNames)
+  } catch (error) {
+    failures.push(
+      "Chronology fixture is invalid:\n" +
+        (error instanceof Error ? error.message : String(error)),
+    )
+  }
+
+  if (chronology) {
+    try {
+      const operationGroups = buildOperationGroups(
+        archivedOperations,
+        compat.requirementAliases,
+      )
+      compatibilityAliases = operationGroups.compatibilityAliases
+
+      for (const [capability, groups] of operationGroups.groups) {
+        const canonical = readCanonical(capability)
+        for (const group of groups.values()) {
+          const events = [...group.records].sort(
+            (left, right) =>
+              left.change.localeCompare(right.change) || left.applyRank - right.applyRank,
           )
-          if (!existing) distinctSemanticStates.push(record)
-        }
+          const involvedChanges = [...new Set(events.map((event) => event.change))]
 
-        let terminalSemantic = null
-        if (distinctSemanticStates.length === 1) {
-          terminalSemantic = distinctSemanticStates[0]
-        } else if (distinctSemanticStates.length > 1) {
-          const order = chronology.fixtureOrder ?? chronology.totalOrder
-          if (!order) {
+          if (events.length > maxReplayEvents) {
             failures.push(
               formatFailure({
-                change: distinctSemanticStates[0].change,
+                change: involvedChanges.join(", "),
                 capability,
                 operation: "AMBIGUOUS",
-                requirement: distinctSemanticStates[0].name,
+                requirement: events[0].name,
                 reason:
-                  "ambiguous archived requirement history: multiple semantic states exist for this identity and no reliable chronology proves the final state; changes involved: " +
-                  distinctSemanticStates.map((record) => record.change).join(", "),
+                  "ambiguous archived requirement history: " +
+                  events.length +
+                  " archived operations for one identity exceed the replay limit; prove their order explicitly",
+              }),
+            )
+            ambiguousHistories += 1
+            continue
+          }
+
+          const strictBefore = events.map(() => events.map(() => false))
+          const looseBefore = events.map(() => events.map(() => false))
+          for (let left = 0; left < events.length; left += 1) {
+            for (let right = 0; right < events.length; right += 1) {
+              if (left === right) continue
+              const earlier = events[left]
+              const later = events[right]
+              if (earlier.change === later.change) {
+                strictBefore[left][right] = earlier.applyRank < later.applyRank
+                looseBefore[left][right] = earlier.applyRank < later.applyRank
+              } else if (chronology.relation(earlier.change, later.change) === "before") {
+                strictBefore[left][right] = true
+              }
+            }
+          }
+
+          // The same introduction commit, incomparable commits and unavailable
+          // Git history all leave events unordered: a tie is never an order.
+          const outcomes = replayOutcomes(events, (l, r) => strictBefore[l][r])
+          const outcomesWithoutChronology = replayOutcomes(events, (l, r) =>
+            looseBefore[l][r],
+          )
+
+          if (outcomes.length > 1) {
+            failures.push(
+              formatFailure({
+                change: involvedChanges.join(", "),
+                capability,
+                operation: "AMBIGUOUS",
+                requirement: events[0].name,
+                reason:
+                  "ambiguous archived requirement history: " +
+                  outcomes.length +
+                  " final states are equally provable for this identity and Git ancestry proves no order between the involved archives (" +
+                  involvedChanges.join(", ") +
+                  "); candidate states: " +
+                  outcomes.map(describeState).join(" | "),
+              }),
+            )
+            ambiguousHistories += 1
+            continue
+          }
+
+          const terminal = outcomes[0]
+          if (terminal.kind === "conflict") {
+            failures.push(
+              formatFailure({
+                change: involvedChanges.join(", "),
+                capability,
+                operation: "CONFLICTING",
+                requirement: events[0].name,
+                reason: "conflicting archived requirement history: " + terminal.reason,
               }),
             )
             continue
           }
-          const ordered = [...distinctSemanticStates].sort((a, b) => {
-            const ia = order.indexOf(a.change)
-            const ib = order.indexOf(b.change)
-            if (ia === -1 || ib === -1) return 0
-            return ia - ib
-          })
-          terminalSemantic = ordered.at(-1)
-          chronologyReconciliations += 1
-        }
 
-        const explicitRenames = group.records.filter(
-          (record) => record.operation === "RENAMED" && record.from && record.to,
-        )
-        const hasRemoved = group.records.some(
-          (record) => record.operation === "REMOVED",
-        )
-
-        let terminalName
-        let terminalRequirement = null
-        let terminalRecord = null
-        let removed = false
-
-        if (terminalSemantic) {
-          terminalName = terminalSemantic.name
-          terminalRequirement = terminalSemantic.requirement
-          terminalRecord = terminalSemantic
-        }
-
-        // A RENAMED operation without a later semantic delta still migrates
-        // the terminal title while keeping the semantic content.
-        if (!hasRemoved && explicitRenames.length > 0) {
-          const lastRename = explicitRenames.at(-1)
-          terminalName = lastRename.to
-          if (!terminalRecord) terminalRecord = lastRename
-        }
-
-        if (!terminalRecord && hasRemoved) {
-          terminalRecord = group.records
-            .filter((record) => record.operation === "REMOVED")
-            .at(-1)
-          terminalName = terminalRecord.name
-          removed = true
-        }
-
-        if (!terminalRecord) {
-          terminalRecord = group.records.at(-1)
-          terminalName = terminalRecord.name
-        }
-
-        const canonicalRequirement = terminalName
-          ? canonical.requirements.get(terminalName)
-          : null
-
-        if (removed) {
-          if (canonicalRequirement) {
-            failures.push(
-              formatFailure({
-                change: terminalRecord.change,
-                capability,
-                operation: terminalRecord.operation,
-                requirement: terminalName,
-                reason: "REMOVED requirement remains in canonical specs",
-              }),
-            )
+          if (outcomesWithoutChronology.length > 1) {
+            if (chronology.source === "fixture") fixtureResolved += 1
+            else ancestryResolved += 1
           }
-          continue
-        }
 
-        if (terminalName) {
+          const terminalRecord =
+            [...events].reverse().find((event) => {
+              if (terminal.kind === "present") return event.name === terminal.title
+              return true
+            }) ?? events.at(-1)
+
+          if (terminal.kind === "absent") {
+            for (const name of group.names) {
+              if (canonical.requirements.has(name)) {
+                failures.push(
+                  formatFailure({
+                    change: terminalRecord.change,
+                    capability,
+                    operation: terminalRecord.operation,
+                    requirement: name,
+                    reason:
+                      "REMOVED requirement remains in canonical specs; the archived history ends absent for this identity",
+                  }),
+                )
+              }
+            }
+            continue
+          }
+
+          const terminalName = terminal.title
+          const canonicalRequirement = canonical.requirements.get(terminalName)
+
           if (!canonical.exists) {
             failures.push(
               formatFailure({
@@ -886,8 +1252,8 @@ function main() {
             continue
           }
           if (
-            terminalRequirement &&
-            !sameRequirement(terminalRequirement, canonicalRequirement, {
+            terminal.semantics &&
+            !sameRequirement(terminal.semantics, canonicalRequirement, {
               ignoreName: true,
             })
           ) {
@@ -898,36 +1264,37 @@ function main() {
                 operation: terminalRecord.operation,
                 requirement: terminalName,
                 reason:
-                  "canonical requirement is stale; its statement or scenarios do not match any final archived semantic state",
+                  "canonical requirement is stale; its statement or scenarios do not match the final archived semantic state",
               }),
             )
             continue
           }
-        }
 
-        for (const rename of explicitRenames) {
-          if (rename.from !== terminalName && canonical.requirements.has(rename.from)) {
-            failures.push(
-              formatFailure({
-                change: rename.change,
-                capability,
-                operation: rename.operation,
-                requirement: rename.from,
-                reason:
-                  'historical requirement title remains in canonical specs after explicit evolution to "' +
-                  terminalName +
-                  '"',
-              }),
-            )
+          for (const record of events) {
+            if (record.operation !== "RENAMED") continue
+            if (record.from !== terminalName && canonical.requirements.has(record.from)) {
+              failures.push(
+                formatFailure({
+                  change: record.change,
+                  capability,
+                  operation: record.operation,
+                  requirement: record.from,
+                  reason:
+                    'historical requirement title remains in canonical specs after explicit evolution to "' +
+                    terminalName +
+                    '"',
+                }),
+              )
+            }
           }
         }
       }
+    } catch (error) {
+      failures.push(
+        "Compatibility mapping is invalid:\n" +
+          (error instanceof Error ? error.message : String(error)),
+      )
     }
-  } catch (error) {
-    failures.push(
-      "Compatibility mapping is invalid:\n" +
-        (error instanceof Error ? error.message : String(error)),
-    )
   }
 
   if (failures.length > 0) {
@@ -956,8 +1323,14 @@ function main() {
       compatibilityAliases +
       " explicit legacy compatibility aliases\n" +
       "  " +
-      chronologyReconciliations +
-      " explicit chronology reconciliations\n" +
+      ancestryResolved +
+      " ancestry-resolved chronology histories\n" +
+      "  " +
+      fixtureResolved +
+      " injected-fixture chronology histories\n" +
+      "  " +
+      ambiguousHistories +
+      " ambiguous histories\n" +
       "  " +
       legacyArtifacts.length +
       " legacy/unverifiable informational artifacts (outside archived specs/; not silently treated as deltas)",
