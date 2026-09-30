@@ -35,6 +35,7 @@
     "test:package": "bun scripts/test-package.ts",
     "test:e2e:opencode-v2": "node scripts/e2e-opencode-v2.mjs",
     "validate:spec": "openspec validate --all --strict --no-interactive",
+    "test:scenario-coverage": "node scripts/check-scenario-coverage.mjs",
     "test:openspec-closure": "node --test scripts/check-openspec-closure.test.mjs && node scripts/check-openspec-closure.mjs",
     "test:release-metadata": "node scripts/check-release-metadata.mjs"
   },

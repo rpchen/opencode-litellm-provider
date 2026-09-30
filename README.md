@@ -102,17 +102,36 @@ endpoint id 是用户定义的稳定 ASCII slug，必须匹配 `[a-z0-9][a-z0-9-
 
 每个 endpoint 都是独立 integration/provider、独立 credential、独立 discovery/cache/snapshot/故障域。插件在**同一个 OpenCode V2 plugin 实例**中注册这些 integration/provider；activation 只启停对应 provider/discovery，不会删除 endpoint 定义或已保存 credential。插件不会跨 endpoint 聚合模型、负载均衡或自动故障切换。
 
-### Activation
+### 管理 endpoint（`/litellm-endpoints`）
 
-执行 `/litellm-endpoints` 会打开 OpenCode 原生选择器，可逐个启用/停用，也可以“全部启用”或“全部停用”。使用 `↑` / `↓` 移动选择，`Enter` 执行，`Esc` 关闭；鼠标选择由 OpenCode 原生选择器处理。activation 是全局插件状态，与 endpoint 定义分开保存；默认全部启用，允许零个 endpoint 激活。
+执行 `/litellm-endpoints` 打开 OpenCode 原生选择框（终端 TUI）：`↑` / `↓` 移动，`Enter` 确认，`Esc` 返回/关闭；鼠标点选由 OpenCode 处理。列表每行显示 `✓`/`○`（启用/未启用）和凭据状态（已连接/未连接）。
 
-停用会立即卸载该 endpoint 的运行时 provider/discovery loop，但保留配置、宿主 credential 和 snapshot；再次启用会重新加载。PR9 只实现 activation 管理，不实现 endpoint 完整 CRUD UI；新增、改名和删除 endpoint 仍通过配置文件完成。
+| 想做的事 | 怎么做 |
+|---|---|
+| **新增** | 选 **＋ 新增 endpoint** → 输入 Endpoint ID → 输入 Base URL。新 endpoint **默认未启用、未连接**，不会自动启用 |
+| **修改 Base URL** | 选中 endpoint → **修改 Base URL**。ID 不可修改（没有 rename）；`protocolOverrides` 等配置和你的注释原样保留 |
+| **连接 / 替换 / 断开 API Key** | 选中 endpoint → **连接 API Key** / **替换 API Key** / **断开凭据**。已保存的 Key 永远不会显示；断开只删除该 endpoint 的 Key |
+| **启用 / 停用** | 选中 endpoint → **启用** / **停用**；也可以用 **全部启用** / **全部停用**。立即生效，允许 0 个启用 |
+| **删除** | 选中 endpoint → **删除 endpoint**，确认后彻底删除：配置、启用状态、已保存的 Key、模型发现缓存 |
+
+说明：
+
+- 连接 Key、启用/停用互相独立：连接不会自动启用，断开不会自动停用；未启用的 endpoint 也可以连接、替换、断开 Key。
+- 管理中心与 `/connect` 操作**同一份** OpenCode 凭据，`/connect` 仍可照常使用。
+- endpoint 定义仍只有一份：声明本插件的 OpenCode 配置文件（`OPENCODE_CONFIG` 指向的文件，或全局 `opencode.jsonc`）里的 `plugins[].options.endpoints`。管理中心只做最小改动，保留注释、格式和你手写的其它字段；你也可以继续手工编辑，下次打开会看到文件里的真实状态。配置无法解析，或插件选项来自内联/项目配置（与该文件不一致）时，新增/修改/删除会被拒绝并说明原因，启用和凭据管理仍可用。
+- 新增/修改/删除后插件会重新加载 endpoint，各 endpoint 的模型会短暂重新注册。
+- 旧的单 endpoint 用法（`/connect` 时填写地址）不在配置文件里：此时 `default` 只能连接/启用/停用；新增第二个 endpoint 会先请你确认，再把现有地址迁移到 `options.endpoints.default`（integration、Key 不变，发现缓存重新生成）。
+- 通过管理中心新增 endpoint 后，启用状态会固定为“明确选择的集合”；之后手工写进文件的新 endpoint 需要在管理中心里启用。
+- 仍需手工编辑配置文件：`protocolOverrides`、`pollInterval`、`contextTierCap`。endpoint ID 创建后不能直接改名；要换名请新增新 endpoint 并删除旧的。
+- 管理中心依赖终端 TUI；Desktop / Web 不加载 TUI 插件，请用配置文件和 `/connect`。
+
+停用会立即卸载该 endpoint 的运行时 provider/discovery loop，但保留配置、OpenCode 凭据和缓存；activation 是全局插件状态，默认全部启用。
 
 ## 常用命令
 
 ### `/litellm-endpoints`
 
-打开 OpenCode 原生 endpoint activation 选择器。该操作本身不会调用模型。若命令恰好在 TUI 插件初始化/订阅事件之前执行，插件会从服务端保存的 state 恢复这次显示请求，不需要再次执行命令。
+打开 endpoint 管理中心（见上文“管理 endpoint”）。该操作本身不会调用模型。若命令恰好在 TUI 插件初始化/订阅事件之前执行，插件会从服务端保存的 state 恢复这次显示请求，不需要再次执行命令。
 
 ### `/litellm-diagnostics`
 
