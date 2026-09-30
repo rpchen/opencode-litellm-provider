@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process"
 import {
   existsSync,
   readdirSync,
@@ -301,8 +302,8 @@ function sameRequirement(left, right, { ignoreName = false } = {}) {
   )
 }
 
-function loadCompatibilityAliases(file) {
-  if (!existsSync(file)) return []
+function loadCompatibilityData(file) {
+  if (!existsSync(file)) return { requirementAliases: [] }
   let parsed
   try {
     parsed = JSON.parse(readFileSync(file, "utf8"))
@@ -313,38 +314,102 @@ function loadCompatibilityAliases(file) {
         (error instanceof Error ? error.message : String(error)),
     )
   }
-  if (
-    parsed === null ||
-    typeof parsed !== "object" ||
-    Array.isArray(parsed) ||
-    !Array.isArray(parsed.requirementAliases)
-  ) {
-    throw new Error(
-      file + ': must be an object with a "requirementAliases" array',
-    )
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(file + ": must be an object")
   }
-  return parsed.requirementAliases.map((alias, index) => {
-    const where = file + " requirementAliases[" + index + "]"
-    if (alias === null || typeof alias !== "object" || Array.isArray(alias)) {
-      throw new Error(where + ": alias must be an object")
+  const requirementAliases = Array.isArray(parsed.requirementAliases)
+    ? parsed.requirementAliases.map((alias, index) => {
+        const where = file + " requirementAliases[" + index + "]"
+        if (alias === null || typeof alias !== "object" || Array.isArray(alias)) {
+          throw new Error(where + ": alias must be an object")
+        }
+        const { capability, from, to, reason, archive } = alias
+        for (const [field, value] of Object.entries({ capability, from, to, reason })) {
+          if (typeof value !== "string" || value.trim() === "") {
+            throw new Error(where + ": " + field + " must be a non-empty string")
+          }
+        }
+        if (archive !== undefined && (typeof archive !== "string" || archive.trim() === "")) {
+          throw new Error(where + ": archive must be a non-empty string when present")
+        }
+        if (from === to) {
+          throw new Error(where + ": self compatibility alias is not allowed (from and to must differ)")
+        }
+        if ([capability, from, to].some((value) => /[*?]/.test(value))) {
+          throw new Error(where + ": capability/from/to must be explicit (wildcards are not allowed)")
+        }
+        return { capability, from, to, reason, archive: archive ?? null }
+      })
+    : []
+  return { requirementAliases }
+}
+
+function gitIsAncestor(left, right) {
+  try {
+    execFileSync("git", ["merge-base", "--is-ancestor", left, right], { stdio: "ignore" })
+    return true
+  } catch {
+    return false
+  }
+}
+
+function resolveArchiveChronology(archiveEntries) {
+  const archiveNames = archiveEntries.map((entry) => entry.name)
+  const commitByArchive = new Map()
+  let totalOrder = null
+  let gitAvailable = true
+
+  for (const name of archiveNames) {
+    const archivePath = path.posix.join("openspec/changes/archive", name)
+    let commit = ""
+    try {
+      commit = execFileSync(
+        "git",
+        ["log", "--diff-filter=A", "--format=%H", "-n", "1", "--", archivePath],
+        { encoding: "utf8" },
+      ).trim()
+    } catch {
+      gitAvailable = false
     }
-    const { capability, from, to, reason, archive } = alias
-    for (const [field, value] of Object.entries({ capability, from, to, reason })) {
-      if (typeof value !== "string" || value.trim() === "") {
-        throw new Error(where + ": " + field + " must be a non-empty string")
+    if (commit) commitByArchive.set(name, commit)
+  }
+
+  if (gitAvailable && commitByArchive.size === archiveNames.length) {
+    const commits = new Map()
+    for (const [archive, commit] of commitByArchive) {
+      if (!commits.has(commit)) commits.set(commit, [])
+      commits.get(commit).push(archive)
+    }
+    const uniqueCommits = [...commits.keys()]
+    if (uniqueCommits.length === 1) {
+      totalOrder = [...archiveNames]
+    } else {
+      // Determine whether commits form a strict total order by ancestry.
+      const sortedCommits = [...uniqueCommits].sort((left, right) => {
+        if (left === right) return 0
+        if (gitIsAncestor(left, right)) return -1
+        if (gitIsAncestor(right, left)) return 1
+        return 0
+      })
+      let comparable = true
+      for (let i = 0; i < sortedCommits.length; i += 1) {
+        for (let j = i + 1; j < sortedCommits.length; j += 1) {
+          if (!gitIsAncestor(sortedCommits[i], sortedCommits[j])) {
+            comparable = false
+          }
+        }
+      }
+      if (comparable) {
+        totalOrder = sortedCommits.flatMap((commit) => commits.get(commit))
       }
     }
-    if (archive !== undefined && (typeof archive !== "string" || archive.trim() === "")) {
-      throw new Error(where + ": archive must be a non-empty string when present")
-    }
-    if (from === to) {
-      throw new Error(where + ": self compatibility alias is not allowed (from and to must differ)")
-    }
-    if ([capability, from, to].some((value) => /[*?]/.test(value))) {
-      throw new Error(where + ": capability/from/to must be explicit (wildcards are not allowed)")
-    }
-    return { capability, from, to, reason, archive: archive ?? null }
-  })
+  }
+
+  const fixtureOrder = process.env.OPENSPEC_CLOSURE_ORDER_JSON
+    ? JSON.parse(process.env.OPENSPEC_CLOSURE_ORDER_JSON)
+    : null
+
+  return { totalOrder, fixtureOrder }
 }
 
 function buildOperationGroups(records, aliases) {
@@ -453,30 +518,6 @@ function buildOperationGroups(records, aliases) {
       }
       group.names.add(record.name)
       group.records.push(record)
-    }
-    for (const group of grouped.values()) {
-      // A group is present only if its terminal operation says it is present.
-      // ADDED/MODIFIED imply presence; RENAMED implies the TO title is present
-      // and the FROM title is absent; REMOVED implies absence.
-      const terminalSemanticRecords = group.records.filter(
-        (record) => record.requirement,
-      )
-      const renamedRecords = group.records.filter(
-        (record) => record.operation === "RENAMED",
-      )
-      const removedRecords = group.records.filter(
-        (record) => record.operation === "REMOVED",
-      )
-
-      if (removedRecords.length > 0 && terminalSemanticRecords.length === 0) {
-        group.terminalRecords = removedRecords
-      } else if (terminalSemanticRecords.length > 0) {
-        group.terminalRecords = [terminalSemanticRecords.at(-1)]
-      } else if (renamedRecords.length > 0) {
-        group.terminalRecords = [renamedRecords.at(-1)]
-      } else {
-        group.terminalRecords = [group.records.at(-1)]
-      }
     }
     groups.set(capability, grouped)
   }
@@ -691,95 +732,182 @@ function main() {
   }
 
   let compatibilityAliases = 0
+  let chronologyReconciliations = 0
   try {
-    const aliases = loadCompatibilityAliases(compatFile)
-    const operationGroups = buildOperationGroups(archivedOperations, aliases)
+    const compat = loadCompatibilityData(compatFile)
+    const chronology = resolveArchiveChronology(archiveEntries)
+    const operationGroups = buildOperationGroups(
+      archivedOperations,
+      compat.requirementAliases,
+    )
     compatibilityAliases = operationGroups.compatibilityAliases
 
     for (const [capability, groups] of operationGroups.groups) {
       const canonical = readCanonical(capability)
       for (const group of groups.values()) {
-        // Every identity group has at most one final (terminal) requirement
-        // title. Replaying the group records in archival order tracks title
-        // migrations from formal RENAMED operations or explicit compatibility
-        // aliases. Any non-terminal title is a historical name and must not
-        // remain in canonical specs.
-        let terminal = null
-        const absentNames = new Map()
-        for (const record of group.records) {
-          if (record.operation === "RENAMED") {
-            if (terminal && terminal.name === record.from) {
-              terminal = { ...terminal, name: record.to }
-            }
-            absentNames.set(record.from, record)
-          } else if (record.operation === "REMOVED") {
-            if (terminal && terminal.name === record.name) terminal = null
-            absentNames.set(record.name, record)
-          } else {
-            if (terminal && terminal.name !== record.name) {
-              absentNames.set(terminal.name, record)
-            }
-            absentNames.delete(record.name)
-            terminal = {
-              name: record.name,
-              requirement: record.requirement,
-              representative: record,
-            }
-          }
+        // Semantic chronology must be provable. Exact same archive records
+        // remain in file order; different archives are ordered by Git
+        // introduction commits or an injected fixture order. Lexicographic
+        // order is never used for semantics. Ambiguous states fail closed.
+        const semanticRecords = group.records.filter(
+          (record) => record.requirement,
+        )
+        const distinctSemanticStates = []
+        for (const record of semanticRecords) {
+          const existing = distinctSemanticStates.find(
+            (state) =>
+              state.operation === record.operation &&
+              sameRequirement(state.requirement, record.requirement, {
+                ignoreName: true,
+              }),
+          )
+          if (!existing) distinctSemanticStates.push(record)
         }
 
-        if (terminal) {
-          const actual = canonical.requirements.get(terminal.name)
+        let terminalSemantic = null
+        if (distinctSemanticStates.length === 1) {
+          terminalSemantic = distinctSemanticStates[0]
+        } else if (distinctSemanticStates.length > 1) {
+          const order = chronology.fixtureOrder ?? chronology.totalOrder
+          if (!order) {
+            failures.push(
+              formatFailure({
+                change: distinctSemanticStates[0].change,
+                capability,
+                operation: "AMBIGUOUS",
+                requirement: distinctSemanticStates[0].name,
+                reason:
+                  "ambiguous archived requirement history: multiple semantic states exist for this identity and no reliable chronology proves the final state; changes involved: " +
+                  distinctSemanticStates.map((record) => record.change).join(", "),
+              }),
+            )
+            continue
+          }
+          const ordered = [...distinctSemanticStates].sort((a, b) => {
+            const ia = order.indexOf(a.change)
+            const ib = order.indexOf(b.change)
+            if (ia === -1 || ib === -1) return 0
+            return ia - ib
+          })
+          terminalSemantic = ordered.at(-1)
+          chronologyReconciliations += 1
+        }
+
+        const explicitRenames = group.records.filter(
+          (record) => record.operation === "RENAMED" && record.from && record.to,
+        )
+        const hasRemoved = group.records.some(
+          (record) => record.operation === "REMOVED",
+        )
+
+        let terminalName
+        let terminalRequirement = null
+        let terminalRecord = null
+        let removed = false
+
+        if (terminalSemantic) {
+          terminalName = terminalSemantic.name
+          terminalRequirement = terminalSemantic.requirement
+          terminalRecord = terminalSemantic
+        }
+
+        // A RENAMED operation without a later semantic delta still migrates
+        // the terminal title while keeping the semantic content.
+        if (!hasRemoved && explicitRenames.length > 0) {
+          const lastRename = explicitRenames.at(-1)
+          terminalName = lastRename.to
+          if (!terminalRecord) terminalRecord = lastRename
+        }
+
+        if (!terminalRecord && hasRemoved) {
+          terminalRecord = group.records
+            .filter((record) => record.operation === "REMOVED")
+            .at(-1)
+          terminalName = terminalRecord.name
+          removed = true
+        }
+
+        if (!terminalRecord) {
+          terminalRecord = group.records.at(-1)
+          terminalName = terminalRecord.name
+        }
+
+        const canonicalRequirement = terminalName
+          ? canonical.requirements.get(terminalName)
+          : null
+
+        if (removed) {
+          if (canonicalRequirement) {
+            failures.push(
+              formatFailure({
+                change: terminalRecord.change,
+                capability,
+                operation: terminalRecord.operation,
+                requirement: terminalName,
+                reason: "REMOVED requirement remains in canonical specs",
+              }),
+            )
+          }
+          continue
+        }
+
+        if (terminalName) {
           if (!canonical.exists) {
             failures.push(
               formatFailure({
-                change: terminal.representative.change,
+                change: terminalRecord.change,
                 capability,
-                operation: terminal.representative.operation,
-                requirement: terminal.name,
+                operation: terminalRecord.operation,
+                requirement: terminalName,
                 reason: "canonical capability is missing",
               }),
             )
-          } else if (!actual) {
+            continue
+          }
+          if (!canonicalRequirement) {
             failures.push(
               formatFailure({
-                change: terminal.representative.change,
+                change: terminalRecord.change,
                 capability,
-                operation: terminal.representative.operation,
-                requirement: terminal.name,
-                reason: 'canonical requirement "' + terminal.name + '" is missing',
+                operation: terminalRecord.operation,
+                requirement: terminalName,
+                reason: 'canonical requirement "' + terminalName + '" is missing',
               }),
             )
-          } else if (
-            !sameRequirement(terminal.requirement, actual, { ignoreName: true })
+            continue
+          }
+          if (
+            terminalRequirement &&
+            !sameRequirement(terminalRequirement, canonicalRequirement, {
+              ignoreName: true,
+            })
           ) {
             failures.push(
               formatFailure({
-                change: terminal.representative.change,
+                change: terminalRecord.change,
                 capability,
-                operation: terminal.representative.operation,
-                requirement: terminal.name,
+                operation: terminalRecord.operation,
+                requirement: terminalName,
                 reason:
                   "canonical requirement is stale; its statement or scenarios do not match any final archived semantic state",
               }),
             )
+            continue
           }
         }
 
-        for (const [name, representative] of absentNames) {
-          if (terminal && terminal.name === name) continue
-          if (canonical.requirements.has(name)) {
+        for (const rename of explicitRenames) {
+          if (rename.from !== terminalName && canonical.requirements.has(rename.from)) {
             failures.push(
               formatFailure({
-                change: representative.change,
+                change: rename.change,
                 capability,
-                operation: representative.operation,
-                requirement: name,
+                operation: rename.operation,
+                requirement: rename.from,
                 reason:
-                  representative.operation === "REMOVED"
-                    ? "REMOVED requirement remains in canonical specs"
-                    : "historical requirement title remains in canonical specs after an explicit rename or compatibility alias" +
-                      (terminal ? ' to "' + terminal.name + '"' : ""),
+                  'historical requirement title remains in canonical specs after explicit evolution to "' +
+                  terminalName +
+                  '"',
               }),
             )
           }
@@ -818,6 +946,9 @@ function main() {
       "  " +
       compatibilityAliases +
       " explicit legacy compatibility aliases\n" +
+      "  " +
+      chronologyReconciliations +
+      " explicit chronology reconciliations\n" +
       "  " +
       legacyArtifacts.length +
       " legacy/unverifiable informational artifacts (outside archived specs/; not silently treated as deltas)",

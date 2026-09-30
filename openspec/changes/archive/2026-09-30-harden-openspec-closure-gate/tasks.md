@@ -7,6 +7,6 @@
 - [x] Run the new gate over all historical archives and classify any legacy/unverifiable artifacts explicitly.
 - [x] Restore any missing canonical representation found by historical archive verification without changing runtime behavior.
 - [x] Remove fuzzy requirement-title reconciliation from the closure gate and replace it with exact title, formal RENAMED, and explicit version-controlled legacy compatibility aliases.
-- [x] Add regression coverage proving similar titles remain independent, RENAMED and legacy aliases reconcile, and invalid compatibility mappings fail closed.
+- [x] Add regression coverage proving similar titles remain independent, RENAMED and legacy aliases reconcile, invalid compatibility mappings fail closed, same-day lexical order does not define semantic order, ambiguous chronology fails closed, and explicit chronology resolves ambiguity.
 - [x] Mark this change complete, archive it with the OpenSpec CLI, rerun strict validation and rerun the new closure gate.
 - [x] README impact: No README change: no user-visible behavior.

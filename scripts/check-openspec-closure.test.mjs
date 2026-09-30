@@ -131,7 +131,7 @@ function runFixture({ delta, canonical = [], expectPass, extraEnv = {} }) {
   return result
 }
 
-function runHistoryFixture({ deltas, canonical = [], expectPass, compat }) {
+function runHistoryFixture({ deltas, canonical = [], expectPass, compat, order }) {
   const root = mkdtempSync(path.join(tmpdir(), "openspec-closure-history-"))
   roots.push(root)
   const openspec = path.join(root, "openspec")
@@ -164,6 +164,9 @@ function runHistoryFixture({ deltas, canonical = [], expectPass, compat }) {
       OPENSPEC_CHANGES_DIR: path.join(openspec, "changes"),
       OPENSPEC_SPECS_DIR: specs,
       OPENSPEC_CLOSURE_COMPAT: compatPath,
+      OPENSPEC_CLOSURE_ORDER_JSON: (order ?? archiveNames).length > 0
+        ? JSON.stringify(order ?? archiveNames)
+        : undefined,
     },
     encoding: "utf8",
   })
@@ -452,6 +455,131 @@ test("removing the compatibility mapping reopens the historical mismatch", () =>
     expectPass: false,
   })
   assert.match(result.stderr, /Legacy requirement title|canonical requirement is missing/i)
+})
+
+// ---------------------------------------------------------------------------
+// Chronology: never infer semantic order from lexicographic names
+// ---------------------------------------------------------------------------
+
+const chronologyOlder = `# chronology capability
+
+## ADDED Requirements
+
+### Requirement: Chronological behavior
+The system SHALL use the old behavior.
+
+#### Scenario: Old behavior
+- **WHEN** the operation runs
+- **THEN** the old result is returned
+`
+
+const chronologyNewer = `# chronology capability
+
+## MODIFIED Requirements
+
+### Requirement: Chronological behavior
+The system SHALL use the new behavior.
+
+#### Scenario: New behavior
+- **WHEN** the operation runs
+- **THEN** the new result is returned
+`
+
+const canonicalChronologyNew = chronologyNewer
+  .replace("## MODIFIED Requirements", "## Requirements")
+  .replace("# chronology capability", "# chronology-capability")
+const canonicalChronologyOld = chronologyOlder
+  .replace("## ADDED Requirements", "## Requirements")
+  .replace("# chronology capability", "# chronology-capability")
+
+function runChronologyFixture({ deltas, canonical, order }) {
+  const root = mkdtempSync(path.join(tmpdir(), "openspec-closure-chronology-"))
+  roots.push(root)
+  const openspec = path.join(root, "openspec")
+  const specs = path.join(openspec, "specs")
+  for (const delta of deltas) {
+    const archive = path.join(openspec, "changes", "archive", delta.name, "specs", delta.capability)
+    mkdirSync(archive, { recursive: true })
+    writeFileSync(path.join(archive, "spec.md"), delta.content)
+  }
+  const target = path.join(specs, canonical.capability, "spec.md")
+  mkdirSync(path.dirname(target), { recursive: true })
+  writeFileSync(target, canonical.content)
+
+  const result = spawnSync(process.execPath, [checker], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      OPENSPEC_ROOT: openspec,
+      OPENSPEC_CHANGES_DIR: path.join(openspec, "changes"),
+      OPENSPEC_SPECS_DIR: specs,
+      OPENSPEC_CLOSURE_COMPAT: path.join(openspec, "no-compat.json"),
+      OPENSPEC_CLOSURE_ORDER_JSON: order ? JSON.stringify(order) : undefined,
+    },
+    encoding: "utf8",
+  })
+  assert.equal(result.error, undefined, result.error?.message)
+  return result
+}
+
+test("same-day archive lexical order MUST NOT define semantic order", () => {
+  const deltas = [
+    { name: "2026-01-01-z-old", capability: "chronology-capability", content: chronologyOlder },
+    { name: "2026-01-01-a-new", capability: "chronology-capability", content: chronologyNewer },
+  ]
+  const order = ["2026-01-01-z-old", "2026-01-01-a-new"]
+
+  const passResult = runChronologyFixture({
+    deltas,
+    canonical: { capability: "chronology-capability", content: canonicalChronologyNew },
+    order,
+  })
+  assert.equal(passResult.status, 0, passResult.stderr || passResult.stdout)
+
+  const failResult = runChronologyFixture({
+    deltas,
+    canonical: { capability: "chronology-capability", content: canonicalChronologyOld },
+    order,
+  })
+  assert.notEqual(failResult.status, 0)
+  assert.match(failResult.stderr, /stale|ambiguous/i)
+})
+
+test("ambiguous chronology fails closed", () => {
+  const deltas = [
+    { name: "2026-01-01-a-first", capability: "chronology-capability", content: chronologyOlder },
+    { name: "2026-01-01-b-second", capability: "chronology-capability", content: chronologyNewer },
+  ]
+
+  const result = runChronologyFixture({
+    deltas,
+    canonical: { capability: "chronology-capability", content: canonicalChronologyNew },
+    order: null,
+  })
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /ambiguous archived requirement history/i)
+})
+
+test("explicit chronology resolves ambiguity", () => {
+  const deltas = [
+    { name: "2026-01-01-a-first", capability: "chronology-capability", content: chronologyOlder },
+    { name: "2026-01-01-b-second", capability: "chronology-capability", content: chronologyNewer },
+  ]
+  const order = ["2026-01-01-a-first", "2026-01-01-b-second"]
+
+  const passResult = runChronologyFixture({
+    deltas,
+    canonical: { capability: "chronology-capability", content: canonicalChronologyNew },
+    order,
+  })
+  assert.equal(passResult.status, 0, passResult.stderr || passResult.stdout)
+
+  const failResult = runChronologyFixture({
+    deltas,
+    canonical: { capability: "chronology-capability", content: canonicalChronologyOld },
+    order,
+  })
+  assert.notEqual(failResult.status, 0)
 })
 
 test("invalid compatibility mapping is rejected closed", () => {

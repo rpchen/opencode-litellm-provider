@@ -10,6 +10,8 @@ The repository SHALL verify archived OpenSpec specification deltas against canon
 
 Requirement identity SHALL NOT be inferred from fuzzy title similarity. Identity SHALL be established only by an exact requirement title, a formal `RENAMED Requirements` FROM/TO operation, or an explicit version-controlled legacy compatibility mapping. The gate SHALL fail closed when no explicit identity fact exists.
 
+Previously merged archived changes are immutable historical evidence. Later semantic evolution SHALL be represented by a later delta rather than rewriting an earlier archive.
+
 #### Scenario: missing added capability is rejected
 - **WHEN** an archived ADDED delta has no matching canonical capability
 - **THEN** the closure gate fails and identifies the change, capability and canonical path
@@ -52,6 +54,12 @@ The closure gate SHALL report the number of archived changes, capabilities, requ
 
 Historical title inconsistencies MAY be reconciled only through an explicit version-controlled compatibility mapping. Fuzzy matching, prefix/suffix heuristics, case-insensitive approximate identity, and similarity thresholds are prohibited.
 
+Semantic chronology SHALL NOT be inferred from archive directory lexical order, timestamps, or any other heuristic. When an identity has multiple semantic states, the gate SHALL use Git commit ancestry (first introduction of the archived change) or an explicit injected chronology to determine the final state; ambiguous histories SHALL fail closed.
+
 #### Scenario: existing historical archives are checked
 - **WHEN** the gate runs against the repository archive
 - **THEN** every delta is checked or explicitly classified with a compatibility reason
+
+#### Scenario: ambiguous archived requirement history fails closed
+- **WHEN** an identity has multiple semantic states across different archived changes and no Git chronology or explicit ordering metadata proves the final state
+- **THEN** the closure gate fails and identifies the involved changes as ambiguous
