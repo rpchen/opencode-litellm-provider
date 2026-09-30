@@ -20,8 +20,9 @@
 - [x] 5.1 `README updated: 管理 endpoint（/litellm-endpoints）`；同步删除“完整 CRUD 不在范围内”的旧说明
 
 ## 6. Closure
-- [ ] 6.1 PR 合入后 `openspec archive add-endpoint-management` 并 `openspec validate --all --strict --no-interactive`
-- [ ] 6.2 按 AGENTS.md 发版（feat → minor）；打 tag 前向用户确认
+- [x] 6.1 `openspec archive add-endpoint-management` 后 `openspec validate --all --strict --no-interactive`（随实施同一 PR 归档）
+
+> 发版（feat → minor，需用户确认后打 tag）不属于本 change 的任务，见 PR 说明。
 
 ## Requirement / Scenario → Test Evidence
 
