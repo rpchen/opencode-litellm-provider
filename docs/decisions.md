@@ -6,7 +6,7 @@
 
 | 主题 | 决策 | 背景 / 理由 |
 |---|---|---|
-| 接入方式 | 用户通过 `/connect` 填写自己的地址与 Key；插件不内置任何地址；只有一个 `litellm` provider，**不做多实例** | 插件是通用的，不绑定任何特定 LiteLLM 服务 |
+| 接入方式 | 用户通过 `/connect` 填写自己的地址与 Key；插件不内置任何地址（~~只有一个 `litellm` provider，不做多实例~~——初始决策，已被 PR9 多 endpoint 设计取代，见下文「多 endpoint 演进」） | 插件是通用的，不绑定任何特定 LiteLLM 服务 |
 | 发现所用的 Key | 用用户自己的 Key 调 `/v1/model/info` | 不同 Key 可见的模型不同；用用户 Key 才能保证列出的都能调用 |
 | 模型清单来源 | 只取 `/v1/model/info` 中的真实部署；没有元数据的名字不注册 | `/v1/models`、`/model_group/info` 会列出团队白名单里已删除部署的残留名字（实测 `gpt-5.5`、`gpt-5.3-codex-spark`） |
 | 协议判定 | 用户覆盖 → Anthropic 上游 / Claude 家族走 Messages → `supported_endpoints`（多个时 responses 优先）→ `mode: responses` → 其余 Chat；`supported_endpoints` 与 `mode` 冲突时以前者为准 | `supported_endpoints` 是 LiteLLM 官方的端点能力字段 |
@@ -37,6 +37,13 @@
 中立 `Protocol` 与 `ModelSpec` 从共享公共入口取得；OpenCode 所需的 `package` 和三个 SDK 路径留在 `src/host/`。HTTP、轮询、模型缓存、凭据、注册、命令和审计不搬入 core。保留旧 fixtures、快照及宿主契约，不夹带行为修改。
 
 用户安装方式和运行时行为保持不变；安装/加载不下载 core，也不依赖平级目录、源码、构建缓存或生命周期脚本。core 更新不会改变已经发布的插件；下一次插件更新构建才纳入新代码。本次保持 OpenCode `0.1.4` 及依赖锁文件不变，不替代之后单独的发版决策。
+
+## 多 endpoint 演进（PR9，2026-09-29）
+
+- **Historical**：初始 `add-litellm-auto-discovery` 决策“只有一个 `litellm` provider，不做多实例”。当时插件处于起步期，先用最小形态验证单 endpoint 的接入、发现与协议判定。
+- **Superseded by**：PR9（`openspec/changes/archive/2026-09-29-pr9-multi-endpoint-activation/`）。现行设计支持全局 `endpoints` 配置：每个 endpoint 是独立 integration/provider、credential 与 discovery/cache/snapshot/故障域，并提供 `/litellm-endpoints` activation 管理。
+- **Current**：当前行为以 canonical OpenSpec `openspec/specs/multi-endpoint-activation/spec.md` 为最终权威；本文件中的历史决策行仅保留背景，不再代表现状。
+- **Legacy 兼容**：legacy 单 endpoint 路径保留为零迁移兼容——仍映射为 endpoint `default`，沿用旧 provider/credential/snapshot identity（见 README「连接 LiteLLM」）。
 
 ## 独立审查
 
