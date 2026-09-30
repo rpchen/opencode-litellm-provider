@@ -44,6 +44,12 @@ export declare const auditRpc: {
             readonly output: {
                 readonly type: "object";
                 readonly properties: {
+                    readonly lines: {
+                        readonly type: "array";
+                        readonly items: {
+                            readonly type: "string";
+                        };
+                    };
                     readonly sequence: {
                         readonly type: "number";
                     };

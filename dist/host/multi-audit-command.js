@@ -95,14 +95,15 @@ export async function registerMultiEndpointAudit(context, endpointIds, activeEnd
                             }),
                         ];
                     }
-                    await rpc.events.emit("completed", {
+                    latest = {
                         sequence: ++diagnosticSequence,
                         sessionID: record.sessionID,
                         ok: true,
                         path: "",
                         error: "",
                         lines,
-                    });
+                    };
+                    await rpc.events.emit("completed", latest);
                 },
             });
             editor.add({
