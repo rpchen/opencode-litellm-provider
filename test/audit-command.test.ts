@@ -88,7 +88,7 @@ const snapshot: ProviderSnapshot = {
 }
 
 describe('审查导出命令', () => {
-  test('diagnostics command emits safe completed payload, uses no session prompt, and leaves audit latest untouched', async () => {
+  test('diagnostics command emits safe completed payload, uses no session prompt, and persists recoverable latest state', async () => {
     const state: ProviderSnapshot = {
       ready: true,
       apiBaseURL: 'https://private.example/v1',
@@ -139,7 +139,7 @@ describe('审查导出命令', () => {
     expect(payload.lines.join('\n')).toContain('models.dev：ok')
     expect(payload.lines.join('\n')).not.toContain('private.example')
     expect(h.prompts.calls).toEqual([])
-    expect(await h.handlers.latest()).toEqual({ sequence: 0, sessionID: '', ok: false, path: '', error: '' })
+    expect(await h.handlers.latest()).toEqual(h.emits[0])
     await registration.dispose()
   })
 
