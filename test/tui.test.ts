@@ -8,25 +8,87 @@ const success = (sequence: number, sessionID: string, path: string): AuditResult
   sequence, sessionID, ok: true, path, error: "",
 })
 
-function harness(latest: () => Promise<AuditResult>) {
-  let listener: ((event: { data: AuditResult }) => void) | undefined
+interface EndpointState {
+  sequence: number
+  sessionID: string
+  mode: "all" | "selected"
+  endpointIds: string[]
+  activeEndpointIds: string[]
+}
+
+function harness(
+  latest: () => Promise<AuditResult & { lines?: string[] }>,
+  endpoint: {
+    state?: () => Promise<EndpointState>
+    set?: (input: { action: string; endpointId: string }) => Promise<EndpointState>
+    choices?: Array<string | undefined>
+  } = {},
+) {
+  let auditListener: ((event: { data: AuditResult & { lines?: string[] } }) => void) | undefined
+  let endpointListener: ((event: { data: EndpointState }) => void) | undefined
   let slot: { before: string; render: (input: { sessionID?: string }) => unknown } | undefined
   let stopped = 0
+  const emptyEndpoint: EndpointState = {
+    sequence: 0,
+    sessionID: "",
+    mode: "all",
+    endpointIds: [],
+    activeEndpointIds: [],
+  }
+  const choices = [...(endpoint.choices ?? [])]
+  const dialogCalls: Array<{ title: string; options: ReadonlyArray<{ title: string; value: string }> }> = []
+  const setCalls: Array<{ action: string; endpointId: string }> = []
   const context = {
-    client: { rpc: () => ({ latest, events: { on: (_event: string, on: typeof listener) => {
-      listener = on
-      return () => { stopped++ }
-    } } }) },
-    ui: { slot: (claim: typeof slot) => {
-      slot = claim
-      return () => { stopped++ }
-    }, dialog: { prompt: async () => undefined } },
+    client: {
+      rpc: (schema: { id?: string }) => schema.id === "litellm-endpoints"
+        ? ({
+            state: endpoint.state ?? (async () => emptyEndpoint),
+            set: async (input: { action: string; endpointId: string }) => {
+              setCalls.push(input)
+              return endpoint.set ? endpoint.set(input) : emptyEndpoint
+            },
+            events: {
+              on: (_event: string, on: typeof endpointListener) => {
+                endpointListener = on
+                return () => { stopped++ }
+              },
+            },
+          })
+        : ({
+            latest,
+            events: {
+              on: (_event: string, on: typeof auditListener) => {
+                auditListener = on
+                return () => { stopped++ }
+              },
+            },
+          }),
+    },
+    ui: {
+      slot: (claim: typeof slot) => {
+        slot = claim
+        return () => { stopped++ }
+      },
+      router: { current: () => ({ type: "session", sessionID: "current" }) },
+      toast: { show: () => {} },
+      dialog: {
+        prompt: async () => undefined,
+        clear: () => {},
+        select: async (options: { title: string; options: ReadonlyArray<{ title: string; value: string }> }) => {
+          dialogCalls.push(options)
+          return choices.shift()
+        },
+      },
+    },
   } as unknown as Context
   return {
     context,
     get slot() { return slot },
-    emit: (value: AuditResult) => listener?.({ data: value }),
+    emit: (value: AuditResult & { lines?: string[] }) => auditListener?.({ data: value }),
+    emitEndpoint: (value: EndpointState) => endpointListener?.({ data: value }),
     get stopped() { return stopped },
+    dialogCalls,
+    setCalls,
   }
 }
 
@@ -156,6 +218,50 @@ describe("TUI 会话卡片", () => {
     finish()
     await pending
     expect(controller.feedback()).toBe("")
+  })
+
+  test("启动时丢失 endpoint shown 事件仍从 state 打开原生选择器并切换", async () => {
+    let current: EndpointState = {
+      sequence: 1,
+      sessionID: "current",
+      mode: "all",
+      endpointIds: ["default", "company"],
+      activeEndpointIds: ["default", "company"],
+    }
+    const h = harness(
+      async () => success(0, "", ""),
+      {
+        state: async () => current,
+        set: async (input) => {
+          if (input.action === "toggle" && input.endpointId === "default") {
+            current = {
+              ...current,
+              mode: "selected",
+              activeEndpointIds: ["company"],
+            }
+          }
+          return current
+        },
+        choices: ["toggle:default", "close"],
+      },
+    )
+    const cleanup = await setupAuditTui(h.context)
+    await Bun.sleep(0)
+    await Bun.sleep(0)
+
+    expect(h.dialogCalls).toHaveLength(2)
+    expect(h.dialogCalls[0]?.title).toBe("LiteLLM endpoints")
+    expect(h.dialogCalls[0]?.options.map((item) => item.title)).toEqual([
+      "✓ default",
+      "✓ company",
+      "全部启用",
+      "全部停用",
+      "关闭",
+    ])
+    expect(h.setCalls).toEqual([{ action: "toggle", endpointId: "default" }])
+    expect(h.dialogCalls[1]?.options[0]?.title).toBe("○ default")
+    expect(h.dialogCalls[1]?.options[1]?.title).toBe("✓ company")
+    if (cleanup) await cleanup()
   })
 
   test("Windows 平台打开和复制调用不把路径拼入命令字符串", async () => {

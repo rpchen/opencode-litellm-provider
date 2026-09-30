@@ -19,6 +19,15 @@ export interface AuditDependencies {
   createSubmitter?: (session: Pick<Plugin.Context["session"], "prompt">) => FeedbackSubmitter
 }
 
+type LatestVisibleResult = {
+  sequence: number
+  sessionID: string
+  ok: boolean
+  path: string
+  error: string
+  lines?: string[]
+}
+
 function failureMessage(error: unknown): string {
   const code = typeof error === "object" && error !== null && "code" in error
     ? (error as { code?: unknown }).code
@@ -45,7 +54,7 @@ export async function registerAudit(
 ): Promise<Registration> {
   let sequence = 0
   let diagnosticSequence = 0
-  let latest = { sequence, sessionID: "", ok: false, path: "", error: "" }
+  let latest: LatestVisibleResult = { sequence, sessionID: "", ok: false, path: "", error: "" }
   const writeFile = dependencies.writeFile ?? writeAuditFile
   const conversationFeedback = dependencies.conversationFeedback ?? false
   const createSubmitter = dependencies.createSubmitter
@@ -100,14 +109,15 @@ export async function registerAudit(
         name: "litellm-diagnostics",
         description: "显示 LiteLLM 发现、协议、元数据来源、缓存与构建诊断",
         async execute({ sessionID }) {
-          await rpc.events.emit("completed", {
+          latest = {
             sequence: ++diagnosticSequence,
             sessionID,
             ok: true,
             path: "",
             error: "",
             lines: createDiagnosticsLines(snapshot),
-          })
+          }
+          await rpc.events.emit("completed", latest)
         },
       })
       editor.add({

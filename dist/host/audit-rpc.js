@@ -32,7 +32,9 @@ export const auditRpc = {
             },
             output: result,
         },
-        latest: { input: empty, output: result },
+        // The latest visible command result may be either an audit result or
+        // diagnostics lines. This lets TUI startup recover a one-shot event.
+        latest: { input: empty, output: completed },
     },
     events: { completed: { schema: completed } },
 };

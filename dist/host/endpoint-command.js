@@ -16,8 +16,9 @@ export async function registerEndpointActivation(context, endpointIds, read, app
             activeEndpointIds: selected,
         };
     };
-    const emit = async () => {
-        const next = { ...view(), sequence: ++sequence };
+    const show = async () => {
+        sequence += 1;
+        const next = view();
         await rpc.events.emit("shown", next);
         return next;
     };
@@ -42,7 +43,9 @@ export async function registerEndpointActivation(context, endpointIds, read, app
                     selected.add(endpointId);
                 await apply({ mode: "selected", endpointIds: [...selected] });
             }
-            return emit();
+            // Mutating activation updates the selector's returned state, but it is not
+            // a new request to open another selector. Keep the show sequence stable.
+            return view();
         },
     });
     try {
@@ -52,7 +55,7 @@ export async function registerEndpointActivation(context, endpointIds, read, app
                 description: "管理全局 LiteLLM endpoint activation",
                 async execute(input) {
                     sessionID = input.sessionID;
-                    await emit();
+                    await show();
                 },
             });
         });

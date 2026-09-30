@@ -78,14 +78,15 @@ export async function registerAudit(context, snapshot, dependencies = {}) {
                 name: "litellm-diagnostics",
                 description: "显示 LiteLLM 发现、协议、元数据来源、缓存与构建诊断",
                 async execute({ sessionID }) {
-                    await rpc.events.emit("completed", {
+                    latest = {
                         sequence: ++diagnosticSequence,
                         sessionID,
                         ok: true,
                         path: "",
                         error: "",
                         lines: createDiagnosticsLines(snapshot),
-                    });
+                    };
+                    await rpc.events.emit("completed", latest);
                 },
             });
             editor.add({

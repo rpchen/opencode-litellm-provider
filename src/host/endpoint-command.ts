@@ -3,7 +3,7 @@ import type { EndpointActivation } from "../endpoints.js"
 import { endpointRpc } from "./endpoint-rpc.js"
 import type { Registration } from "./register.js"
 
-export interface EndpointActivationView {
+export type EndpointActivationView = {
   sequence: number
   sessionID: string
   mode: "all" | "selected"
@@ -35,8 +35,9 @@ export async function registerEndpointActivation(
     }
   }
 
-  const emit = async () => {
-    const next = { ...view(), sequence: ++sequence }
+  const show = async () => {
+    sequence += 1
+    const next = view()
     await rpc.events.emit("shown", next)
     return next
   }
@@ -58,7 +59,9 @@ export async function registerEndpointActivation(
         else selected.add(endpointId)
         await apply({ mode: "selected", endpointIds: [...selected] })
       }
-      return emit()
+      // Mutating activation updates the selector's returned state, but it is not
+      // a new request to open another selector. Keep the show sequence stable.
+      return view()
     },
   })
 
@@ -69,7 +72,7 @@ export async function registerEndpointActivation(
         description: "管理全局 LiteLLM endpoint activation",
         async execute(input) {
           sessionID = input.sessionID
-          await emit()
+          await show()
         },
       })
     })
