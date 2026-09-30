@@ -357,24 +357,31 @@ function resolveArchiveChronology(archiveEntries) {
   const archiveNames = archiveEntries.map((entry) => entry.name)
   const commitByArchive = new Map()
   let totalOrder = null
-  let gitAvailable = true
 
+  // Determine the first commit that introduced each archived change directory
+  // by inspecting the delta spec files themselves. Git topology, not
+  // timestamps or lexical order, provides chronology.
   for (const name of archiveNames) {
     const archivePath = path.posix.join("openspec/changes/archive", name)
+    const specGlob = archivePath + "/**/spec.md"
     let commit = ""
     try {
       commit = execFileSync(
         "git",
-        ["log", "--diff-filter=A", "--format=%H", "-n", "1", "--", archivePath],
+        ["log", "--diff-filter=A", "--format=%H", "--", specGlob],
         { encoding: "utf8" },
-      ).trim()
+      )
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .at(-1)
     } catch {
-      gitAvailable = false
+      // Git unavailable or path not found; chronology remains unresolved.
     }
     if (commit) commitByArchive.set(name, commit)
   }
 
-  if (gitAvailable && commitByArchive.size === archiveNames.length) {
+  if (archiveNames.length > 0 && commitByArchive.size === archiveNames.length) {
     const commits = new Map()
     for (const [archive, commit] of commitByArchive) {
       if (!commits.has(commit)) commits.set(commit, [])
@@ -384,27 +391,29 @@ function resolveArchiveChronology(archiveEntries) {
     if (uniqueCommits.length === 1) {
       totalOrder = [...archiveNames]
     } else {
-      // Determine whether commits form a strict total order by ancestry.
-      const sortedCommits = [...uniqueCommits].sort((left, right) => {
-        if (left === right) return 0
-        if (gitIsAncestor(left, right)) return -1
-        if (gitIsAncestor(right, left)) return 1
-        return 0
-      })
-      let comparable = true
-      for (let i = 0; i < sortedCommits.length; i += 1) {
-        for (let j = i + 1; j < sortedCommits.length; j += 1) {
-          if (!gitIsAncestor(sortedCommits[i], sortedCommits[j])) {
-            comparable = false
-          }
-        }
-      }
+      // Determine whether commits form a strict total order by ancestry. If
+      // commits are not comparable, we cannot derive a strict order.
+      const comparable = uniqueCommits.every((left) =>
+        uniqueCommits.every(
+          (right) =>
+            left === right ||
+            gitIsAncestor(left, right) ||
+            gitIsAncestor(right, left),
+        ),
+      )
       if (comparable) {
+        const sortedCommits = [...uniqueCommits].sort((left, right) => {
+          if (left === right) return 0
+          if (gitIsAncestor(left, right)) return -1
+          return 1
+        })
         totalOrder = sortedCommits.flatMap((commit) => commits.get(commit))
       }
     }
   }
 
+  // Fixture injection for unit tests: OPENSPEC_CLOSURE_ORDER_JSON may provide
+  // an explicit total order of archive names when no Git history is available.
   const fixtureOrder = process.env.OPENSPEC_CLOSURE_ORDER_JSON
     ? JSON.parse(process.env.OPENSPEC_CLOSURE_ORDER_JSON)
     : null
