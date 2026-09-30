@@ -3,4 +3,4 @@
 - [x] Extend real OpenCode 2.0.16 E2E with endpoint-scoped diagnostics and a negative overview assertion.
 - [x] Update README with endpoint-scoped diagnostics examples.
 - [x] Rebuild committed dist from fixed provenance and run the full repository validation suite.
-- [ ] Archive the OpenSpec change after CI and real-host E2E are green, then re-run the final gate.
+- [x] Archive the OpenSpec change after CI and real-host E2E are green, then re-run the final gate.
