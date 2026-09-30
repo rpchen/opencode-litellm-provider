@@ -103,16 +103,21 @@ describe("PR9 multi-endpoint diagnostics and audit", () => {
     )
     const command = h.commands.get("litellm-diagnostics")!
 
-    await command.execute({ sessionID: "overview" })
+    await command.execute({ sessionID: "overview", prompt: { text: "" } })
     const overview = h.events.at(-1)!.value as { lines: string[] }
     expect(overview.lines.join("\n")).toContain("active 1/2")
     expect(overview.lines.join("\n")).toContain("○ default · 未激活")
     expect(overview.lines.join("\n")).toContain("✓ company")
 
-    await command.execute({ sessionID: "detail", args: "company" })
+    await command.execute({ sessionID: "detail", prompt: { text: "  company  " } })
     const detail = h.events.at(-1)!.value as { lines: string[] }
     expect(detail.lines[0]).toBe("Endpoint：company")
     expect(detail.lines.join("\n")).toContain("状态：正常")
+    expect(detail.lines.join("\n")).not.toContain("LiteLLM Endpoints · active")
+
+    await command.execute({ sessionID: "unknown", prompt: { text: "missing" } })
+    const unknown = h.events.at(-1)!.value as { lines: string[] }
+    expect(unknown.lines).toEqual(["未知 LiteLLM endpoint：missing"])
 
     await registration.dispose()
   })

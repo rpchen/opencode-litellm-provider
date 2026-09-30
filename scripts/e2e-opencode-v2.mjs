@@ -361,8 +361,8 @@ try {
   ))
   assert.equal(typeof createdSession?.id, "string", `session.create did not return an id: ${JSON.stringify(createdSession)}`)
   const sessionID = createdSession.id
-  const runSessionCommand = (name) =>
-    api("POST", `/api/session/${sessionID}/command`, "--data", JSON.stringify({ name, text: "" }))
+  const runSessionCommand = (name, text = "") =>
+    api("POST", `/api/session/${sessionID}/command`, "--data", JSON.stringify({ name, text }))
 
   const beforeConnectModels = command(["models", "--server", openCodeServer.url], { timeout: 120_000 })
   assert.doesNotMatch(beforeConnectModels.stdout, /litellm(?:-company)?\//u,
@@ -471,13 +471,26 @@ try {
   assert.match(models.stdout, /litellm\//u, "CLI models must include default LiteLLM models")
   assert.match(models.stdout, /litellm-company\//u, "CLI models must include re-enabled company LiteLLM models")
 
+  // Endpoint-scoped diagnostics must use the real OpenCode command tail (prompt.text).
+  // This reproduces /litellm-diagnostics company and rejects the previous silent fallback to overview.
+  runSessionCommand("litellm-diagnostics", "company")
+  tui = startAttachedTui(sessionID)
+  mark = tui.mark()
+  // PTY text normalization may collapse the full-width colon, so assert semantic spacing.
+  await waitForTui(tui, /Endpoint\s+company/u, { from: mark })
+  await waitForTui(tui, /models\.dev\s+ok/u, { from: mark })
+  const scopedDiagnostics = tui.output(mark)
+  assert.doesNotMatch(scopedDiagnostics, /LiteLLM Endpoints · active \d+\/\d+/u,
+    "endpoint-scoped diagnostics must not fall back to the multi-endpoint overview")
+  await stopAttachedTui(tui)
+
   const pluginState = jsonOutput(api("GET", "/api/plugin"), "plugin.list")
   const plugins = payload(pluginState)
   assert(Array.isArray(plugins), "plugin.list payload must be an array")
   assert(plugins.some((item) => item.id === "litellm" && item.state?.status === "active"),
     `server plugin must be active: ${JSON.stringify(plugins.filter((item) => item.id === "litellm"))}`)
 
-  console.log("Real OpenCode 2.0.16 E2E passed: startup command recovery, native keyboard activation, credentials, providers and models are verified.")
+  console.log("Real OpenCode 2.0.16 E2E passed: startup recovery, native keyboard activation, endpoint-scoped diagnostics, credentials, providers and models are verified.")
 } catch (error) {
   await dumpFailureDiagnostics()
   throw error

@@ -32,6 +32,11 @@ function failureMessage(error: unknown): string {
 function requestedEndpoint(input: unknown): string {
   if (typeof input !== "object" || input === null) return ""
   const record = input as Record<string, unknown>
+  const prompt = record.prompt
+  if (typeof prompt === "object" && prompt !== null) {
+    const text = (prompt as Record<string, unknown>).text
+    if (typeof text === "string") return text.trim()
+  }
   for (const key of ["args", "arguments", "argument"] as const) {
     if (typeof record[key] === "string") return record[key].trim()
   }
