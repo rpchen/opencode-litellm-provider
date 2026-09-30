@@ -1,0 +1,6 @@
+- [ ] Parse diagnostics endpoint id from the real OpenCode V2 command invocation prompt text.
+- [ ] Replace the synthetic args-based unit fixture with real prompt-text coverage, including whitespace and unknown endpoint cases.
+- [ ] Extend real OpenCode 2.0.16 E2E with endpoint-scoped diagnostics and a negative overview assertion.
+- [ ] Update README with endpoint-scoped diagnostics examples.
+- [ ] Rebuild committed dist from fixed provenance and run the full repository validation suite.
+- [ ] Archive the OpenSpec change after CI and real-host E2E are green, then re-run the final gate.
