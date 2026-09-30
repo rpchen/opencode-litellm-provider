@@ -478,7 +478,7 @@ try {
   mark = tui.mark()
   // PTY text normalization may collapse the full-width colon, so assert semantic spacing.
   await waitForTui(tui, /Endpoint\s+company/u, { from: mark })
-  await waitForTui(tui, "状态：正常", { from: mark })
+  await waitForTui(tui, /models\.dev\s+ok/u, { from: mark })
   const scopedDiagnostics = tui.output(mark)
   assert.doesNotMatch(scopedDiagnostics, /LiteLLM Endpoints · active \d+\/\d+/u,
     "endpoint-scoped diagnostics must not fall back to the multi-endpoint overview")
