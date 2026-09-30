@@ -18,6 +18,12 @@ function requestedEndpoint(input) {
     if (typeof input !== "object" || input === null)
         return "";
     const record = input;
+    const prompt = record.prompt;
+    if (typeof prompt === "object" && prompt !== null) {
+        const text = prompt.text;
+        if (typeof text === "string")
+            return text.trim();
+    }
     for (const key of ["args", "arguments", "argument"]) {
         if (typeof record[key] === "string")
             return record[key].trim();
