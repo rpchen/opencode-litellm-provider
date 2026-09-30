@@ -1,0 +1,40 @@
+name: Tag v0.4.3
+
+on:
+  push:
+    branches:
+      - automation/tag-v0.4.3
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out verified main commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Verify exact release commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="6c8521ca136ae8beba2dbe9cc0ce78d9d681fe17"
+          actual="$(git rev-parse HEAD)"
+          test "$actual" = "$expected" || {
+            echo "main moved: expected $expected, got $actual" >&2
+            exit 1
+          }
+      - name: Create v0.4.3 tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin refs/tags/v0.4.3 >/dev/null 2>&1; then
+            echo "v0.4.3 already exists" >&2
+            exit 1
+          fi
+          git tag v0.4.3 6c8521ca136ae8beba2dbe9cc0ce78d9d681fe17
+          git push origin refs/tags/v0.4.3
