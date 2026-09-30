@@ -86,6 +86,11 @@ export interface DiscoveryLoop {
 const DISCOVERY_SNAPSHOT_STORAGE_KEY = "litellm.discovery.snapshot.v1"
 const DEFAULT_ENDPOINT = endpointIdentity("default", undefined, true)
 
+/** Storage key of an endpoint's persisted discovery snapshot (legacy default keeps the unsuffixed key). */
+export function discoverySnapshotKey(endpointId: string, legacy: boolean): string {
+  return legacy ? DISCOVERY_SNAPSHOT_STORAGE_KEY : `${DISCOVERY_SNAPSHOT_STORAGE_KEY}.${endpointId}`
+}
+
 const defaultScheduler: Scheduler = {
   setTimeout: (callback, milliseconds) => setTimeout(callback, milliseconds),
   clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),

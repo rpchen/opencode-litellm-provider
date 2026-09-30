@@ -1,6 +1,7 @@
 import { Plugin } from "@opencode/plugin"
 import { registerAudit } from "./host/audit-command.js"
 import { registerEndpointActivation } from "./host/endpoint-command.js"
+import { createEndpointManagement, type ManagerHost } from "./host/endpoint-manager.js"
 import { registerMultiEndpointAudit } from "./host/multi-audit-command.js"
 import { registerIntegration, registerIntegrations, registerProvider, type ProviderSnapshot } from "./host/register.js"
 import { createDiscoveryLoop, type DiscoveryDependencies, type SyncContext } from "./host/sync.js"
@@ -70,67 +71,69 @@ async function writeActivation(context: EndpointContext, value: EndpointActivati
   await context.storage.set(ACTIVATION_STORAGE_KEY, JSON.stringify(value))
 }
 
-export async function setupLiteLLM(
-  rawContext: Plugin.Context,
-  dependencies: DiscoveryDependencies = {},
-): Promise<() => Promise<void>> {
-  const context = rawContext as EndpointContext
-  const options = parseOptions(context.options)
+interface Runtime {
+  ids: string[]
+  reconcile(): Promise<void>
+  dispose(): Promise<void>
+}
 
+type ActivationRef = () => EndpointActivation
+
+async function buildLegacy(
+  context: EndpointContext,
+  options: PluginOptions,
+  dependencies: DiscoveryDependencies,
+  activation: ActivationRef,
+): Promise<Runtime> {
   // Legacy mode keeps the old integration/credential/snapshot namespaces, while the
   // new global activation state defaults to "all" so existing users migrate with no action.
-  if (options.endpoints === undefined) {
-    const endpoint = endpointIdentity("default", undefined, true)
-    const snapshot: ProviderSnapshot = { ready: false, models: [], audit: { status: "disconnected" } }
-    let activation = await readActivation(context)
-    let endpointDispose: (() => Promise<void>) | undefined
+  const endpoint = endpointIdentity("default", undefined, true)
+  const snapshot: ProviderSnapshot = { ready: false, models: [], audit: { status: "disconnected" } }
+  let endpointDispose: (() => Promise<void>) | undefined
 
-    const reconcileLegacy = async () => {
-      const active = activeEndpointIds(["default"], activation).includes("default")
-      if (active && !endpointDispose) {
-        endpointDispose = await setupEndpoint(context, endpoint, options, dependencies, undefined, snapshot)
-      } else if (!active && endpointDispose) {
-        const dispose = endpointDispose
-        endpointDispose = undefined
-        await dispose()
-        snapshot.ready = false
-        snapshot.connection = undefined
-        snapshot.apiBaseURL = undefined
-        snapshot.models = []
-        snapshot.registrationView = undefined
-        snapshot.audit = { status: "disconnected" }
-      }
-    }
-
-    await reconcileLegacy()
-    const auditRegistration = await registerAudit(context, snapshot, {
-      conversationFeedback: options.conversationFeedback,
-    })
-    const activationRegistration = await registerEndpointActivation(
-      context,
-      ["default"],
-      () => activation,
-      async (next) => {
-        activation = next
-        await writeActivation(context, next)
-        await reconcileLegacy()
-      },
-    )
-
-    return async () => {
-      await activationRegistration.dispose()
-      await auditRegistration.dispose()
-      await endpointDispose?.()
+  const reconcile = async () => {
+    const active = activeEndpointIds(["default"], activation()).includes("default")
+    if (active && !endpointDispose) {
+      endpointDispose = await setupEndpoint(context, endpoint, options, dependencies, undefined, snapshot)
+    } else if (!active && endpointDispose) {
+      const dispose = endpointDispose
+      endpointDispose = undefined
+      await dispose()
+      snapshot.ready = false
+      snapshot.connection = undefined
+      snapshot.apiBaseURL = undefined
+      snapshot.models = []
+      snapshot.registrationView = undefined
+      snapshot.audit = { status: "disconnected" }
     }
   }
 
-  const endpointIds = Object.keys(options.endpoints)
+  await reconcile()
+  const auditRegistration = await registerAudit(context, snapshot, {
+    conversationFeedback: options.conversationFeedback,
+  })
+  return {
+    ids: ["default"],
+    reconcile,
+    async dispose() {
+      await auditRegistration.dispose()
+      await endpointDispose?.()
+    },
+  }
+}
+
+async function buildExplicit(
+  context: EndpointContext,
+  options: PluginOptions,
+  dependencies: DiscoveryDependencies,
+  activation: ActivationRef,
+): Promise<Runtime> {
+  const endpointIds = Object.keys(options.endpoints ?? {})
   const identities = new Map(endpointIds.map((id) => {
     const definition = options.endpoints?.[id]
     return [id, endpointIdentity(id, definition?.baseUrl, false)] as const
   }))
   const snapshots = new Map<string, ProviderSnapshot>()
-  let activation = await readActivation(context)
   const disposers = new Map<string, () => Promise<void>>()
   // OpenCode V2 does not support runtime child-plugin mutation. Keep every
   // configured integration registered in this plugin instance so /connect can
@@ -142,15 +145,7 @@ export async function setupLiteLLM(
     if (disposers.has(id)) return
     const endpoint = identities.get(id)
     if (!endpoint) return
-    disposers.set(id, await setupEndpoint(
-      context,
-      endpoint,
-      options,
-      dependencies,
-      snapshots,
-      undefined,
-      false,
-    ))
+    disposers.set(id, await setupEndpoint(context, endpoint, options, dependencies, snapshots, undefined, false))
   }
 
   const deactivateOne = async (id: string) => {
@@ -161,7 +156,7 @@ export async function setupLiteLLM(
   }
 
   const reconcile = async () => {
-    const active = new Set(activeEndpointIds(endpointIds, activation))
+    const active = new Set(activeEndpointIds(endpointIds, activation()))
     for (const id of [...disposers.keys()]) if (!active.has(id)) await deactivateOne(id)
     for (const id of endpointIds) if (active.has(id)) await activateOne(id)
   }
@@ -177,26 +172,110 @@ export async function setupLiteLLM(
   const auditRegistration = await registerMultiEndpointAudit(
     context,
     endpointIds,
-    () => activeEndpointIds(endpointIds, activation),
+    () => activeEndpointIds(endpointIds, activation()),
     snapshots,
   )
+  return {
+    ids: endpointIds,
+    reconcile,
+    async dispose() {
+      await auditRegistration.dispose()
+      for (const id of [...disposers.keys()]) await deactivateOne(id)
+      await integrationRegistration.dispose()
+    },
+  }
+}
+
+const buildRuntime = (
+  context: EndpointContext,
+  options: PluginOptions,
+  dependencies: DiscoveryDependencies,
+  activation: ActivationRef,
+): Promise<Runtime> =>
+  options.endpoints === undefined
+    ? buildLegacy(context, options, dependencies, activation)
+    : buildExplicit(context, options, dependencies, activation)
+
+async function pluginSourceTarget(context: EndpointContext): Promise<string | undefined> {
+  try {
+    const list = await (context as unknown as { plugin?: { list?: () => Promise<unknown> } }).plugin?.list?.()
+    const items = Array.isArray(list) ? list : (list as { data?: unknown[] } | undefined)?.data
+    for (const item of items ?? []) {
+      const entry = item as { id?: string; source?: { type?: string; target?: string; path?: string } }
+      if (entry.id !== PLUGIN_ID) continue
+      return entry.source?.type === "package" ? entry.source.target : entry.source?.type === "local" ? entry.source.path : undefined
+    }
+  } catch {
+    // The host may not expose plugin.list() to this context; fall back to name matching.
+  }
+  return undefined
+}
+
+export async function setupLiteLLM(
+  rawContext: Plugin.Context,
+  dependencies: DiscoveryDependencies = {},
+  internals: { management?: Partial<ManagerHost> } = {},
+): Promise<() => Promise<void>> {
+  const context = rawContext as EndpointContext
+  let options = parseOptions(context.options)
+  let activation = await readActivation(context)
+  let runtime = await buildRuntime(context, options, dependencies, () => activation)
+
+  const management = createEndpointManagement({
+    env: process.env,
+    options: () => options,
+    ids: () => runtime.ids,
+    activation: () => activation,
+    async setActivation(next) {
+      activation = next
+      await writeActivation(context, next)
+      await runtime.reconcile()
+    },
+    async rebuild(next) {
+      const previous = options
+      await runtime.dispose()
+      options = next
+      try {
+        runtime = await buildRuntime(context, next, dependencies, () => activation)
+      } catch (error) {
+        // Roll back to the last working configuration rather than leaving no runtime at all.
+        options = previous
+        runtime = await buildRuntime(context, previous, dependencies, () => activation)
+        throw error
+      }
+    },
+    async legacyBaseUrl() {
+      const connection = await context.integration.connection.active("litellm")
+      if (!connection) return undefined
+      const resolved = await context.integration.connection.resolve(connection) as { type?: string; configuration?: Record<string, unknown> } | undefined
+      const url = resolved?.type === "key" ? resolved.configuration?.url : undefined
+      return typeof url === "string" && url.length > 0 ? url : undefined
+    },
+    async removeStorage(key) {
+      if (!context.storage) return
+      const storage = context.storage as { remove?: (key: string) => Promise<void>; set(key: string, value: unknown): Promise<void> }
+      if (storage.remove) await storage.remove(key)
+      else await storage.set(key, "null")
+    },
+    sourceTarget: () => pluginSourceTarget(context),
+    ...internals.management,
+  })
 
   const activationRegistration = await registerEndpointActivation(
     context,
-    endpointIds,
+    () => runtime.ids,
     () => activation,
     async (next) => {
       activation = next
       await writeActivation(context, next)
-      await reconcile()
+      await runtime.reconcile()
     },
+    management,
   )
 
   return async () => {
     await activationRegistration.dispose()
-    await auditRegistration.dispose()
-    for (const id of [...disposers.keys()]) await deactivateOne(id)
-    await integrationRegistration.dispose()
+    await runtime.dispose()
   }
 }
 

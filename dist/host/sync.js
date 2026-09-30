@@ -8,6 +8,10 @@ import { DiscoveryError, fetchLiteLLMModelInfo, getModelsDevCatalog, redact, } f
 import { createRegistrationView } from "./register.js";
 const DISCOVERY_SNAPSHOT_STORAGE_KEY = "litellm.discovery.snapshot.v1";
 const DEFAULT_ENDPOINT = endpointIdentity("default", undefined, true);
+/** Storage key of an endpoint's persisted discovery snapshot (legacy default keeps the unsuffixed key). */
+export function discoverySnapshotKey(endpointId, legacy) {
+    return legacy ? DISCOVERY_SNAPSHOT_STORAGE_KEY : `${DISCOVERY_SNAPSHOT_STORAGE_KEY}.${endpointId}`;
+}
 const defaultScheduler = {
     setTimeout: (callback, milliseconds) => setTimeout(callback, milliseconds),
     clearTimeout: (handle) => clearTimeout(handle),
