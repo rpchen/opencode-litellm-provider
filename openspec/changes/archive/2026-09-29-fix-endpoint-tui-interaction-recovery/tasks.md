@@ -4,5 +4,5 @@
 - [x] Add adapter/TUI regression tests for missed startup events and selector actions.
 - [x] Extend real OpenCode 2.0.16 E2E with pre-connect commands and keyboard activation toggling.
 - [x] Update README for the native selector and recovered command output.
-- [ ] Rebuild and commit dist, then run the full repository validation suite.
-- [ ] Archive the OpenSpec change and re-run strict validation after CI evidence is complete.
+- [x] Rebuild and commit dist, then run the full repository validation suite.
+- [x] Archive the OpenSpec change and re-run strict validation after CI evidence is complete.
