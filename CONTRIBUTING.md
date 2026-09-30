@@ -68,7 +68,7 @@ core/main 更新不会自动改变已发布插件；下一次插件更新构建�
 
 ## OpenSpec 完成门禁
 
-`npm run test:openspec-closure` 会拒绝 tasks 已全部完成但仍留在 active `openspec/changes/` 的 change。实现完成后必须使用 OpenSpec CLI archive，再执行 strict validation；不得手工移动目录代替 archive。
+`npm run test:openspec-closure` 会拒绝 tasks 已全部完成但仍留在 active `openspec/changes/` 的 change，并核对所有 archived delta 是否已同步到 canonical `openspec/specs/`；实现完成后必须使用 OpenSpec CLI archive，再执行 strict validation 与新的 closure gate；不得手工移动目录代替 archive。
 
 ## 发布
 
