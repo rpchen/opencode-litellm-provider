@@ -95,7 +95,7 @@ The system SHALL still expose the removed behavior.
 - **THEN** the old behavior is returned
 `
 
-function runFixture({ delta, canonical = [], expectPass }) {
+function runFixture({ delta, canonical = [], expectPass, extraEnv = {} }) {
   const root = mkdtempSync(path.join(tmpdir(), "openspec-closure-fixture-"))
   roots.push(root)
   const openspec = path.join(root, "openspec")
@@ -117,6 +117,8 @@ function runFixture({ delta, canonical = [], expectPass }) {
       OPENSPEC_ROOT: openspec,
       OPENSPEC_CHANGES_DIR: path.join(openspec, "changes"),
       OPENSPEC_SPECS_DIR: specs,
+      OPENSPEC_CLOSURE_COMPAT: path.join(openspec, "no-compat.json"),
+      ...extraEnv,
     },
     encoding: "utf8",
   })
@@ -129,20 +131,16 @@ function runFixture({ delta, canonical = [], expectPass }) {
   return result
 }
 
-function runHistoryFixture({ deltas, canonical = [], expectPass }) {
+function runHistoryFixture({ deltas, canonical = [], expectPass, compat }) {
   const root = mkdtempSync(path.join(tmpdir(), "openspec-closure-history-"))
   roots.push(root)
   const openspec = path.join(root, "openspec")
   const specs = path.join(openspec, "specs")
+  const archiveNames = []
   for (const [index, delta] of deltas.entries()) {
-    const archive = path.join(
-      openspec,
-      "changes",
-      "archive",
-      "2026-01-0" + (index + 1) + "-fixture",
-      "specs",
-      delta.capability,
-    )
+    const name = "2026-01-0" + (index + 1) + "-fixture"
+    archiveNames.push(name)
+    const archive = path.join(openspec, "changes", "archive", name, "specs", delta.capability)
     mkdirSync(archive, { recursive: true })
     writeFileSync(path.join(archive, "spec.md"), delta.content)
   }
@@ -152,6 +150,12 @@ function runHistoryFixture({ deltas, canonical = [], expectPass }) {
     writeFileSync(target, item.content)
   }
 
+  let compatPath = path.join(openspec, "no-compat.json")
+  if (compat !== undefined) {
+    compatPath = path.join(openspec, "compat.json")
+    writeFileSync(compatPath, JSON.stringify(compat))
+  }
+
   const result = spawnSync(process.execPath, [checker], {
     cwd: process.cwd(),
     env: {
@@ -159,6 +163,7 @@ function runHistoryFixture({ deltas, canonical = [], expectPass }) {
       OPENSPEC_ROOT: openspec,
       OPENSPEC_CHANGES_DIR: path.join(openspec, "changes"),
       OPENSPEC_SPECS_DIR: specs,
+      OPENSPEC_CLOSURE_COMPAT: compatPath,
     },
     encoding: "utf8",
   })
@@ -187,7 +192,7 @@ test("fails when an earlier ADDED state hides a stale final MODIFIED state", () 
   assert.match(result.stderr, /MODIFIED|stale/i)
 })
 
-test("accepts the final semantic state after an earlier ADDED state", () => {
+test("exact same title across ADDED then MODIFIED passes", () => {
   runHistoryFixture({
     deltas: [
       { capability: "existing-capability", content: sameNameAdded },
@@ -232,7 +237,7 @@ test("rejects a malformed archived delta instead of silently passing", () => {
   const result = runFixture({
     delta: {
       capability: "malformed-capability",
-      content: "# malformed\\n\\n## ADDED Requirements\\n\\nThis has no requirement block.\\n",
+      content: "# malformed\n\n## ADDED Requirements\n\nThis has no requirement block.\n",
     },
     expectPass: false,
   })
@@ -266,4 +271,253 @@ An existing capability.
 ` }],
     expectPass: true,
   })
+})
+
+// ---------------------------------------------------------------------------
+// Requirement identity: explicit facts only, no fuzzy title similarity
+// ---------------------------------------------------------------------------
+
+const similarTitleAddedA = `# endpoint activation
+
+## ADDED Requirements
+
+### Requirement: Endpoint activation state
+The system SHALL track activation state.
+
+#### Scenario: Activation state is tracked
+- **WHEN** activation state is requested
+- **THEN** the current state is returned
+`
+
+const similarTitleAddedB = `# endpoint activation
+
+## ADDED Requirements
+
+### Requirement: Endpoint activation status
+The system SHALL report activation status.
+
+#### Scenario: Activation status is reported
+- **WHEN** activation status is requested
+- **THEN** the current status is returned
+`
+
+const canonicalOnlyNew = `# endpoint activation
+
+## Purpose
+
+Endpoint activation capability.
+
+## Requirements
+
+### Requirement: Endpoint activation status
+The system SHALL report activation status.
+
+#### Scenario: Activation status is reported
+- **WHEN** activation status is requested
+- **THEN** the current status is returned
+`
+
+test("similar requirement titles are not implicitly reconciled", () => {
+  const result = runHistoryFixture({
+    deltas: [
+      { capability: "endpoint-activation", content: similarTitleAddedA },
+      { capability: "endpoint-activation", content: similarTitleAddedB },
+    ],
+    canonical: [{ capability: "endpoint-activation", content: canonicalOnlyNew }],
+    expectPass: false,
+  })
+  assert.match(result.stderr, /Endpoint activation state/)
+})
+
+const renamedFrom = `# legacy capability
+
+## ADDED Requirements
+
+### Requirement: Legacy requirement title
+The system SHALL keep the legacy statement.
+
+#### Scenario: Legacy behavior
+- **WHEN** the legacy operation runs
+- **THEN** the legacy result is returned
+`
+
+const renamedTo = `# legacy capability
+
+## MODIFIED Requirements
+
+### Requirement: Current requirement title
+The system SHALL keep the legacy statement.
+
+#### Scenario: Legacy behavior
+- **WHEN** the legacy operation runs
+- **THEN** the legacy result is returned
+`
+
+const renamedSection = `# legacy capability
+
+## RENAMED Requirements
+
+FROM: ### Requirement: Legacy requirement title
+TO: ### Requirement: Current requirement title
+`
+
+const canonicalNewTitle = `# legacy-capability
+
+## Purpose
+
+A legacy capability.
+
+## Requirements
+
+### Requirement: Current requirement title
+The system SHALL keep the legacy statement.
+
+#### Scenario: Legacy behavior
+- **WHEN** the legacy operation runs
+- **THEN** the legacy result is returned
+`
+
+const canonicalOldTitle = `# legacy-capability
+
+## Purpose
+
+A legacy capability.
+
+## Requirements
+
+### Requirement: Legacy requirement title
+The system SHALL keep the legacy statement.
+
+#### Scenario: Legacy behavior
+- **WHEN** the legacy operation runs
+- **THEN** the legacy result is returned
+`
+
+test("explicit RENAMED operation reconciles old and new titles", () => {
+  runHistoryFixture({
+    deltas: [
+      { capability: "legacy-capability", content: renamedFrom },
+      { capability: "legacy-capability", content: renamedTo },
+      { capability: "legacy-capability", content: renamedSection },
+    ],
+    canonical: [{ capability: "legacy-capability", content: canonicalNewTitle }],
+    expectPass: true,
+  })
+})
+
+test("explicit RENAMED operation fails when the new title is missing", () => {
+  const result = runHistoryFixture({
+    deltas: [
+      { capability: "legacy-capability", content: renamedFrom },
+      { capability: "legacy-capability", content: renamedSection },
+    ],
+    canonical: [{ capability: "legacy-capability", content: canonicalOldTitle }],
+    expectPass: false,
+  })
+  assert.match(result.stderr, /Current requirement title|canonical requirement is missing/i)
+})
+
+const compatMapping = {
+  requirementAliases: [
+    {
+      capability: "legacy-capability",
+      from: "Legacy requirement title",
+      to: "Current requirement title",
+      reason: "Historical archive changed the title without an explicit RENAMED operation",
+      archive: "2026-01-02-fixture",
+    },
+  ],
+}
+
+test("explicit legacy compatibility alias reconciles without RENAMED", () => {
+  const result = runHistoryFixture({
+    deltas: [
+      { capability: "legacy-capability", content: renamedFrom },
+      { capability: "legacy-capability", content: renamedTo },
+    ],
+    canonical: [{ capability: "legacy-capability", content: canonicalNewTitle }],
+    expectPass: true,
+    compat: compatMapping,
+  })
+  assert.match(result.stdout, /1 explicit legacy compatibility alias/)
+})
+
+test("removing the compatibility mapping reopens the historical mismatch", () => {
+  const result = runHistoryFixture({
+    deltas: [
+      { capability: "legacy-capability", content: renamedFrom },
+      { capability: "legacy-capability", content: renamedTo },
+    ],
+    canonical: [{ capability: "legacy-capability", content: canonicalNewTitle }],
+    expectPass: false,
+  })
+  assert.match(result.stderr, /Legacy requirement title|canonical requirement is missing/i)
+})
+
+test("invalid compatibility mapping is rejected closed", () => {
+  const cases = [
+    {
+      requirementAliases: [
+        {
+          capability: "nonexistent-capability",
+          from: "Legacy requirement title",
+          to: "Current requirement title",
+          reason: "wrong capability",
+        },
+      ],
+    },
+    {
+      requirementAliases: [
+        {
+          capability: "legacy-capability",
+          from: "Legacy requirement title",
+          to: "Legacy requirement title",
+          reason: "self alias",
+        },
+      ],
+    },
+    {
+      requirementAliases: [
+        {
+          capability: "legacy-capability",
+          from: "Legacy requirement title",
+          to: "Current requirement title",
+        },
+      ],
+    },
+    {
+      requirementAliases: [
+        {
+          capability: "legacy-capability",
+          from: "Legacy * title",
+          to: "Current requirement title",
+          reason: "wildcard",
+        },
+      ],
+    },
+    {
+      requirementAliases: [
+        {
+          capability: "legacy-capability",
+          from: "Legacy requirement title",
+          to: "Current requirement title",
+          reason: "wrong archive",
+          archive: "1999-01-01-does-not-exist",
+        },
+      ],
+    },
+  ]
+
+  for (const invalidCompat of cases) {
+    const result = runHistoryFixture({
+      deltas: [
+        { capability: "legacy-capability", content: renamedFrom },
+        { capability: "legacy-capability", content: renamedTo },
+      ],
+      canonical: [{ capability: "legacy-capability", content: canonicalNewTitle }],
+      expectPass: false,
+      compat: invalidCompat,
+    })
+    assert.match(result.stderr, /compatibility alias|unknown archived requirement|not applicable|self compatibility alias|reason must be a non-empty string|capability must be a non-empty string|from must be a non-empty string|to must be a non-empty string|wildcards are not allowed|not applicable/i)
+  }
 })

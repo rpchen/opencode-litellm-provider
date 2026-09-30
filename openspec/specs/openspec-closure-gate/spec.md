@@ -1,28 +1,57 @@
 # openspec-closure-gate Specification
 
 ## Purpose
-定义 adapter 仓库如何证明 OpenSpec archive 已将 specification delta 吸收到 canonical specs，并防止维护流程产生 specification drift。
+定义仓库如何证明 OpenSpec change 在 archive 后已经被 canonical specifications 吸收，并防止 active-only closure 造成 specification drift。
 
 ## Requirements
 
 ### Requirement: archived specification deltas SHALL be represented canonically
 The repository SHALL verify archived OpenSpec specification deltas against canonical specs using capability, requirement, scenario and operation semantics rather than raw Markdown substring matching.
 
-#### Scenario: archived delta is missing canonically
-- **WHEN** an archived ADDED capability is missing, a MODIFIED requirement is stale, or a REMOVED requirement remains
-- **THEN** `test:openspec-closure` fails with the change, capability, requirement, operation and canonical path
+Requirement identity SHALL NOT be inferred from fuzzy title similarity. Identity SHALL be established only by an exact requirement title, a formal `RENAMED Requirements` FROM/TO operation, or an explicit version-controlled legacy compatibility mapping. The gate SHALL fail closed when no explicit identity fact exists.
 
-#### Scenario: valid archive is accepted
-- **WHEN** ADDED, MODIFIED and REMOVED deltas are represented by the final canonical semantic state
+#### Scenario: missing added capability is rejected
+- **WHEN** an archived ADDED delta has no matching canonical capability
+- **THEN** the closure gate fails and identifies the change, capability and canonical path
+
+#### Scenario: stale modified requirement is rejected
+- **WHEN** an archived MODIFIED requirement is absent or its final statement/scenarios are stale in canonical specs
+- **THEN** the closure gate fails and identifies the requirement and semantic mismatch
+
+#### Scenario: removed requirement is absent
+- **WHEN** an archived REMOVED requirement no longer exists in canonical specs
+- **THEN** the closure gate passes for that removal
+
+#### Scenario: removed requirement remains
+- **WHEN** an archived REMOVED requirement still exists in canonical specs
+- **THEN** the closure gate fails and identifies the lingering requirement
+
+#### Scenario: similar titles are independent
+- **WHEN** two archived requirements have similar but non-identical titles and no RENAMED operation or explicit compatibility mapping exists
+- **THEN** the closure gate treats them as independent requirements and MUST NOT reconcile them automatically
+
+#### Scenario: explicit RENAMED operation establishes identity
+- **WHEN** an archived `RENAMED Requirements` section contains a FROM/TO pair with valid canonical representation under the TO title
 - **THEN** the closure gate passes
 
-### Requirement: malformed and historical archives SHALL be explicit
-The repository SHALL fail closed for malformed delta grammar and SHALL report verifiable and legacy/unverifiable archive counts instead of silently skipping archive content.
+#### Scenario: explicit legacy compatibility alias establishes identity
+- **WHEN** a version-controlled compatibility mapping exists for a historical title inconsistency and the canonical specs match the final archived semantic state
+- **THEN** the closure gate passes and reports the applied alias
+- **WHEN** the mapping is removed
+- **THEN** the closure gate fails for that historical archive
 
-#### Scenario: malformed delta
-- **WHEN** an archived spec has no recognized operation or an incomplete requirement block
-- **THEN** the closure gate fails with an actionable reason
+### Requirement: malformed archived deltas SHALL fail closed
+The closure gate SHALL reject archived delta files that have no recognized operation or contain incomplete ADDED, MODIFIED, REMOVED or RENAMED grammar, with an actionable diagnostic.
 
-#### Scenario: historical archive
-- **WHEN** the gate checks existing archive directories
-- **THEN** every delta is verified or explicitly classified with a compatibility reason
+#### Scenario: malformed archive is checked
+- **WHEN** an archived delta cannot be mapped to the supported OpenSpec grammar
+- **THEN** the closure gate fails instead of silently treating the archive as complete
+
+### Requirement: historical archive compatibility SHALL be explicit
+The closure gate SHALL report the number of archived changes, capabilities, requirements, scenarios and legacy/unverifiable artifacts checked, and SHALL NOT silently skip an archive.
+
+Historical title inconsistencies MAY be reconciled only through an explicit version-controlled compatibility mapping. Fuzzy matching, prefix/suffix heuristics, case-insensitive approximate identity, and similarity thresholds are prohibited.
+
+#### Scenario: existing historical archives are checked
+- **WHEN** the gate runs against the repository archive
+- **THEN** every delta is checked or explicitly classified with a compatibility reason

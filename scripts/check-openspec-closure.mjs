@@ -15,12 +15,16 @@ const archiveDir = path.resolve(
 const specsDir = path.resolve(
   process.env.OPENSPEC_SPECS_DIR ?? path.join(openspecRoot, "specs"),
 )
+const compatFile = path.resolve(
+  process.env.OPENSPEC_CLOSURE_COMPAT ??
+    path.join("scripts", "openspec-closure-compat.json"),
+)
 
 const requirementHeader = /^###\s+Requirement:\s*(.+?)\s*$/i
 const scenarioHeader = /^####\s+(.+?)\s*$/
 
 function normalizeLineEndings(content) {
-  return content.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n")
+  return content.replace(/^﻿/, "").replace(/\r\n?/g, "\n")
 }
 
 function fenceMask(lines) {
@@ -297,27 +301,53 @@ function sameRequirement(left, right, { ignoreName = false } = {}) {
   )
 }
 
-function requirementNameSimilarity(left, right) {
-  const a = Array.from(left.toLowerCase())
-  const b = Array.from(right.toLowerCase())
-  const previous = Array.from({ length: b.length + 1 }, (_, index) => index)
-  for (let row = 1; row <= a.length; row += 1) {
-    const current = [row]
-    for (let column = 1; column <= b.length; column += 1) {
-      current[column] =
-        a[row - 1] === b[column - 1]
-          ? previous[column - 1]
-          : 1 +
-            Math.min(previous[column - 1], previous[column], current[column - 1])
-    }
-    for (let column = 0; column <= b.length; column += 1) {
-      previous[column] = current[column]
-    }
+function loadCompatibilityAliases(file) {
+  if (!existsSync(file)) return []
+  let parsed
+  try {
+    parsed = JSON.parse(readFileSync(file, "utf8"))
+  } catch (error) {
+    throw new Error(
+      file +
+        ": invalid JSON: " +
+        (error instanceof Error ? error.message : String(error)),
+    )
   }
-  return 1 - previous[b.length] / Math.max(a.length, b.length, 1)
+  if (
+    parsed === null ||
+    typeof parsed !== "object" ||
+    Array.isArray(parsed) ||
+    !Array.isArray(parsed.requirementAliases)
+  ) {
+    throw new Error(
+      file + ': must be an object with a "requirementAliases" array',
+    )
+  }
+  return parsed.requirementAliases.map((alias, index) => {
+    const where = file + " requirementAliases[" + index + "]"
+    if (alias === null || typeof alias !== "object" || Array.isArray(alias)) {
+      throw new Error(where + ": alias must be an object")
+    }
+    const { capability, from, to, reason, archive } = alias
+    for (const [field, value] of Object.entries({ capability, from, to, reason })) {
+      if (typeof value !== "string" || value.trim() === "") {
+        throw new Error(where + ": " + field + " must be a non-empty string")
+      }
+    }
+    if (archive !== undefined && (typeof archive !== "string" || archive.trim() === "")) {
+      throw new Error(where + ": archive must be a non-empty string when present")
+    }
+    if (from === to) {
+      throw new Error(where + ": self compatibility alias is not allowed (from and to must differ)")
+    }
+    if ([capability, from, to].some((value) => /[*?]/.test(value))) {
+      throw new Error(where + ": capability/from/to must be explicit (wildcards are not allowed)")
+    }
+    return { capability, from, to, reason, archive: archive ?? null }
+  })
 }
 
-function buildOperationGroups(records) {
+function buildOperationGroups(records, aliases) {
   const byCapability = new Map()
   for (const record of records) {
     let capability = byCapability.get(record.capability)
@@ -329,11 +359,10 @@ function buildOperationGroups(records) {
   }
 
   const groups = new Map()
-  let legacyAliases = 0
+  let compatibilityAliases = 0
+
   for (const [capability, capabilityRecords] of byCapability) {
-    const names = [
-      ...new Set(capabilityRecords.map((record) => record.name)),
-    ]
+    const names = [...new Set(capabilityRecords.map((record) => record.name))]
     const parent = new Map(names.map((name) => [name, name]))
     const find = (name) => {
       let current = name
@@ -348,31 +377,70 @@ function buildOperationGroups(records) {
       if (leftRoot !== rightRoot) parent.set(leftRoot, rightRoot)
     }
 
+    // Formal OpenSpec RENAMED operations are first-class identity facts.
+    const renamedEdges = []
     for (const record of capabilityRecords) {
-      if (record.operation !== "MODIFIED") continue
-      const candidates = capabilityRecords
-        .filter(
-          (candidate) =>
-            candidate.name !== record.name &&
-            (candidate.operation === "ADDED" ||
-              candidate.operation === "MODIFIED"),
-        )
-        .map((candidate) => candidate.name)
-        .filter((name, index, all) => all.indexOf(name) === index)
-        .map((name) => ({
-          name,
-          similarity: requirementNameSimilarity(record.name, name),
-        }))
-        .filter((candidate) => candidate.similarity >= 0.8)
-        .sort((left, right) => right.similarity - left.similarity)
-      if (
-        candidates.length > 0 &&
-        (candidates.length === 1 ||
-          candidates[0].similarity - candidates[1].similarity >= 0.05)
-      ) {
-        union(record.name, candidates[0].name)
-        legacyAliases += 1
+      if (record.operation === "RENAMED" && record.from && record.to) {
+        renamedEdges.push([record.from, record.to])
       }
+    }
+    for (const [from, to] of renamedEdges) {
+      if (!parent.has(from) || !parent.has(to)) {
+        throw new Error(
+          "RENAMED operation references unknown archived requirement: " +
+            capability +
+            ' "' +
+            from +
+            '" -> "' +
+            to +
+            '"',
+        )
+      }
+      union(from, to)
+    }
+
+    // Explicit legacy compatibility aliases are the only other identity edge.
+    const capabilityAliases = aliases.filter(
+      (alias) => alias.capability === capability,
+    )
+    for (const alias of capabilityAliases) {
+      const fromRecord = capabilityRecords.find(
+        (record) =>
+          record.name === alias.from &&
+          (record.operation === "ADDED" || record.operation === "MODIFIED"),
+      )
+      const toRecord = capabilityRecords.find(
+        (record) =>
+          record.name === alias.to &&
+          (record.operation === "ADDED" || record.operation === "MODIFIED"),
+      )
+      if (!fromRecord || !toRecord) {
+        throw new Error(
+          "compatibility alias references unknown archived requirement: " +
+            capability +
+            ' "' +
+            (!fromRecord ? alias.from : alias.to) +
+            '"',
+        )
+      }
+      if (alias.archive) {
+        const fromMatches = fromRecord.change === alias.archive
+        const toMatches = toRecord.change === alias.archive
+        if (!fromMatches && !toMatches) {
+          throw new Error(
+            "compatibility alias is not applicable to archived operations for capability " +
+              capability +
+              ' from "' +
+              alias.from +
+              '" to "' +
+              alias.to +
+              '" in archive ' +
+              alias.archive,
+          )
+        }
+      }
+      union(alias.from, alias.to)
+      compatibilityAliases += 1
     }
 
     const grouped = new Map()
@@ -387,23 +455,44 @@ function buildOperationGroups(records) {
       group.records.push(record)
     }
     for (const group of grouped.values()) {
-      const modified = group.records.filter(
-        (record) => record.operation === "MODIFIED",
+      // A group is present only if its terminal operation says it is present.
+      // ADDED/MODIFIED imply presence; RENAMED implies the TO title is present
+      // and the FROM title is absent; REMOVED implies absence.
+      const terminalSemanticRecords = group.records.filter(
+        (record) => record.requirement,
       )
-      const removed = group.records.filter(
+      const renamedRecords = group.records.filter(
+        (record) => record.operation === "RENAMED",
+      )
+      const removedRecords = group.records.filter(
         (record) => record.operation === "REMOVED",
       )
-      if (removed.length > 0 && modified.length === 0) {
-        group.terminalRecords = removed
-      } else if (modified.length > 0) {
-        group.terminalRecords = [modified.at(-1)]
+
+      if (removedRecords.length > 0 && terminalSemanticRecords.length === 0) {
+        group.terminalRecords = removedRecords
+      } else if (terminalSemanticRecords.length > 0) {
+        group.terminalRecords = [terminalSemanticRecords.at(-1)]
+      } else if (renamedRecords.length > 0) {
+        group.terminalRecords = [renamedRecords.at(-1)]
       } else {
         group.terminalRecords = [group.records.at(-1)]
       }
     }
     groups.set(capability, grouped)
   }
-  return { groups, legacyAliases }
+
+  // Any alias whose capability was never seen in the archive fails closed.
+  const knownCapabilities = new Set(byCapability.keys())
+  for (const alias of aliases) {
+    if (!knownCapabilities.has(alias.capability)) {
+      throw new Error(
+        "compatibility alias references unknown archived capability: " +
+          alias.capability,
+      )
+    }
+  }
+
+  return { groups, compatibilityAliases }
 }
 
 function formatFailure({ change, capability, operation, requirement, reason }) {
@@ -412,11 +501,9 @@ function formatFailure({ change, capability, operation, requirement, reason }) {
     "Archived OpenSpec change is not reflected in canonical specs:\n" +
     "change: " +
     change +
-    "\n" +
-    "capability: " +
+    "\ncapability: " +
     capability +
-    "\n" +
-    "operation: " +
+    "\noperation: " +
     operation +
     requirementLine +
     "\nexpected canonical:\n  openspec/specs/" +
@@ -431,8 +518,7 @@ function formatMalformed({ change, capability, reason }) {
     "Archived OpenSpec delta is malformed:\n" +
     "change: " +
     change +
-    "\n" +
-    "capability: " +
+    "\ncapability: " +
     capability +
     "\nexpected canonical:\n  openspec/specs/" +
     capability +
@@ -526,6 +612,8 @@ function main() {
               change: archiveEntry.name,
               operation: "RENAMED",
               name: operation.from,
+              from: operation.from,
+              to: operation.to,
               present: false,
             })
             archivedOperations.push({
@@ -533,6 +621,8 @@ function main() {
               change: archiveEntry.name,
               operation: "RENAMED",
               name: operation.to,
+              from: operation.from,
+              to: operation.to,
               present: true,
             })
           } else if (operation.operation === "REMOVED") {
@@ -600,64 +690,107 @@ function main() {
     }
   }
 
-  const operationGroups = buildOperationGroups(archivedOperations)
-  for (const [capability, groups] of operationGroups.groups) {
-    const canonical = readCanonical(capability)
-    for (const group of groups.values()) {
-      const presentRecords = group.terminalRecords.filter(
-        (record) => record.present,
-      )
-      const actualRequirements = canonical.exists
-        ? [...group.names]
-            .map((name) => canonical.requirements.get(name))
-            .filter(Boolean)
-        : []
-      const representative =
-        presentRecords.at(-1) ?? group.records.at(-1)
+  let compatibilityAliases = 0
+  try {
+    const aliases = loadCompatibilityAliases(compatFile)
+    const operationGroups = buildOperationGroups(archivedOperations, aliases)
+    compatibilityAliases = operationGroups.compatibilityAliases
 
-      if (presentRecords.length > 0) {
-        const matchingRecord = presentRecords.find((record) => {
-          if (!record.requirement) return actualRequirements.length > 0
-          return actualRequirements.some((actual) =>
-            sameRequirement(record.requirement, actual, {
-              ignoreName:
-                group.names.size > 1 && actual.name !== record.requirement.name,
-            }),
-          )
-        })
-        if (matchingRecord) continue
+    for (const [capability, groups] of operationGroups.groups) {
+      const canonical = readCanonical(capability)
+      for (const group of groups.values()) {
+        // Every identity group has at most one final (terminal) requirement
+        // title. Replaying the group records in archival order tracks title
+        // migrations from formal RENAMED operations or explicit compatibility
+        // aliases. Any non-terminal title is a historical name and must not
+        // remain in canonical specs.
+        let terminal = null
+        const absentNames = new Map()
+        for (const record of group.records) {
+          if (record.operation === "RENAMED") {
+            if (terminal && terminal.name === record.from) {
+              terminal = { ...terminal, name: record.to }
+            }
+            absentNames.set(record.from, record)
+          } else if (record.operation === "REMOVED") {
+            if (terminal && terminal.name === record.name) terminal = null
+            absentNames.set(record.name, record)
+          } else {
+            if (terminal && terminal.name !== record.name) {
+              absentNames.set(terminal.name, record)
+            }
+            absentNames.delete(record.name)
+            terminal = {
+              name: record.name,
+              requirement: record.requirement,
+              representative: record,
+            }
+          }
+        }
 
-        const context = {
-          change: representative.change,
-          capability,
-          operation: representative.operation,
-          requirement: representative.name,
+        if (terminal) {
+          const actual = canonical.requirements.get(terminal.name)
+          if (!canonical.exists) {
+            failures.push(
+              formatFailure({
+                change: terminal.representative.change,
+                capability,
+                operation: terminal.representative.operation,
+                requirement: terminal.name,
+                reason: "canonical capability is missing",
+              }),
+            )
+          } else if (!actual) {
+            failures.push(
+              formatFailure({
+                change: terminal.representative.change,
+                capability,
+                operation: terminal.representative.operation,
+                requirement: terminal.name,
+                reason: 'canonical requirement "' + terminal.name + '" is missing',
+              }),
+            )
+          } else if (
+            !sameRequirement(terminal.requirement, actual, { ignoreName: true })
+          ) {
+            failures.push(
+              formatFailure({
+                change: terminal.representative.change,
+                capability,
+                operation: terminal.representative.operation,
+                requirement: terminal.name,
+                reason:
+                  "canonical requirement is stale; its statement or scenarios do not match any final archived semantic state",
+              }),
+            )
+          }
         }
-        failures.push(
-          formatFailure({
-            ...context,
-            reason: !canonical.exists
-              ? "canonical capability is missing"
-              : actualRequirements.length === 0
-                ? "canonical requirement is missing"
-                : "canonical requirement is stale; its statement or scenarios do not match any final archived semantic state",
-          }),
-        )
-      } else if (actualRequirements.length > 0) {
-        const context = {
-          change: representative.change,
-          capability,
-          operation: representative.operation,
-          requirement: representative.name,
+
+        for (const [name, representative] of absentNames) {
+          if (terminal && terminal.name === name) continue
+          if (canonical.requirements.has(name)) {
+            failures.push(
+              formatFailure({
+                change: representative.change,
+                capability,
+                operation: representative.operation,
+                requirement: name,
+                reason:
+                  representative.operation === "REMOVED"
+                    ? "REMOVED requirement remains in canonical specs"
+                    : "historical requirement title remains in canonical specs after an explicit rename or compatibility alias" +
+                      (terminal ? ' to "' + terminal.name + '"' : ""),
+              }),
+            )
+          }
         }
-        failures.push(
-          formatFailure({
-            ...context,
-            reason: "REMOVED requirement remains in canonical specs",
-          }),
-        )
       }
     }
+  } catch (error) {
+    failures.push(
+      "Compatibility mapping is invalid:\n" +
+        (error instanceof Error ? error.message : String(error)),
+    )
   }
 
   if (failures.length > 0) {
@@ -683,9 +816,9 @@ function main() {
       " scenarios checked\n" +
       "  0 closure mismatches\n" +
       "  " +
-      operationGroups.legacyAliases +
-      " legacy title reconciliations (explicit compatibility for archived MODIFIED headers)",
-      "\n  " +
+      compatibilityAliases +
+      " explicit legacy compatibility aliases\n" +
+      "  " +
       legacyArtifacts.length +
       " legacy/unverifiable informational artifacts (outside archived specs/; not silently treated as deltas)",
   )
