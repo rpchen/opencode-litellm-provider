@@ -116,6 +116,21 @@ endpoint id 是用户定义的稳定 ASCII slug，必须匹配 `[a-z0-9][a-z0-9-
 
 ### `/litellm-diagnostics`
 
+多 endpoint 模式下，不带参数显示 endpoint 总览：
+
+```text
+/litellm-diagnostics
+```
+
+在命令后直接传 endpoint id 可查看该 endpoint 的详细诊断，例如：
+
+```text
+/litellm-diagnostics company
+/litellm-diagnostics cd-vpn
+```
+
+这里传的是配置中的 endpoint id，不是 provider id；例如应传 `company`，而不是 `litellm-company`。
+
 查看当前插件运行状态，包括：
 
 - 已注册模型数
