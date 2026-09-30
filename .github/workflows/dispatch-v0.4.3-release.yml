@@ -1,0 +1,35 @@
+name: Dispatch v0.4.3 release
+
+on:
+  push:
+    branches:
+      - automation/tag-v0.4.3
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Verify v0.4.3 tag target
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          expected="6c8521ca136ae8beba2dbe9cc0ce78d9d681fe17"
+          actual="$(gh api repos/$GITHUB_REPOSITORY/git/ref/tags/v0.4.3 --jq '.object.sha')"
+          test "$actual" = "$expected" || {
+            echo "v0.4.3 points to $actual, expected $expected" >&2
+            exit 1
+          }
+      - name: Dispatch Release workflow on v0.4.3
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref v0.4.3
