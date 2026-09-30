@@ -32,9 +32,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git ls-remote --exit-code --tags origin refs/tags/v0.4.3 >/dev/null 2>&1; then
-            echo "v0.4.3 already exists" >&2
-            exit 1
+          expected="6c8521ca136ae8beba2dbe9cc0ce78d9d681fe17"
+          existing="$(git ls-remote --tags origin refs/tags/v0.4.3 | awk '{print $1}')"
+          if test -n "$existing"; then
+            test "$existing" = "$expected" || {
+              echo "v0.4.3 exists at unexpected commit $existing" >&2
+              exit 1
+            }
+            echo "v0.4.3 already exists at verified commit $existing"
+            exit 0
           fi
-          git tag v0.4.3 6c8521ca136ae8beba2dbe9cc0ce78d9d681fe17
+          git tag v0.4.3 "$expected"
           git push origin refs/tags/v0.4.3
