@@ -61,6 +61,9 @@ jobs:
       - name: Validate OpenSpec
         run: npm run validate:spec
 
+      - name: Enforce 100% specification scenario coverage
+        run: npm run test:scenario-coverage
+
       - name: Reject completed active OpenSpec changes
         run: npm run test:openspec-closure
 

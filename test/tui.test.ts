@@ -40,6 +40,11 @@ function harness(
   const setCalls: Array<{ action: string; endpointId: string }> = []
   const context = {
     client: {
+      integration: {
+        get: async () => ({ connections: [] }),
+        connect: { key: async () => undefined },
+      },
+      credential: { remove: async () => undefined, activate: async () => undefined },
       rpc: (schema: { id?: string }) => schema.id === "litellm-endpoints"
         ? ({
             state: endpoint.state ?? (async () => emptyEndpoint),
@@ -73,6 +78,7 @@ function harness(
       toast: { show: () => {} },
       dialog: {
         prompt: async () => undefined,
+        confirm: async () => false,
         clear: () => {},
         select: async (options: { title: string; options: ReadonlyArray<{ title: string; value: string }> }) => {
           dialogCalls.push(options)
@@ -220,7 +226,7 @@ describe("TUI 会话卡片", () => {
     expect(controller.feedback()).toBe("")
   })
 
-  test("启动时丢失 endpoint shown 事件仍从 state 打开原生选择器并切换", async () => {
+  test("启动时丢失 endpoint shown 事件仍从 state 打开原生选择器；进入 endpoint 详情后可停用", async () => {
     let current: EndpointState = {
       sequence: 1,
       sessionID: "current",
@@ -234,33 +240,30 @@ describe("TUI 会话卡片", () => {
         state: async () => current,
         set: async (input) => {
           if (input.action === "toggle" && input.endpointId === "default") {
-            current = {
-              ...current,
-              mode: "selected",
-              activeEndpointIds: ["company"],
-            }
+            current = { ...current, mode: "selected", activeEndpointIds: ["company"] }
           }
           return current
         },
-        choices: ["toggle:default", "close"],
+        // main list → endpoint default → 停用 → 返回 → close list
+        choices: ["endpoint:default", "toggle", "back", undefined],
       },
     )
     const cleanup = await setupAuditTui(h.context)
     await Bun.sleep(0)
     await Bun.sleep(0)
+    await Bun.sleep(0)
 
-    expect(h.dialogCalls).toHaveLength(2)
     expect(h.dialogCalls[0]?.title).toBe("LiteLLM endpoints")
     expect(h.dialogCalls[0]?.options.map((item) => item.title)).toEqual([
-      "✓ default",
-      "✓ company",
+      "＋ 新增 endpoint",
       "全部启用",
       "全部停用",
-      "关闭",
+      "✓ default",
+      "✓ company",
     ])
     expect(h.setCalls).toEqual([{ action: "toggle", endpointId: "default" }])
-    expect(h.dialogCalls[1]?.options[0]?.title).toBe("○ default")
-    expect(h.dialogCalls[1]?.options[1]?.title).toBe("✓ company")
+    expect(h.dialogCalls[1]?.title).toContain("default")
+    expect(h.dialogCalls[3]?.options.map((item) => item.title)).toContain("○ default")
     if (cleanup) await cleanup()
   })
 

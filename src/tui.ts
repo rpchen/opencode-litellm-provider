@@ -1,6 +1,7 @@
 import { define, type Context } from "@opencode/plugin/tui/plugin"
 import { auditRpc } from "./host/audit-rpc.js"
 import { endpointRpc } from "./host/endpoint-rpc.js"
+import { createEndpointUi, type CredentialClient, type EndpointRpcClient, type EndpointStateView } from "./tui-endpoints.js"
 import {
   ProviderCards,
   auditCardActions,
@@ -28,6 +29,13 @@ export async function setupAuditTui(
   const diagnosticsStore = createDiagnosticsResultStore()
   const actions = auditCardActions(context)
   let disposed = false
+  const endpointUi = createEndpointUi({
+    dialog: context.ui.dialog as never,
+    toast: context.ui.toast as never,
+    rpc: endpointClient as unknown as EndpointRpcClient,
+    client: context.client as unknown as CredentialClient,
+    isDisposed: () => disposed,
+  })
   let endpointSequence = 0
   let endpointDialogRunning = false
   let pendingEndpoint: EndpointActivationResult | undefined
@@ -64,42 +72,12 @@ export async function setupAuditTui(
     endpointSequence = initial.sequence
     endpointDialogRunning = true
     try {
-      let current = initial
-      while (!disposed) {
-        const active = new Set(current.activeEndpointIds)
-        const selected = await context.ui.dialog.select<string>({
-          title: "LiteLLM endpoints",
-          placeholder: "选择 endpoint 或操作",
-          options: [
-            ...current.endpointIds.map((id) => ({
-              title: `${active.has(id) ? "✓" : "○"} ${id}`,
-              value: `toggle:${id}`,
-              description: active.has(id) ? "已启用" : "已停用",
-            })),
-            { title: "全部启用", value: "all" },
-            { title: "全部停用", value: "none" },
-            { title: "关闭", value: "close" },
-          ],
-        })
-        if (disposed || selected === undefined || selected === "close") break
-
-        let action: "all" | "none" | "toggle"
-        let endpointId = ""
-        if (selected === "all" || selected === "none") {
-          action = selected
-        } else if (selected.startsWith("toggle:")) {
-          action = "toggle"
-          endpointId = selected.slice("toggle:".length)
-        } else {
-          continue
-        }
-        current = await endpointClient.set({ action, endpointId }) as unknown as EndpointActivationResult
-      }
+      await endpointUi.run(initial as unknown as EndpointStateView)
     } catch {
       if (!disposed) {
         context.ui.toast.show({
           variant: "error",
-          message: "LiteLLM endpoint activation 更新失败，请重试",
+          message: "LiteLLM endpoint 管理操作失败，请重试",
         })
       }
     } finally {

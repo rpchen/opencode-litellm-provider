@@ -51,5 +51,7 @@ export interface DiscoveryLoop {
     trigger(forceRefresh?: boolean): Promise<void>;
     dispose(): Promise<void>;
 }
+/** Storage key of an endpoint's persisted discovery snapshot (legacy default keeps the unsuffixed key). */
+export declare function discoverySnapshotKey(endpointId: string, legacy: boolean): string;
 export declare function createDiscoveryLoop(context: SyncContext, snapshot: ProviderSnapshot, options: PluginOptions, dependencies?: DiscoveryDependencies, endpoint?: EndpointIdentity): DiscoveryLoop;
 export {};

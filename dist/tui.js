@@ -1,6 +1,7 @@
 import { define } from "@opencode/plugin/tui/plugin";
 import { auditRpc } from "./host/audit-rpc.js";
 import { endpointRpc } from "./host/endpoint-rpc.js";
+import { createEndpointUi } from "./tui-endpoints.js";
 import { ProviderCards, auditCardActions, createAuditResultStore, createDiagnosticsResultStore, } from "./tui-card.js";
 function scheduleRefresh(refresh) {
     const timer = setInterval(refresh, 1000);
@@ -13,6 +14,13 @@ export async function setupAuditTui(context, schedule = scheduleRefresh) {
     const diagnosticsStore = createDiagnosticsResultStore();
     const actions = auditCardActions(context);
     let disposed = false;
+    const endpointUi = createEndpointUi({
+        dialog: context.ui.dialog,
+        toast: context.ui.toast,
+        rpc: endpointClient,
+        client: context.client,
+        isDisposed: () => disposed,
+    });
     let endpointSequence = 0;
     let endpointDialogRunning = false;
     let pendingEndpoint;
@@ -45,45 +53,13 @@ export async function setupAuditTui(context, schedule = scheduleRefresh) {
         endpointSequence = initial.sequence;
         endpointDialogRunning = true;
         try {
-            let current = initial;
-            while (!disposed) {
-                const active = new Set(current.activeEndpointIds);
-                const selected = await context.ui.dialog.select({
-                    title: "LiteLLM endpoints",
-                    placeholder: "选择 endpoint 或操作",
-                    options: [
-                        ...current.endpointIds.map((id) => ({
-                            title: `${active.has(id) ? "✓" : "○"} ${id}`,
-                            value: `toggle:${id}`,
-                            description: active.has(id) ? "已启用" : "已停用",
-                        })),
-                        { title: "全部启用", value: "all" },
-                        { title: "全部停用", value: "none" },
-                        { title: "关闭", value: "close" },
-                    ],
-                });
-                if (disposed || selected === undefined || selected === "close")
-                    break;
-                let action;
-                let endpointId = "";
-                if (selected === "all" || selected === "none") {
-                    action = selected;
-                }
-                else if (selected.startsWith("toggle:")) {
-                    action = "toggle";
-                    endpointId = selected.slice("toggle:".length);
-                }
-                else {
-                    continue;
-                }
-                current = await endpointClient.set({ action, endpointId });
-            }
+            await endpointUi.run(initial);
         }
         catch {
             if (!disposed) {
                 context.ui.toast.show({
                     variant: "error",
-                    message: "LiteLLM endpoint activation 更新失败，请重试",
+                    message: "LiteLLM endpoint 管理操作失败，请重试",
                 });
             }
         }

@@ -377,22 +377,24 @@ try {
     })
     try {
       assert.ok(endpointCommand)
-      endpointChoices.push("toggle:default", "close")
+      endpointChoices.push("endpoint:default", "toggle", "back", undefined as never)
       await endpointCommand!.execute({ sessionID: "current" })
       await Bun.sleep(0)
       await Bun.sleep(0)
 
       assert.deepEqual(activation, { mode: "selected", endpointIds: ["company"] })
-      assert.equal(endpointDialogs.length, 2)
+      // main list -> endpoint detail -> toggle -> back -> main list (dismissed)
+      assert.equal(endpointDialogs.length, 4)
       assert.deepEqual(endpointDialogs[0]?.options.map((item) => item.title), [
-        "✓ default",
-        "✓ company",
+        "＋ 新增 endpoint",
         "全部启用",
         "全部停用",
-        "关闭",
+        "✓ default",
+        "✓ company",
       ])
-      assert.equal(endpointDialogs[1]?.options[0]?.title, "○ default")
-      assert.equal(endpointDialogs[1]?.options[1]?.title, "✓ company")
+      assert.deepEqual(endpointDialogs[1]?.options.map((item) => item.value), ["toggle", "edit", "connect", "delete", "back"])
+      assert.equal(endpointDialogs[3]?.options[3]?.title, "○ default")
+      assert.equal(endpointDialogs[3]?.options[4]?.title, "✓ company")
     } finally {
       await endpointRegistration.dispose()
     }
