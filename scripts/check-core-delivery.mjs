@@ -10,7 +10,7 @@ import {
   CORE_REPOSITORY, GENERATED_PATH, assertCleanCheckout, exportCore, git,
   parseSelectionArgs, prepareCore, provenanceFor, readProvenance, selectCore, validateSHA,
 } from "./prepare-core.mjs"
-import { compareDistributions, verifyDistribution } from "./distribution.mjs"
+import { compareDistributions, computeArtifactDigest, verifyDistribution, writeRuntimeIdentity } from "./distribution.mjs"
 
 const SHA = "a".repeat(40)
 const NEXT_SHA = "b".repeat(40)
@@ -52,12 +52,13 @@ function verifierFixture(t) {
   const root = path.join(temporary(t), "project")
   write(root, "src/index.ts", 'export const marker = "source"\n')
   write(root, "src/generated/discovery-core/contaminated.ts", "must not enter isolated inputs\n")
-  write(root, "package.json", '{"type":"module"}\n')
+  write(root, "package.json", '{"type":"module","version":"0.0.0-fixture"}\n')
   write(root, "tsconfig.json", "{}\n")
   write(root, "tsconfig.build.json", "{}\n")
   mkdirSync(path.join(root, "node_modules"))
   write(root, "dist/core-provenance.json", JSON.stringify(provenanceFor(SHA), null, 2) + "\n")
   write(root, "dist/index.js", `export const core = "${SHA}"\n`)
+  writeRuntimeIdentity(path.join(root, "dist"), { pluginVersion: "0.0.0-fixture", coreCommit: SHA })
   let observedRoot
   let prepared = 0
   const prepare = ({ root: buildRoot, selection }) => {
@@ -76,6 +77,8 @@ function verifierFixture(t) {
     assert.equal(selection.sha, SHA)
     write(out, "core-provenance.json", JSON.stringify(provenanceFor(selection.sha), null, 2) + "\n")
     write(out, "index.js", `export const core = "${selection.sha}"\n`)
+    const version = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version
+    writeRuntimeIdentity(out, { pluginVersion: version, coreCommit: selection.sha })
   }
   return { root, prepare, compile, observed: () => observedRoot, prepared: () => prepared }
 }
@@ -204,10 +207,12 @@ test("committed symlink source is rejected before exporting files", (t) => {
 
 test("normal candidate passes isolated verification and temp inputs are cleaned", (t) => {
   const fixture = verifierFixture(t)
-  assert.deepEqual(verifyDistribution(fixture), { sha: SHA, files: 2 })
+  assert.deepEqual(verifyDistribution(fixture), { sha: SHA, files: 3 })
   assert.equal(fixture.prepared(), 1)
   assert.equal(existsSync(fixture.observed()), false)
   assert.equal(readProvenance(fixture.root).sha, SHA)
+  assert.equal(computeArtifactDigest(path.join(fixture.root, "dist")),
+    JSON.parse(readFileSync(path.join(fixture.root, "dist", "runtime-identity.json"), "utf8")).artifactDigest)
 })
 
 for (const mutation of ["changed", "missing", "extra", "empty-directory"]) {
@@ -219,9 +224,26 @@ for (const mutation of ["changed", "missing", "extra", "empty-directory"]) {
     if (mutation === "empty-directory") mkdirSync(path.join(fixture.root, "dist/empty"))
     const saved = path.join(temporary(t), "saved")
     cpSync(path.join(fixture.root, "dist"), saved, { recursive: true })
-    assert.throws(() => verifyDistribution(fixture), /Committed dist mismatch/u)
+    assert.throws(() => verifyDistribution(fixture), /Committed dist mismatch|runtime identity/iu)
     compareDistributions(path.join(fixture.root, "dist"), saved)
     assert.equal(existsSync(fixture.observed()), false)
+  })
+}
+
+for (const mutation of ["missing-identity", "malformed-digest", "mismatched-digest", "mismatched-core"]) {
+  test(`verify rejects ${mutation} runtime identity without silent fallback`, (t) => {
+    const fixture = verifierFixture(t)
+    const identityPath = path.join(fixture.root, "dist", "runtime-identity.json")
+    if (mutation === "missing-identity") rmSync(identityPath)
+    else {
+      const identity = JSON.parse(readFileSync(identityPath, "utf8"))
+      if (mutation === "malformed-digest") identity.artifactDigest = "not-a-digest"
+      if (mutation === "mismatched-digest") identity.artifactDigest = `sha256:${"0".repeat(64)}`
+      if (mutation === "mismatched-core") identity.coreCommit = "0".repeat(40)
+      writeFileSync(identityPath, JSON.stringify(identity, null, 2) + "\n")
+    }
+    assert.throws(() => verifyDistribution(fixture), /runtime identity|Committed dist mismatch/iu)
+    assert.equal(fixture.prepared(), 0)
   })
 }
 
