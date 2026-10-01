@@ -719,7 +719,9 @@ try {
     await waitForTui(t, "将彻底删除", { from: m })
     m = t.mark()
     t.write("\r")
-    await waitForTui(t, /已删除\s*endpoint/u, { from: m })
+    // Completion is asserted on the observable end state (the management list comes back without the
+    // endpoint): the success toast's text can be left partially repainted by terminal cell diffs.
+    await waitForTui(t, "选择 endpoint 或操作", { from: m })
     options = parsedOptions()
     assert(!("e2e-new" in options.endpoints), "Delete left the endpoint definition")
     assert.equal(connectionsOf("litellm-e2e-new").length, 0, "Delete left the credential")
@@ -900,7 +902,9 @@ try {
     await waitForTui(tl, /将彻底删除/u, { from: ml })
     ml = tl.mark()
     tl.write("\r") // Confirm (default focus)
-    await waitForTui(tl, /已删除\s*endpoint/u, { from: ml })
+    // Same as the explicit flow: assert completion via the list coming back without the endpoint —
+    // the success toast's text can be left partially repainted by terminal cell diffs.
+    await waitForTui(tl, "选择 endpoint 或操作", { from: ml })
     assert(!("default" in legacyOptions().endpoints), "Delete left the endpoint definition")
     assert.equal(connectionsOf("litellm").length, 0, "Delete left the legacy credential")
     tl.write("\x1b")
