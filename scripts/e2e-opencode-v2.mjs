@@ -985,7 +985,7 @@ try {
   await typeInto(tg, ghostUrl)
   mg = tg.mark()
   tg.write("\r")
-  await waitForTui(tg, /company[^|]*未启用 · 未连接/u, { from: mg })
+  await waitForTui(tg, /company[^|]*未启用/u, { from: mg }) // inactive; credential state is inherited from the shared data dir
   assert(!tg.output(mg).includes("default"), "the internal legacy default identity must not surface")
   const ghostOptions = () => JSON.parse(readFileSync(opencodeConfigFile, "utf8").replace(/^\s*\/\/.*$/gmu, "")).plugins[0].options
   assert.deepEqual(Object.keys(ghostOptions().endpoints), ["company"], "ghostless Add must write only the new endpoint")
