@@ -808,17 +808,20 @@ try {
     }
 
     // 2. Real /connect equivalent: the host's own key-connect API, answering the legacy url form.
-    api("POST", "/api/integration/litellm/connect/key", "--data", JSON.stringify({
-      key: "sk-legacy-start",
-      answer: { url: legacyMock.baseUrl },
-    }))
     const integrationsNow = () => payload(jsonOutput(api("GET", "/api/integration"), "integration.list"))
     const connectionsOf = (id) => integrationsNow().find((item) => item.id === id)?.connections ?? []
     const type = async (tui2, value) => { for (const ch of value) { tui2.write(ch); await sleep(15) } await sleep(200) }
     const clear = async (tui2, length) => { for (let i = 0; i < length; i++) { tui2.write("\x7f"); await sleep(10) } }
 
-    const legacyConnectId = connectionsOf("litellm").map((c) => c.id)
-    assert.equal(legacyConnectId.length, 1, "legacy /connect must save exactly one credential")
+    // earlier phases share the data dir, so compare credential ids as a delta
+    const beforeConnectIds = connectionsOf("litellm").map((c) => c.id)
+    api("POST", "/api/integration/litellm/connect/key", "--data", JSON.stringify({
+      key: "sk-legacy-start",
+      answer: { url: legacyMock.baseUrl },
+    }))
+    const allConnectIds = connectionsOf("litellm").map((c) => c.id)
+    const legacyConnectId = allConnectIds.filter((id) => !beforeConnectIds.includes(id))
+    assert.equal(legacyConnectId.length, 1, `legacy /connect must save one new credential (before=${beforeConnectIds} after=${allConnectIds})`)
     assert(integrationsNow().some((i) => i.id === "litellm"), "legacy litellm integration must exist")
 
     const legacySession = payload(jsonOutput(api("POST", "/api/session", "--data", JSON.stringify({ title: "LiteLLM legacy mgmt" })), "session.create")).id
@@ -862,6 +865,7 @@ try {
     // 5. Edit Base URL through the UI → provider/models use the new address
     legacyTarget.keys.expected = "sk-legacy-replaced"
     const targetBefore = legacyTarget.acceptedRequests()
+    const oldUrlBefore = legacyMock.acceptedRequests() // discovery legitimately ran on the old address before the edit
     ml = await choose(tl, legacyDetail, "修改 Base URL", { anchor: /default[^|]*已启用 · 已连接/u, since: ml })
     await waitForTui(tl, /ID\s*不可修改/u, { from: ml })
     await clear(tl, legacyMock.baseUrl.length + 5)
@@ -874,7 +878,7 @@ try {
     assert(readLegacy().includes("// phase 3: legacy single-endpoint configuration"), "Edit removed user comments")
     for (let i = 0; i < 40 && legacyTarget.acceptedRequests() <= targetBefore; i++) await sleep(500)
     assert(legacyTarget.acceptedRequests() > targetBefore, "the edited Base URL was never used for discovery")
-    assert.equal(legacyMock.acceptedRequests(), 0, "the replaced/migrated endpoint must not query the old address")
+    assert.equal(legacyMock.acceptedRequests(), oldUrlBefore, "the migrated endpoint must not query the old address after the edit")
 
     // 7. Delete through the UI (definition + credential go)
     ml = await choose(tl, legacyDetail, "删除 endpoint", { anchor: /default[^|]*已启用 · 已连接/u, since: ml })

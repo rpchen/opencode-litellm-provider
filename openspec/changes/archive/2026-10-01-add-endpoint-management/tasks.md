@@ -14,7 +14,7 @@
 - [x] 3.2 `test/config-file.test.ts` `test/endpoint-manager.test.ts` `test/tui-endpoints.test.ts`（TUI → RPC → 配置文件/凭据 client 的纵向用例）
 
 ## 4. Real host E2E
-- [x] 4.1 Real OpenCode 2.0.16 E2E 阶段 2：`scripts/e2e-opencode-v2.mjs` 用 OpenCode 自己的 `plugin add` 安装固定 commit，在 PTY 中用真实按键驱动 TUI，仅以配置文件提供 options，覆盖 add → connect → activate → 模型可见 → edit Base URL（注释与高级字段保留）→ replace → disconnect → deactivate → delete → 重启后状态
+- [x] 4.1 Real OpenCode 2.0.16 E2E：`scripts/e2e-opencode-v2.mjs` 用 OpenCode 自己的 `plugin add` 安装固定 commit，在 PTY 中用真实按键驱动 TUI，覆盖三阶段：①既有启动恢复/activation 契约；②explicit endpoint 全流程（add → connect → activate → 模型可见 → edit Base URL（注释与高级字段保留）→ replace → disconnect → deactivate → delete → 重启后状态）；③legacy 全流程（真实 `/connect` 带 url answer → 迁移确认 → replace → edit 后新地址发现 → delete → 重启不复活）
 
 ## 5. README
 - [x] 5.1 `README updated: 管理 endpoint（/litellm-endpoints）`；同步删除“完整 CRUD 不在范围内”的旧说明
@@ -33,6 +33,7 @@
 | LIST-SINGLE | test\endpoint-manager.test.ts |
 | LIST-MULTI | test\endpoint-manager.test.ts, test\tui-endpoints.test.ts |
 | LIST-EXTERNAL | test\config-file.test.ts, test\endpoint-manager.test.ts |
+| LIST-LEGACY-GHOST | test\endpoint-manager.test.ts, test\tui-endpoints.test.ts |
 | ADD-OK | test\config-file.test.ts, test\endpoint-manager.test.ts, test\tui-endpoints.test.ts |
 | ADD-DUP | test\config-file.test.ts, test\endpoint-manager.test.ts, test\tui-endpoints.test.ts |
 | ADD-BAD-ID | test\config-file.test.ts, test\endpoint-manager.test.ts, test\tui-endpoints.test.ts |
@@ -40,12 +41,13 @@
 | ADD-INACTIVE | test\endpoint-manager.test.ts, test\tui-endpoints.test.ts |
 | ADD-PRESERVE | test\config-file.test.ts, test\endpoint-manager.test.ts |
 | ADD-LEGACY | test\config-file.test.ts, test\endpoint-manager.test.ts, test\tui-endpoints.test.ts |
+| ADD-ROLLBACK | test\endpoint-manager.test.ts |
 | EDIT-URL | test\config-file.test.ts, test\endpoint-manager.test.ts, test\tui-endpoints.test.ts |
 | EDIT-ID-READONLY | test\config-file.test.ts, test\tui-endpoints.test.ts |
 | EDIT-PRESERVE | test\config-file.test.ts, test\endpoint-manager.test.ts |
 | EDIT-ATOMIC | test\config-file.test.ts, test\endpoint-manager.test.ts |
 | EDIT-ISOLATED | test\config-file.test.ts, test\endpoint-manager.test.ts |
-| EDIT-ENV-LEGACY | test\endpoint-manager.test.ts |
+| LEGACY-MIGRATE | test\config-file.test.ts, test\endpoint-manager.test.ts, test\tui-endpoints.test.ts |
 | CRED-CONNECT | test\tui-endpoints.test.ts |
 | CRED-REPLACE | test\tui-endpoints.test.ts |
 | CRED-DISCONNECT | test\tui-endpoints.test.ts |
@@ -53,6 +55,7 @@
 | CRED-ACTIVATION-INDEPENDENT | test\tui-endpoints.test.ts |
 | CRED-CONNECT-CONSISTENT | test\tui-endpoints.test.ts |
 | CRED-INVALID-KEY | test\tui-endpoints.test.ts |
+| CRED-LEGACY-FORM | test\tui-endpoints.test.ts |
 | ACT-TOGGLE | test\tui-endpoints.test.ts |
 | ACT-ZERO | test\tui-endpoints.test.ts |
 | ACT-CRED-INDEPENDENT | test\tui-endpoints.test.ts |
