@@ -30,12 +30,16 @@ audit/diagnostics/integration/provider 注册都按静态 id 列表创建。为�
 ### D5 凭据：TUI 经宿主 client 操作
 Connect/Replace = `integration.connect.key` 后对新凭据 `credential.activate`，并移除此前已有的 credential（overwrite 语义）；Disconnect = 移除该 integration 下所有 `type:"credential"` 连接，env 连接只显示不删除。API Key 不经插件 RPC、不进日志/toast；失败信息里会把 key 字面量替换为 `***`。
 
+**表单校验（review 修正）**：legacy integration 的 key method 带必填 `url` form，OpenCode 会在认证前校验 form；漏传 `answer.url` 会被宿主拒绝。`saveKey` 先读取该 integration 的 key method：有 `url` 表单时必须带上 `answer: { url }`（地址来自 endpoint 定义/迁移），拿不到地址时直接拒绝并提示，绝不发送不完整的 connect。
+
 ### D6 activation 与 Add / Delete
-- Add：新 endpoint 必须 inactive。先把当前已激活集合物化为 `selected`（排除新 id）再写配置。取舍：此后手工新增的 endpoint 不会自动激活。
+- Add：新 endpoint 必须 inactive。先把当前已激活集合物化为 `selected`（排除新 id）再写配置。取舍：此后手工新增的 endpoint 不会自动激活。**Add 失败必须回滚 activation**（review 修正）：记录 previous activation，写配置失败（conflict / 写失败 / 外部并发修改）时 best-effort 恢复 previous 并 reconcile runtime；回滚自身失败时不吞掉，primary + rollback 错误一并报告。
 - Delete（先清理、最后删定义，可重试）：确认 → RPC `prepareRemove`（取消激活、reconcile 停掉该 endpoint 的 loop/provider、删除 snapshot 存储）→ TUI 移除该 endpoint 所有 credential → RPC `remove`（改配置、rebuild、从 activation 剔除、再次清 snapshot）。任一步失败，定义仍在。
 
-### D7 legacy 单 endpoint
-legacy 模式下 `default` 的地址在 `/connect` 凭据里，不在配置文件：详情页不提供 Edit/Delete；只有“新增第二个 endpoint”会触发迁移（确认后把凭据里的地址与顶层 `protocolOverrides` 写入 `options.endpoints.default`；integration id/凭据不变；旧 legacy snapshot key 被清除，因为 fingerprint 身份变化会重新发现）。
+### D7 legacy 单 endpoint（review 修正）
+legacy 模式下 `default` 的地址在 `/connect` 凭据里，不在配置文件。**不做产品例外**：详情页对 legacy default 同样提供 Edit / Delete / Connect / Replace，第一次执行这些动作时先提示迁移——把凭据里的地址与顶层 `protocolOverrides` 写入 `options.endpoints.default`（endpoint id、integration id、已保存 credential、activation 全部不变；旧 legacy snapshot key 清除，因为 fingerprint 身份变化会重新发现），随后动作照常执行。若 legacy 模式下没有已连接的地址，则不存在可管理的 `default`：列表不显示幽灵行，用户直接 Add。
+
+迁移与“新增第二个 endpoint 时的迁移”共用同一写入路径（`kind: "migrate"` / add 的 `migrateLegacy`），单次原子写入，失败不留半份配置。
 
 ### D8 E2E 环境
 真实 OpenCode TUI 需要 PTY：CI 在 Ubuntu，本地在 WSL 里跑；本地 E2E 使用仅含配置文件（不设 `OPENCODE_CONFIG_CONTENT`）的隔离 HOME/XDG，使配置文件是 options 的唯一来源。

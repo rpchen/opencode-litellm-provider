@@ -52,10 +52,14 @@ async function buildLegacy(context, options, dependencies, activation) {
     const endpoint = endpointIdentity("default", undefined, true);
     const snapshot = { ready: false, models: [], audit: { status: "disconnected" } };
     let endpointDispose;
+    // The integration is registered regardless of activation: an inactive endpoint must still accept
+    // Connect / Replace / Disconnect (and /connect must stay reachable) — activation gates only the
+    // provider/discovery lifecycle. This matches the explicit multi-endpoint mode.
+    const integrationRegistration = await registerIntegration(context, endpoint);
     const reconcile = async () => {
         const active = activeEndpointIds(["default"], activation()).includes("default");
         if (active && !endpointDispose) {
-            endpointDispose = await setupEndpoint(context, endpoint, options, dependencies, undefined, snapshot);
+            endpointDispose = await setupEndpoint(context, endpoint, options, dependencies, undefined, snapshot, false);
         }
         else if (!active && endpointDispose) {
             const dispose = endpointDispose;
@@ -79,6 +83,7 @@ async function buildLegacy(context, options, dependencies, activation) {
         async dispose() {
             await auditRegistration.dispose();
             await endpointDispose?.();
+            await integrationRegistration.dispose();
         },
     };
 }

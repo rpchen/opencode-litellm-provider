@@ -768,6 +768,155 @@ try {
     ])
   }
 
+  // ===== Phase 3: legacy single-endpoint start (real /connect credential) → management + migration =====
+  await stopAttachedTui(tui).catch(() => {})
+  openCodeServer.child.kill()
+  await sleep(1500)
+
+  const legacyMock = await startLiteLLM("sk-legacy-start")
+  const legacyTarget = await startLiteLLM("sk-legacy-target")
+  try {
+    secrets.push("sk-legacy-start", "sk-legacy-target", "sk-legacy-replaced")
+    // Legacy shape: NO explicit endpoints. The address lives in the /connect credential (its key method
+    // carries a required url form field), plus a top-level protocolOverrides and comments the UI must keep.
+    const legacyConfig = `{
+  // phase 3: legacy single-endpoint configuration
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [
+    {
+      "package": "${packageSpec}",
+      "options": {
+        "pollInterval": 30,
+        "futureOption": { "keep": ["legacy"] },
+        "protocolOverrides": { "demo-model": "chat" }
+      }
+    }
+  ]
+}
+`
+    writeFileSync(opencodeConfigFile, legacyConfig)
+    const readLegacy = () => readFileSync(opencodeConfigFile, "utf8")
+    const legacyOptions = () => JSON.parse(readLegacy().replace(/^\s*\/\/.*$/gmu, "")).plugins[0].options
+
+    openCodeServer = await startOpenCodeServer()
+    env.OPENCODE_PASSWORD = openCodeServer.password
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const state = payload(jsonOutput(api("GET", "/api/plugin"), "plugin.list"))
+      const item = Array.isArray(state) ? state.find((entry) => entry.id === "litellm") : undefined
+      if (item?.state?.status === "active") break
+      await sleep(500)
+    }
+
+    // 2. Real /connect equivalent: the host's own key-connect API, answering the legacy url form.
+    api("POST", "/api/integration/litellm/connect/key", "--data", JSON.stringify({
+      key: "sk-legacy-start",
+      answer: { url: legacyMock.baseUrl },
+    }))
+    const integrationsNow = () => payload(jsonOutput(api("GET", "/api/integration"), "integration.list"))
+    const connectionsOf = (id) => integrationsNow().find((item) => item.id === id)?.connections ?? []
+    const type = async (tui2, value) => { for (const ch of value) { tui2.write(ch); await sleep(15) } await sleep(200) }
+    const clear = async (tui2, length) => { for (let i = 0; i < length; i++) { tui2.write("\x7f"); await sleep(10) } }
+
+    const legacyConnectId = connectionsOf("litellm").map((c) => c.id)
+    assert.equal(legacyConnectId.length, 1, "legacy /connect must save exactly one credential")
+    assert(integrationsNow().some((i) => i.id === "litellm"), "legacy litellm integration must exist")
+
+    const legacySession = payload(jsonOutput(api("POST", "/api/session", "--data", JSON.stringify({ title: "LiteLLM legacy mgmt" })), "session.create")).id
+    api("POST", `/api/session/${legacySession}/command`, "--data", JSON.stringify({ name: "litellm-endpoints", text: "" }))
+
+    // 3. management UI opens the legacy default (with its connected address)
+    const tl = startAttachedTui(legacySession)
+    let ml = tl.mark()
+    await waitForTui(tl, "＋ 新增 endpoint", { from: ml })
+    await waitForTui(tl, /default[^|]*已连接/u, { from: ml })
+    assert(legacyOptions().endpoints === undefined, "test setup must start in legacy mode")
+
+    // phase 2 left an explicit activation selection; enable everything first (the legacy default row is
+    // inactive until then, and an inactive endpoint still keeps its /connect integration).
+    ml = await choose(tl, ["＋ 新增 endpoint", "全部启用", "全部停用", "○ default"], "全部启用", { since: ml })
+    await waitForTui(tl, /default[^|]*已启用 · 已连接/u, { from: ml })
+
+    // 4. credential management through the UI: Replace first migrates (confirm), then saves the new key
+    ml = await choose(tl, ["＋ 新增 endpoint", "全部启用", "全部停用", "✓ default"], "✓ default", { since: ml })
+    const legacyDetail = ["停用", "修改 Base URL", "替换 API Key", "断开凭据", "删除 endpoint", "返回"]
+    ml = await choose(tl, legacyDetail, "替换 API Key", { anchor: /default[^|]*已启用 · 已连接/u, since: ml })
+    await waitForTui(tl, /迁移为可管理配置/u, { from: ml })
+    ml = tl.mark()
+    tl.write("\r") // Confirm on the migration dialog (default focus, probed on the real TUI)
+    await waitForTui(tl, /替换\s*\S*\s*的\s*API/u, { from: ml })
+    await type(tl, "sk-legacy-replaced")
+    ml = tl.mark()
+    tl.write("\r")
+    await waitForTui(tl, /default[^|]*已启用 · 已连接/u, { from: ml })
+    const afterMigrate = legacyOptions()
+    assert.equal(afterMigrate.endpoints?.default?.baseUrl, legacyMock.baseUrl, "migration must materialise the connected address")
+    assert.deepEqual(afterMigrate.endpoints.default.protocolOverrides, { "demo-model": "chat" }, "migration must move protocolOverrides")
+    assert.equal(afterMigrate.protocolOverrides, undefined, "migration must remove the top-level protocolOverrides")
+    assert.equal(afterMigrate.futureOption.keep[0], "legacy", "migration lost an unknown option")
+    assert(readLegacy().includes("// phase 3: legacy single-endpoint configuration"), "migration removed user comments")
+    const migratedIds = connectionsOf("litellm").map((c) => c.id)
+    assert.equal(migratedIds.length, 1, "Replace must overwrite, leaving exactly one credential")
+    assert.notDeepEqual(migratedIds, legacyConnectId, "Replace must install a new credential")
+    assert(integrationsNow().some((i) => i.id === "litellm"), "migration must keep integration id litellm")
+
+    // 5. Edit Base URL through the UI → provider/models use the new address
+    legacyTarget.keys.expected = "sk-legacy-replaced"
+    const targetBefore = legacyTarget.acceptedRequests()
+    ml = await choose(tl, legacyDetail, "修改 Base URL", { anchor: /default[^|]*已启用 · 已连接/u, since: ml })
+    await waitForTui(tl, /ID\s*不可修改/u, { from: ml })
+    await clear(tl, legacyMock.baseUrl.length + 5)
+    await type(tl, legacyTarget.baseUrl)
+    ml = tl.mark()
+    tl.write("\r")
+    await waitForTui(tl, /default[^|]*已启用 · 已连接/u, { from: ml })
+    assert.equal(legacyOptions().endpoints.default.baseUrl, legacyTarget.baseUrl, "Edit must update the migrated Base URL")
+    assert.deepEqual(legacyOptions().endpoints.default.protocolOverrides, { "demo-model": "chat" }, "Edit dropped protocolOverrides")
+    assert(readLegacy().includes("// phase 3: legacy single-endpoint configuration"), "Edit removed user comments")
+    for (let i = 0; i < 40 && legacyTarget.acceptedRequests() <= targetBefore; i++) await sleep(500)
+    assert(legacyTarget.acceptedRequests() > targetBefore, "the edited Base URL was never used for discovery")
+    assert.equal(legacyMock.acceptedRequests(), 0, "the replaced/migrated endpoint must not query the old address")
+
+    // 7. Delete through the UI (definition + credential go)
+    ml = await choose(tl, legacyDetail, "删除 endpoint", { anchor: /default[^|]*已启用 · 已连接/u, since: ml })
+    await waitForTui(tl, /将彻底删除/u, { from: ml })
+    ml = tl.mark()
+    tl.write("\r") // Confirm (default focus)
+    await waitForTui(tl, /已删除\s*endpoint/u, { from: ml })
+    assert(!("default" in legacyOptions().endpoints), "Delete left the endpoint definition")
+    assert.equal(connectionsOf("litellm").length, 0, "Delete left the legacy credential")
+    tl.write("\x1b")
+    await sleep(300)
+    await stopAttachedTui(tl)
+
+    // 8-9. restart: the deleted legacy endpoint does not resurrect
+    openCodeServer.child.kill()
+    await sleep(2000)
+    openCodeServer = await startOpenCodeServer()
+    env.OPENCODE_PASSWORD = openCodeServer.password
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const state = payload(jsonOutput(api("GET", "/api/plugin"), "plugin.list"))
+      const item = Array.isArray(state) ? state.find((entry) => entry.id === "litellm") : undefined
+      if (item?.state?.status === "active") break
+      await sleep(500)
+    }
+    assert.equal(connectionsOf("litellm").length, 0, "deleted legacy endpoint resurrected after restart")
+    const legacySession2 = payload(jsonOutput(api("POST", "/api/session", "--data", JSON.stringify({ title: "LiteLLM legacy restart" })), "session.create")).id
+    api("POST", `/api/session/${legacySession2}/command`, "--data", JSON.stringify({ name: "litellm-endpoints", text: "" }))
+    const tl2 = startAttachedTui(legacySession2)
+    const ml2 = tl2.mark()
+    await waitForTui(tl2, "＋ 新增 endpoint", { from: ml2 })
+    assert(!tl2.output(ml2).includes("default"), "deleted legacy endpoint is still listed after restart")
+    tl2.write("\x1b")
+    await sleep(300)
+    await stopAttachedTui(tl2)
+    console.log("Real OpenCode 2.0.16 legacy endpoint management E2E passed: real /connect credential, migration, Edit, Delete + restart")
+  } finally {
+    await Promise.all([
+      new Promise((resolve) => legacyMock.server.close(resolve)),
+      new Promise((resolve) => legacyTarget.server.close(resolve)),
+    ])
+  }
+
   console.log("Real OpenCode 2.0.16 E2E passed: startup recovery, native keyboard activation, endpoint-scoped diagnostics, credentials, providers and models are verified.")
 } catch (error) {
   await dumpFailureDiagnostics()

@@ -72,6 +72,7 @@ export async function registerEndpointActivation(context, endpointIds, read, app
         edit: (input) => mutation(() => management.edit(input)),
         prepareRemove: (input) => mutation(() => management.prepareRemove(input)),
         remove: (input) => mutation(() => management.remove(input)),
+        migrate: () => mutation(() => management.migrate()),
     };
     rpc = await context.rpc.register(endpointRpc, handlers);
     try {

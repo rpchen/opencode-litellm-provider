@@ -73,6 +73,9 @@ jobs:
       - name: Validate OpenSpec
         run: npm run validate:spec
 
+      - name: Enforce 100% specification scenario coverage
+        run: npm run test:scenario-coverage
+
       - name: Install and initialize the delivered tarball without lifecycle scripts
         run: npm run test:package
 

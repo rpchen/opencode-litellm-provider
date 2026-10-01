@@ -175,6 +175,37 @@ describe("config-file (JSONC, comment-preserving)", () => {
     expect(parsed.plugins[1]).toEqual({ package: PKG, options: { endpoints: { first: { baseUrl: "https://f.example" } } } })
   })
 
+  test("[LEGACY-MIGRATE] migrate moves the connected address + top-level protocolOverrides into endpoints.default, keeping comments", async () => {
+    const legacy = `{
+  // keep me
+  "plugins": [{ "package": "${PKG}", "options": { "pollInterval": 60, "protocolOverrides": { "m": "chat" }, "futureOption": 7 } }]
+}
+`
+    const t = setup(legacy)
+    const result = mutateEndpoints({ file: t.file }, { kind: "migrate", baseUrl: "https://old.example" }, { sourceTarget: PKG })
+    expect(result.migratedLegacy).toBe(true)
+    const options = readPluginOptions({ file: t.file }, PKG) as any
+    expect(options.protocolOverrides).toBeUndefined()
+    expect(options.pollInterval).toBe(60)
+    expect(options.futureOption).toBe(7)
+    expect(options.endpoints).toEqual({ default: { baseUrl: "https://old.example", protocolOverrides: { m: "chat" } } })
+    expect(t.text()).toContain("// keep me")
+    // after migration everything is normal and migrating again is refused
+    mutateEndpoints({ file: t.file }, { kind: "edit", id: "default", baseUrl: "https://x.example" }, { sourceTarget: PKG })
+    expect((readPluginOptions({ file: t.file }, PKG) as any).endpoints.default.baseUrl).toBe("https://x.example")
+    expect(code(() => mutateEndpoints({ file: t.file }, { kind: "migrate", baseUrl: "https://y.example" }, { sourceTarget: PKG }))).resolves.toBe("not-legacy")
+  })
+
+  test("[LEGACY-MIGRATE][EDIT-ATOMIC] a failed migrate leaves the file untouched (no partial config)", () => {
+    const legacy = `{ "plugins": [{ "package": "${PKG}", "options": { "protocolOverrides": { "m": "chat" } } }] }`
+    const t = setup(legacy)
+    expect(() => mutateEndpoints({ file: t.file }, { kind: "migrate", baseUrl: "https://old.example" }, {
+      sourceTarget: PKG,
+      rename: () => { throw new Error("disk full") },
+    })).toThrow("disk full")
+    expect(t.text()).toBe(legacy)
+  })
+
   test("legacy default cannot be edited/deleted here (its address lives in the credential)", async () => {
     const t = setup(`{ "plugins": [{ "package": "${PKG}", "options": { "pollInterval": 60 } }] }`)
     expect(await code(() => mutateEndpoints({ file: t.file }, { kind: "edit", id: "default", baseUrl: "https://x.example" }, { sourceTarget: PKG }))).toBe("legacy-default")

@@ -13,7 +13,7 @@ import { validateBaseUrl, validateEndpointId } from "../endpoint-input.js"
 
 export type ConfigErrorCode =
   | "no-file" | "no-entry" | "parse" | "shape" | "duplicate" | "invalid-id" | "invalid-url"
-  | "not-found" | "conflict" | "legacy-conflict" | "needs-migration" | "legacy-default"
+  | "not-found" | "conflict" | "legacy-conflict" | "needs-migration" | "legacy-default" | "not-legacy"
 
 export class ConfigFileError extends Error {
   constructor(readonly code: ConfigErrorCode, message: string) {
@@ -100,6 +100,8 @@ export type EndpointMutation =
   | { kind: "add"; id: string; baseUrl: string; migrateLegacy?: { baseUrl: string } | undefined; confirmMigration?: boolean }
   | { kind: "edit"; id: string; baseUrl: string }
   | { kind: "delete"; id: string }
+  /** Legacy single-endpoint → explicit `options.endpoints.default` (identity and credential unchanged). */
+  | { kind: "migrate"; baseUrl: string }
 
 export interface MutationResult {
   migratedLegacy: boolean
@@ -179,9 +181,22 @@ export function mutateEndpoints(target: ConfigTarget, mutation: EndpointMutation
       if ("protocolOverrides" in currentOptions) apply([...optionsPath, "protocolOverrides"], undefined)
       apply([...optionsPath, "endpoints"], created)
     }
+  } else if (mutation.kind === "migrate") {
+    if (explicit) throw new ConfigFileError("not-legacy", "配置已是显式 endpoints 形式，无需迁移")
+    // Move the legacy address (stored in the /connect credential) and top-level protocolOverrides into
+    // options.endpoints.default. Endpoint id, integration id and the saved credential are untouched.
+    const created: Record<string, Json> = {
+      default: {
+        baseUrl,
+        ...(currentOptions.protocolOverrides !== undefined ? { protocolOverrides: currentOptions.protocolOverrides } : {}),
+      },
+    }
+    if ("protocolOverrides" in currentOptions) apply([...optionsPath, "protocolOverrides"], undefined)
+    apply([...optionsPath, "endpoints"], created)
+    migrated = true
   } else {
     if (!explicit) {
-      throw new ConfigFileError("legacy-default", "默认 endpoint 来自单 endpoint 连接配置（/connect 时填写的地址）；请用 /connect 重新连接来更换地址，或先新增一个 endpoint 迁移为多 endpoint 配置")
+      throw new ConfigFileError("legacy-default", "默认 endpoint 来自单 endpoint 连接配置（/connect 时填写的地址）；请先迁移到可管理配置再修改或删除")
     }
     if (!(mutation.id in endpoints)) throw new ConfigFileError("not-found", `Endpoint ${mutation.id} 不存在`)
     if (mutation.kind === "edit") {

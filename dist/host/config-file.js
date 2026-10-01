@@ -158,9 +158,25 @@ export function mutateEndpoints(target, mutation, options = {}) {
             apply([...optionsPath, "endpoints"], created);
         }
     }
+    else if (mutation.kind === "migrate") {
+        if (explicit)
+            throw new ConfigFileError("not-legacy", "配置已是显式 endpoints 形式，无需迁移");
+        // Move the legacy address (stored in the /connect credential) and top-level protocolOverrides into
+        // options.endpoints.default. Endpoint id, integration id and the saved credential are untouched.
+        const created = {
+            default: {
+                baseUrl,
+                ...(currentOptions.protocolOverrides !== undefined ? { protocolOverrides: currentOptions.protocolOverrides } : {}),
+            },
+        };
+        if ("protocolOverrides" in currentOptions)
+            apply([...optionsPath, "protocolOverrides"], undefined);
+        apply([...optionsPath, "endpoints"], created);
+        migrated = true;
+    }
     else {
         if (!explicit) {
-            throw new ConfigFileError("legacy-default", "默认 endpoint 来自单 endpoint 连接配置（/connect 时填写的地址）；请用 /connect 重新连接来更换地址，或先新增一个 endpoint 迁移为多 endpoint 配置");
+            throw new ConfigFileError("legacy-default", "默认 endpoint 来自单 endpoint 连接配置（/connect 时填写的地址）；请先迁移到可管理配置再修改或删除");
         }
         if (!(mutation.id in endpoints))
             throw new ConfigFileError("not-found", `Endpoint ${mutation.id} 不存在`);

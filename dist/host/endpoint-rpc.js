@@ -82,6 +82,8 @@ export const endpointRpc = {
         prepareRemove: { input: idInput, output: result },
         /** Step 2 of Delete: remove the definition (after the client removed the credentials). */
         remove: { input: idInput, output: result },
+        /** Legacy single-endpoint → explicit `options.endpoints.default`; identity and credential stay unchanged. */
+        migrate: { input: noInput, output: result },
     },
     events: {
         shown: { schema: state },

@@ -46,7 +46,7 @@ opencode plugin add github:rpchen/opencode-litellm-provider#v0.4.3
 
 连接完成后，模型选择器中会出现 **LiteLLM** provider 和当前 Key 可见的模型。发现和模型调用始终使用同一个活动连接。
 
-这是 legacy 单 endpoint 模式，升级 PR9 后无需迁移：它仍使用原来的 `litellm` integration、credential 和 snapshot namespace。
+这是 legacy 单 endpoint 模式；升级到支持 multi-endpoint 的版本后无需迁移：它仍使用原来的 `litellm` integration、credential 和 snapshot namespace。
 
 ### 3. 选择模型并使用
 
@@ -265,7 +265,7 @@ opencode reload
 
 `/v1/model/info` 是模型发现的事实来源；`/v1/models` 不作为发现源。embedding、图像生成等非对话模型不会注册。models.dev 能力补缺优先使用原厂记录；原厂 provider 记录不可用时依次使用 OpenRouter、OpenCode，再考虑全局唯一记录，避免多网关同名模型因为 provider 歧义而丢失 context、输出上限或 reasoning 等关键能力。
 
-模型上限按 PR8 的发现规则合并：总 context 与最大 input 分开处理；models.dev 可补充总 context，LiteLLM 的 `max_input_tokens` 仍作为 input 限制。两者冲突时不会再把 input 上限误当成总 context。Core diagnostics 会保留 models.dev 未命中的私有模型用于解释，但若最终仍无法得到正数 context/output，OpenCode 不会把该模型发布成 `context: 0` / `output: 0` 的不可用配置。
+模型上限按共享发现规则合并：总 context 与最大 input 分开处理；models.dev 可补充总 context，LiteLLM 的 `max_input_tokens` 仍作为 input 限制。两者冲突时不会再把 input 上限误当成总 context。Core diagnostics 会保留 models.dev 未命中的私有模型用于解释，但若最终仍无法得到正数 context/output，OpenCode 不会把该模型发布成 `context: 0` / `output: 0` 的不可用配置。
 
 ## 升级与回滚
 

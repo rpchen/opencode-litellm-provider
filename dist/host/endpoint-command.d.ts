@@ -48,6 +48,8 @@ export interface EndpointManagement {
     remove(input: {
         endpointId: string;
     }): Promise<Omit<MutationView, "state">>;
+    /** Migrate the legacy single-endpoint configuration to explicit `endpoints.default` (no identity change). */
+    migrate(): Promise<Omit<MutationView, "state">>;
     /** Re-read the canonical config before each view so hand edits are visible. */
     refresh?(): Promise<void>;
 }

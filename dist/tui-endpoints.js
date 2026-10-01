@@ -26,11 +26,31 @@ export async function credentialKind(client, endpointId) {
         return "none";
     }
 }
-/** Connect (or replace) an endpoint's key through the host credential store. The key is never returned. */
-export async function saveKey(client, endpointId, key) {
+/** Does this integration's key auth method carry a `url` form field (legacy integrations do)? */
+export async function keyMethodRequiresUrl(client, endpointId) {
+    try {
+        const info = unwrap(await client.integration.get({ integrationID: integrationIdFor(endpointId) }));
+        const keyMethod = info?.methods?.find((method) => method.type === "key");
+        return Array.isArray(keyMethod?.form) && keyMethod.form.some((field) => field?.key === "url");
+    }
+    catch {
+        return false;
+    }
+}
+/**
+ * Connect (or replace) an endpoint's key through the host credential store. The key is never returned.
+ *
+ * OpenCode validates the key method's form before authenticating: a legacy integration requires the
+ * `url` answer, so omitting it makes the host reject the credential (the endpoint is left unconnected).
+ */
+export async function saveKey(client, endpointId, key, url) {
     const integrationID = integrationIdFor(endpointId);
     const before = credentialIds(await connectionsOf(client, endpointId));
-    await client.integration.connect.key({ integrationID, key });
+    const needsUrl = await keyMethodRequiresUrl(client, endpointId);
+    if (needsUrl && !url) {
+        throw new Error("该 endpoint 的认证表单还需要 LiteLLM 地址（url）；请先迁移为可管理配置后再连接");
+    }
+    await client.integration.connect.key({ integrationID, key, ...(needsUrl && url ? { answer: { url } } : {}) });
     const after = credentialIds(await connectionsOf(client, endpointId));
     const added = after.filter((id) => !before.includes(id));
     const newest = added.at(-1);
@@ -126,11 +146,11 @@ export function createEndpointUi(deps) {
         if (!check.ok)
             return warn(check.message);
         try {
-            await saveKey(client, item.id, check.key);
+            await saveKey(client, item.id, check.key, item.baseUrl);
             info(`${item.id} 的 API Key 已${replacing ? "替换" : "保存"}`);
         }
         catch (caught) {
-            error(`保存 API Key 失败：${messageOf(caught).replaceAll(check.key, "***")}`);
+            error(`保存 API Key 失败：${messageOf(caught).replaceAll(check.key, "***").replaceAll(item.baseUrl, "***")}`);
         }
     };
     const disconnect = async (item) => {
@@ -173,6 +193,30 @@ export function createEndpointUi(deps) {
             return false;
         }
     };
+    /** Legacy default: first migrate to the manageable config form, keeping every identity. */
+    const ensureManaged = async (item, action) => {
+        if (!item.legacy)
+            return true;
+        const ok = await dialog.confirm({
+            title: "迁移为可管理配置",
+            message: `${item.id} 目前是 legacy 单 endpoint 配置（地址保存在 /connect 凭据里）。${action}前需要把它迁移为 options.endpoints.${item.id}；` +
+                "endpoint id、integration、已保存的 API Key 和启用状态保持不变，发现缓存会重新生成。是否继续？",
+        });
+        if (!ok)
+            return false;
+        try {
+            const result = unwrap(await rpc.migrate({}));
+            if (!result.ok) {
+                error(result.message ?? "迁移失败");
+                return false;
+            }
+            return true;
+        }
+        catch (caught) {
+            error(`迁移失败：${messageOf(caught)}`);
+            return false;
+        }
+    };
     const detail = async (id) => {
         for (;;) {
             if (deps.isDisposed())
@@ -182,7 +226,9 @@ export function createEndpointUi(deps) {
             if (!item)
                 return warn(`未知 LiteLLM endpoint：${id}`);
             const kind = await credentialKind(client, id);
-            const canWrite = state.writable !== false && !item.legacy;
+            // Legacy default is fully manageable: Edit/Connect/Delete first migrate it to
+            // options.endpoints.default (same id, integration and credential), then run normally.
+            const canWrite = state.writable !== false;
             const options = [
                 { title: item.active ? "停用" : "启用", value: "toggle" },
                 ...(canWrite ? [{ title: "修改 Base URL", value: "edit" }] : []),
@@ -199,13 +245,13 @@ export function createEndpointUi(deps) {
                 return;
             if (choice === "toggle")
                 await setActive(id);
-            else if (choice === "edit")
-                await editUrl(item);
-            else if (choice === "connect")
-                await connect(item, kind);
             else if (choice === "disconnect")
                 await disconnect(item);
-            else if (choice === "delete" && (await deleteEndpoint(item)))
+            else if (choice === "edit" && (await ensureManaged(item, "修改 Base URL")))
+                await editUrl(item);
+            else if (choice === "connect" && (await ensureManaged(item, "管理 API Key")))
+                await connect(item, kind);
+            else if (choice === "delete" && (await ensureManaged(item, "删除")) && (await deleteEndpoint(item)))
                 return;
         }
     };

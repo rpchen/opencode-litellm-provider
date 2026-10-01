@@ -8,6 +8,8 @@ const messageOf = (error) => (error instanceof Error ? error.message : String(er
 export function createEndpointManagement(host) {
     let problem;
     let located = false;
+    /** Legacy default's address (kept in the /connect credential); resolved on every refresh. */
+    let legacyUrl;
     const normalize = (raw) => JSON.stringify(parseOptions(raw, QUIET));
     const locate = async () => {
         const target = host.target ?? locateConfig(host.env, await host.sourceTarget());
@@ -17,6 +19,7 @@ export function createEndpointManagement(host) {
     /** Read the canonical file, flag shadowed/unreadable configs, and sync the runtime to hand edits. */
     async function refresh() {
         problem = undefined;
+        legacyUrl = undefined;
         const target = await locate();
         if (!target) {
             problem = "找不到声明了 LiteLLM 插件的配置文件（OPENCODE_CONFIG 或全局 opencode.jsonc）；请在其中声明插件后再管理 endpoint";
@@ -30,6 +33,7 @@ export function createEndpointManagement(host) {
             problem = messageOf(error);
             return;
         }
+        legacyUrl = host.options().endpoints === undefined ? await host.legacyBaseUrl() : undefined;
         const running = JSON.stringify(host.options());
         const fromFile = normalize(fileOptions);
         if (running === fromFile)
@@ -63,8 +67,11 @@ export function createEndpointManagement(host) {
     const currentEndpoints = () => {
         const options = host.options();
         const active = new Set(activeEndpointIds(host.ids(), host.activation()));
-        if (options.endpoints === undefined)
-            return [{ id: "default", baseUrl: "", active: active.has("default"), legacy: true }];
+        // Legacy default is not a config entry: its address lives in the /connect credential. With no
+        // connected address there is no endpoint at all — do not show a ghost "default" row.
+        if (options.endpoints === undefined) {
+            return legacyUrl ? [{ id: "default", baseUrl: legacyUrl, active: active.has("default"), legacy: true }] : [];
+        }
         return Object.entries(options.endpoints).map(([id, definition]) => ({
             id,
             baseUrl: definition.baseUrl,
@@ -97,11 +104,14 @@ export function createEndpointManagement(host) {
             if (blocked)
                 return blocked;
             const target = (await locate());
+            const previousActivation = host.activation();
+            let pinned = false;
             try {
                 const legacy = host.options().endpoints === undefined;
                 const address = legacy ? await host.legacyBaseUrl() : undefined;
                 // New endpoints start inactive: pin the current active set (without the new id) before writing.
                 await materializeActivation(input.endpointId);
+                pinned = true;
                 const result = await write(target, {
                     kind: "add",
                     id: input.endpointId,
@@ -112,6 +122,37 @@ export function createEndpointManagement(host) {
                 await afterWrite(target);
                 if (result.migratedLegacy)
                     await host.removeStorage(discoverySnapshotKey("default", true)).catch(() => { });
+                return { ok: true, migrated: result.migratedLegacy };
+            }
+            catch (error) {
+                // A failed Add must not leave the activation permanently materialised as "selected".
+                let rollbackFailure = "";
+                if (pinned) {
+                    try {
+                        await host.setActivation(previousActivation); // also reconciles the runtime back
+                    }
+                    catch (rollbackError) {
+                        rollbackFailure = `; activation 回滚失败：${messageOf(rollbackError)}`;
+                    }
+                }
+                const primary = error instanceof ConfigFileError ? fail(error.code, error.message) : fail("error", messageOf(error));
+                return rollbackFailure ? { ...primary, message: `${primary.message}${rollbackFailure}` } : primary;
+            }
+        },
+        async migrate() {
+            const blocked = await writable();
+            if (blocked)
+                return blocked;
+            if (host.options().endpoints !== undefined)
+                return { ok: true, migrated: false }; // already explicit
+            const target = (await locate());
+            try {
+                const address = await host.legacyBaseUrl();
+                if (!address)
+                    return fail("not-found", "没有可迁移的 legacy 地址（当前没有已连接的 LiteLLM endpoint）");
+                const result = await write(target, { kind: "migrate", baseUrl: address });
+                await afterWrite(target);
+                await host.removeStorage(discoverySnapshotKey("default", true)).catch(() => { });
                 return { ok: true, migrated: result.migratedLegacy };
             }
             catch (error) {
@@ -141,7 +182,7 @@ export function createEndpointManagement(host) {
             if (blocked)
                 return blocked;
             if (host.options().endpoints === undefined) {
-                return fail("legacy-default", "默认 endpoint 来自单 endpoint 连接配置，不能在这里删除；请用 /connect 管理其凭据");
+                return fail("legacy-default", "默认 endpoint 仍是 legacy 单 endpoint 配置；请先迁移到可管理配置");
             }
             if (!currentEndpoints().some((entry) => entry.id === input.endpointId))
                 return fail("not-found", `Endpoint ${input.endpointId} 不存在`);

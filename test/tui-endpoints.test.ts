@@ -12,9 +12,20 @@ import {
 
 type Step = { select: string | undefined } | { prompt: string | undefined } | { confirm: boolean }
 
-function world(initial: { endpoints: Array<{ id: string; baseUrl: string; active: boolean }>; legacy?: boolean; writable?: boolean; failCredentialRemove?: boolean; credentials?: Record<string, Array<{ type: string; id?: string; name?: string }>> }) {
+function world(initial: {
+  endpoints: Array<{ id: string; baseUrl: string; active: boolean }>
+  legacy?: boolean
+  /** Legacy default's connected address (the credential stores it; the config does not). */
+  legacyUrl?: string
+  /** Legacy integration's key method carries a required url form field. */
+  legacyKeyForm?: boolean
+  writable?: boolean
+  failCredentialRemove?: boolean
+  failMigrate?: boolean
+  credentials?: Record<string, Array<{ type: string; id?: string; name?: string }>>
+}) {
   let endpoints = initial.endpoints.map((entry) => ({ ...entry, legacy: false }))
-  if (initial.legacy) endpoints = [{ id: "default", baseUrl: "", active: true, legacy: true }]
+  if (initial.legacy) endpoints = [{ id: "default", baseUrl: initial.legacyUrl ?? "", active: true, legacy: true }]
   const creds: Record<string, Array<{ type: string; id?: string; name?: string }>> = structuredClone(initial.credentials ?? {})
   let nextId = 1
   const calls: string[] = []
@@ -26,12 +37,13 @@ function world(initial: { endpoints: Array<{ id: string; baseUrl: string; active
     sequence: 1, sessionID: "s", mode: "selected",
     endpointIds: endpoints.map((e) => e.id),
     activeEndpointIds: endpoints.filter((e) => e.active).map((e) => e.id),
-    endpoints: endpoints.map((e) => ({ ...e })),
+    endpoints: endpoints.map((e) => ({ ...e })).filter((e) => !e.legacy || e.baseUrl !== ""),
     writable: initial.writable ?? true,
     ...(initial.writable === false ? { configProblem: "配置为只读" } : {}),
     legacyMigration: Boolean(initial.legacy),
   })
   const wrap = (ok: boolean, code?: string, message?: string, migrated = false) => ({ ok, ...(code ? { code } : {}), ...(message ? { message } : {}), migrated, state: state() })
+  const connectCalls: Array<{ integrationID: string; key: string; answer?: unknown }> = []
 
   const rpc: EndpointRpcClient = {
     state: async () => state(),
@@ -56,13 +68,29 @@ function world(initial: { endpoints: Array<{ id: string; baseUrl: string; active
     },
     prepareRemove: async (input) => { calls.push(`prepareRemove:${input.endpointId}`); endpoints = endpoints.map((e) => e.id === input.endpointId ? { ...e, active: false } : e); return wrap(true) },
     remove: async (input) => { calls.push(`remove:${input.endpointId}`); endpoints = endpoints.filter((e) => e.id !== input.endpointId); return wrap(true) },
+    migrate: async () => {
+      calls.push("migrate")
+      if (initial.failMigrate) return wrap(false, "error", "迁移失败")
+      // legacy → explicit: same id, same credential, address now lives in the config
+      endpoints = endpoints.map((e) => (e.legacy ? { id: "default", baseUrl: initial.legacyUrl ?? e.baseUrl, active: e.active, legacy: false } : e))
+      return wrap(true, undefined, undefined, true)
+    },
   }
 
   const client: CredentialClient = {
     integration: {
-      get: async (input) => ({ data: { connections: creds[input.integrationID] ?? [] } }),
+      get: async (input) => ({
+        data: {
+          connections: creds[input.integrationID] ?? [],
+          methods: [{
+            type: "key",
+            ...(initial.legacyKeyForm ? { form: [{ key: "url", type: "string", required: true }] } : {}),
+          }],
+        },
+      }),
       connect: { key: async (input) => {
         calls.push(`connect:${input.integrationID}`)
+        connectCalls.push({ integrationID: input.integrationID, key: input.key, ...(input.answer ? { answer: input.answer } : {}) })
         creds[input.integrationID] = [...(creds[input.integrationID] ?? []), { type: "credential", id: `cred-${nextId++}` }]
       } },
     },
@@ -97,7 +125,7 @@ function world(initial: { endpoints: Array<{ id: string; baseUrl: string; active
   const toast = { show: (input: { variant: "info" | "success" | "warning" | "error"; message: string }) => { toasts.push(input) } }
   const ui = createEndpointUi({ dialog: dialog as never, toast, rpc, client, isDisposed: () => false })
   return {
-    calls, toasts, log, creds,
+    calls, toasts, log, creds, connectCalls,
     run: async (script: Step[]) => { steps = [...script]; await ui.run(state()); expect(steps).toEqual([]) },
     endpoints: () => endpoints,
   }
@@ -145,12 +173,19 @@ describe("TUI endpoint management (host-native dialogs)", () => {
     expect(w.log.filter((l) => l.kind === "prompt" && l.title.includes("输入无效")).length).toBe(3)
   })
 
-  test("[ADD-LEGACY] legacy: migration confirmation is asked; declining sends nothing, accepting sends confirmMigration", async () => {
-    const w = world({ endpoints: [], legacy: true })
+  test("[ADD-LEGACY] legacy with a connected address: migration confirmation is asked; declining sends nothing, accepting sends confirmMigration", async () => {
+    const w = world({ endpoints: [], legacy: true, legacyUrl: "https://old.example" })
     await w.run([{ select: "add" }, { prompt: "lab" }, { prompt: "https://lab.example" }, { confirm: false }, { select: undefined }])
     expect(w.calls.filter((c) => c.startsWith("add:"))).toEqual([])
     await w.run([{ select: "add" }, { prompt: "lab" }, { prompt: "https://lab.example" }, { confirm: true }, { select: undefined }])
     expect(w.calls).toContain("add:lab:https://lab.example:true")
+  })
+
+  test("[ADD-LEGACY][LIST-LEGACY-GHOST] legacy without any connected address: nothing to migrate, Add proceeds without a confirmation", async () => {
+    const w = world({ endpoints: [], legacy: true })
+    await w.run([{ select: "add" }, { prompt: "first" }, { prompt: "https://first.example" }, { select: undefined }])
+    expect(w.calls).toContain("add:first:https://first.example:false")
+    expect(w.log.filter((l) => l.kind === "confirm")).toEqual([])
   })
 
   test("Add is refused with the reason when the config is read-only", async () => {
@@ -237,11 +272,74 @@ describe("TUI endpoint management (host-native dialogs)", () => {
     expect(w.toasts.some((x) => x.variant === "error" && x.message.includes("可重试"))).toBe(true)
   })
 
-  test("legacy default offers no Edit/Delete in its detail screen (its address lives in the credential)", async () => {
-    const w = world({ endpoints: [], legacy: true })
-    await w.run([{ select: "endpoint:default" }, { select: "back" }, { select: undefined }])
+  test("[LEGACY-MIGRATE] legacy detail offers the full management flow; Edit migrates first, then edits", async () => {
+    const w = world({ endpoints: [], legacy: true, legacyUrl: "https://old.example" })
+    await w.run([{ select: "endpoint:default" }, { select: "edit" }, { confirm: true }, { prompt: "https://new.example" }, { select: "back" }, { select: undefined }])
     const detail = w.log.find((l) => l.kind === "select" && l.title.startsWith("default"))!
-    expect(detail.options!.map((o) => o.value)).toEqual(["toggle", "connect", "back"])
+    expect(detail.options!.map((o) => o.value)).toEqual(["toggle", "edit", "connect", "delete", "back"])
+    expect(w.calls).toEqual(["migrate", "edit:default:https://new.example"])
+    const confirm = w.log.find((l) => l.kind === "confirm")!
+    expect(confirm.message).toContain("options.endpoints.default")
+    expect(confirm.message).toContain("integration")
+  })
+
+  test("[LEGACY-MIGRATE] declining the migration makes no change at all", async () => {
+    const w = world({ endpoints: [], legacy: true, legacyUrl: "https://old.example" })
+    await w.run([{ select: "endpoint:default" }, { select: "delete" }, { confirm: false }, { select: "back" }, { select: undefined }])
+    expect(w.calls).toEqual([])
+    expect(w.endpoints().map((e) => e.id)).toEqual(["default"])
+  })
+
+  test("[LEGACY-MIGRATE][DEL-CLEANUP] legacy Delete migrates first, then deletes definition and credential", async () => {
+    const w = world({ endpoints: [], legacy: true, legacyUrl: "https://old.example", credentials: { litellm: [{ type: "credential", id: "old-1" }] } })
+    await w.run([{ select: "endpoint:default" }, { select: "delete" }, { confirm: true }, { confirm: true }, { select: undefined }])
+    expect(w.calls).toEqual(["migrate", "prepareRemove:default", "cred.remove:old-1", "remove:default"])
+    expect(w.endpoints()).toEqual([])
+  })
+
+  test("[LEGACY-MIGRATE] a failed migration keeps the flow cancelled and the endpoint untouched", async () => {
+    const w = world({ endpoints: [], legacy: true, legacyUrl: "https://old.example", failMigrate: true })
+    await w.run([{ select: "endpoint:default" }, { select: "edit" }, { confirm: true }, { select: "back" }, { select: undefined }])
+    expect(w.calls).toEqual(["migrate"])
+    expect(w.toasts.some((x) => x.variant === "error" && x.message.includes("迁移失败"))).toBe(true)
+  })
+
+  test("[LIST-LEGACY-GHOST] legacy default without a connected address is not listed; Add is offered", async () => {
+    const w = world({ endpoints: [], legacy: true })
+    await w.run([{ select: undefined }])
+    expect(w.log[0]!.options!.map((o) => o.value)).toEqual(["add"])
+  })
+})
+
+describe("credential form (legacy url answer)", () => {
+  const formClient = (form: unknown, existing: unknown[] = []): { client: CredentialClient; calls: any[] } => {
+    const calls: any[] = []
+    const client: CredentialClient = {
+      integration: {
+        get: async () => ({ data: { connections: existing, methods: [{ type: "key", ...(form ? { form } : {}) }] } }),
+        connect: { key: async (input) => { calls.push(input) } },
+      },
+      credential: { remove: async () => undefined, activate: async () => undefined },
+    }
+    return { client, calls }
+  }
+
+  test("[CRED-LEGACY-FORM] legacy key method with a required url form gets answer.url", async () => {
+    const { client, calls } = formClient([{ key: "url", type: "string", required: true }])
+    await saveKey(client, "default", "sk-form", "https://old.example")
+    expect(calls).toEqual([{ integrationID: "litellm", key: "sk-form", answer: { url: "https://old.example" } }])
+  })
+
+  test("[CRED-LEGACY-FORM] without a url to answer the connect is refused, never sent in a broken form", async () => {
+    const { client, calls } = formClient([{ key: "url", type: "string", required: true }])
+    await expect(saveKey(client, "default", "sk-form")).rejects.toThrow("url")
+    expect(calls).toEqual([])
+  })
+
+  test("[CRED-LEGACY-FORM] fixed-baseUrl key method (no form) gets no answer payload", async () => {
+    const { client, calls } = formClient(undefined)
+    await saveKey(client, "company", "sk-plain", "https://ignored.example")
+    expect(calls).toEqual([{ integrationID: "litellm-company", key: "sk-plain" }])
   })
 })
 

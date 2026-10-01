@@ -26,6 +26,10 @@ The management UI SHALL list every configured endpoint with its active state and
 - **WHEN** the user edits the declaring OpenCode config file (`plugins[].options.endpoints`) by hand between two invocations
 - **THEN** the next invocation shows the edited state without restarting OpenCode
 
+#### Scenario: [LIST-LEGACY-GHOST] No ghost default without a legacy address
+- **WHEN** the plugin runs in legacy single-endpoint mode with no connected address
+- **THEN** the endpoint list shows no `default` row and offers Add instead
+
 ### Requirement: Add endpoint
 Add SHALL ask only for a user-defined endpoint ID and a Base URL. The new endpoint SHALL be inactive and MAY have no credential. Creating an endpoint SHALL NOT activate it.
 
@@ -57,6 +61,10 @@ Add SHALL ask only for a user-defined endpoint ID and a Base URL. The new endpoi
 - **WHEN** the plugin runs in legacy single-endpoint mode (address entered via `/connect`) and the user adds a second endpoint
 - **THEN** the UI asks for confirmation, then moves the connected address and top-level `protocolOverrides` into `options.endpoints.default` (keeping integration id `litellm` and its credential) and adds the new endpoint
 
+#### Scenario: [ADD-ROLLBACK] A failed Add restores the previous activation
+- **WHEN** endpoint creation fails (conflict, write failure or a concurrent external edit) after the activation was pinned
+- **THEN** the previous activation is restored, the runtime reconciles back to its previous state and the configuration has no new endpoint
+
 ### Requirement: Edit endpoint
 Edit SHALL change only the Base URL. The endpoint ID SHALL be read-only and rename SHALL NOT exist. Fields the UI does not manage SHALL be preserved byte-for-byte in value.
 
@@ -80,9 +88,9 @@ Edit SHALL change only the Base URL. The endpoint ID SHALL be read-only and rena
 - **WHEN** one endpoint's Base URL is edited
 - **THEN** other endpoints' configuration, activation, credential and snapshot are unchanged
 
-#### Scenario: [EDIT-ENV-LEGACY] Legacy default address is not editable in the config file
-- **WHEN** the default endpoint is in legacy mode (its address lives in the `/connect` credential)
-- **THEN** Edit and Delete are not offered/are refused with an explanation instead of writing a value the credential would override
+#### Scenario: [LEGACY-MIGRATE] Legacy default is fully manageable through migration
+- **WHEN** the default endpoint is in legacy single-endpoint mode (its address lives in the `/connect` credential) and the user runs Edit, Delete, Connect or Replace
+- **THEN** the UI offers to migrate the connected address into `options.endpoints.default`, and after confirmation the action completes normally (endpoint id, integration id, saved credential and activation unchanged; no second endpoint definition appears)
 
 ### Requirement: Credential management
 The management UI SHALL show Connected / Not connected per endpoint and offer Connect, Replace API Key and Disconnect. It SHALL store credentials in the same host credential backend used by `/connect`, SHALL NEVER display an existing key, and SHALL NOT change activation.
@@ -114,6 +122,10 @@ The management UI SHALL show Connected / Not connected per endpoint and offer Co
 #### Scenario: [CRED-INVALID-KEY] Invalid key input is rejected
 - **WHEN** the entered key is empty or contains whitespace or control characters
 - **THEN** nothing is stored and the existing credential is unchanged
+
+#### Scenario: [CRED-LEGACY-FORM] Legacy key forms get their required url answer
+- **WHEN** a key is saved while the integration's key method still carries a required `url` form field
+- **THEN** the connect request answers that form with the endpoint address, and a connect without an address is refused instead of sent in a broken form
 
 ### Requirement: Activation management
 Activation SHALL keep its existing independent semantics and SHALL take effect immediately.

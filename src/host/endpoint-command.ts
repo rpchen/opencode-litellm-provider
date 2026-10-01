@@ -33,6 +33,8 @@ export interface EndpointManagement {
   edit(input: { endpointId: string; baseUrl: string }): Promise<Omit<MutationView, "state">>
   prepareRemove(input: { endpointId: string }): Promise<Omit<MutationView, "state">>
   remove(input: { endpointId: string }): Promise<Omit<MutationView, "state">>
+  /** Migrate the legacy single-endpoint configuration to explicit `endpoints.default` (no identity change). */
+  migrate(): Promise<Omit<MutationView, "state">>
   /** Re-read the canonical config before each view so hand edits are visible. */
   refresh?(): Promise<void>
 }
@@ -114,6 +116,7 @@ export async function registerEndpointActivation(
     edit: (input: unknown) => mutation(() => management!.edit(input as never)),
     prepareRemove: (input: unknown) => mutation(() => management!.prepareRemove(input as never)),
     remove: (input: unknown) => mutation(() => management!.remove(input as never)),
+    migrate: () => mutation(() => management!.migrate()),
   }
   rpc = await context.rpc.register(endpointRpc, handlers as never)
 

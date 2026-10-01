@@ -1,5 +1,5 @@
 import { dirname } from "node:path";
-export type ConfigErrorCode = "no-file" | "no-entry" | "parse" | "shape" | "duplicate" | "invalid-id" | "invalid-url" | "not-found" | "conflict" | "legacy-conflict" | "needs-migration" | "legacy-default";
+export type ConfigErrorCode = "no-file" | "no-entry" | "parse" | "shape" | "duplicate" | "invalid-id" | "invalid-url" | "not-found" | "conflict" | "legacy-conflict" | "needs-migration" | "legacy-default" | "not-legacy";
 export declare class ConfigFileError extends Error {
     readonly code: ConfigErrorCode;
     constructor(code: ConfigErrorCode, message: string);
@@ -29,6 +29,11 @@ export type EndpointMutation = {
 } | {
     kind: "delete";
     id: string;
+}
+/** Legacy single-endpoint → explicit `options.endpoints.default` (identity and credential unchanged). */
+ | {
+    kind: "migrate";
+    baseUrl: string;
 };
 export interface MutationResult {
     migratedLegacy: boolean;

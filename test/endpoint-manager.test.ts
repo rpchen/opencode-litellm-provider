@@ -14,7 +14,7 @@ const file = (endpoints?: Record<string, unknown>, extra = "") => `{
 }
 `
 
-function host(content: string, opts: { legacyUrl?: string; inlineOptions?: unknown } = {}) {
+function host(content: string, opts: { legacyUrl?: string; inlineOptions?: unknown; write?: { rename?: (from: string, to: string) => void; beforeCommit?: () => void } } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "oc-mgr-"))
   const target = { file: join(dir, "opencode.jsonc") }
   writeFileSync(target.file, content)
@@ -34,6 +34,7 @@ function host(content: string, opts: { legacyUrl?: string; inlineOptions?: unkno
     async legacyBaseUrl() { return opts.legacyUrl },
     async removeStorage(key) { removed.push(key) },
     async sourceTarget() { return PKG },
+    write: opts.write,
   })
   return { manager, target, text: () => readFileSync(target.file, "utf8"), removed, events, get activation() { return activation }, get options() { return options }, active: () => activeEndpointIds(ids(), activation) }
 }
@@ -51,13 +52,19 @@ describe("endpoint manager (server)", () => {
     expect(h.manager.writable().writable).toBe(true)
   })
 
-  test("[LIST-EMPTY] explicit empty endpoints lists nothing; legacy lists the single default", async () => {
+  test("[LIST-EMPTY][LIST-LEGACY-GHOST] explicit empty endpoints lists nothing; legacy lists default only when its address exists", async () => {
     const empty = host(file({}))
     await empty.manager.refresh?.()
     expect(empty.manager.endpoints()).toEqual([])
-    const legacy = host(file())
-    expect(legacy.manager.endpoints()).toEqual([{ id: "default", baseUrl: "", active: true, legacy: true }])
+    // legacy with a connected address → the default endpoint is listed with its address
+    const legacy = host(file(), { legacyUrl: "https://old.example" })
+    await legacy.manager.refresh?.()
+    expect(legacy.manager.endpoints()).toEqual([{ id: "default", baseUrl: "https://old.example", active: true, legacy: true }])
     expect(legacy.manager.writable().legacyMigration).toBe(true)
+    // legacy without any connection/URL → no ghost default row; the user just adds endpoints
+    const ghostless = host(file())
+    await ghostless.manager.refresh?.()
+    expect(ghostless.manager.endpoints()).toEqual([])
   })
 
   test("[LIST-EXTERNAL] a hand edit of the file is synced into the running options on refresh", async () => {
@@ -79,6 +86,61 @@ describe("endpoint manager (server)", () => {
     expect(h.options.endpoints?.company?.protocolOverrides).toEqual({ m: "messages" })
     expect(h.text()).toContain("// user comment")
     expect(h.options.pollInterval).toBe(90)
+  })
+
+  test("[ADD-ROLLBACK] a failed Add (write failure) rolls activation back to 'all' and leaves the config untouched", async () => {
+    const h = host(file(TWO), { write: { rename: () => { throw new Error("disk full") } } })
+    await h.manager.refresh?.()
+    const result = await h.manager.add({ endpointId: "lab", baseUrl: "https://lab.example" })
+    expect(result.ok).toBe(false)
+    expect(h.activation).toEqual({ mode: "all" }) // previous activation restored, not left materialised
+    expect(h.events.at(-1)).toBe('activation:{"mode":"all"}') // runtime reconciled back through setActivation
+    expect(JSON.parse(h.text().replace(/^\s*\/\/.*$/gmu, "")).plugins[0].options.endpoints).toEqual(TWO)
+    expect(h.active()).toEqual(["default", "company"])
+  })
+
+  test("[ADD-ROLLBACK] a failed Add (concurrent external edit / conflict) rolls activation back to 'all'", async () => {
+    const h = host(file(TWO), {
+      write: {
+        beforeCommit: () => writeFileSync(h.target.file, file({ ...TWO, hand: { baseUrl: "https://hand.example" } })),
+      },
+    })
+    await h.manager.refresh?.()
+    const result = await h.manager.add({ endpointId: "lab", baseUrl: "https://lab.example" })
+    expect(result.ok).toBe(false)
+    expect(result.code).toBe("conflict")
+    expect(h.activation).toEqual({ mode: "all" })
+    expect(h.events.at(-1)).toBe('activation:{"mode":"all"}')
+    // the external edit wins; our endpoint was not written
+    expect(Object.keys(JSON.parse(h.text().replace(/^\s*\/\/.*$/gmu, "")).plugins[0].options.endpoints)).toEqual(["default", "company", "hand"])
+  })
+
+  test("[ADD-ROLLBACK] a rollback failure is reported together with the primary failure", async () => {
+    const h = host(file(TWO))
+    await h.manager.refresh?.()
+    // the pin call succeeds; only the rollback call fails
+    let calls = 0
+    const failingHost = createEndpointManagement({
+      env: {},
+      target: h.target,
+      options: () => parseOptions(readPluginOptions(h.target, PKG), { warn() {} }),
+      ids: () => ["default", "company"],
+      activation: () => ({ mode: "all" }),
+      async setActivation() {
+        calls += 1
+        if (calls === 2) throw new Error("activation store unavailable")
+      },
+      async rebuild() {},
+      async legacyBaseUrl() { return undefined },
+      async removeStorage() {},
+      async sourceTarget() { return PKG },
+      write: { rename: () => { throw new Error("disk full") } },
+    })
+    const result = await failingHost.add({ endpointId: "lab", baseUrl: "https://lab.example" })
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain("disk full") // primary failure first
+    expect(result.message).toContain("activation 回滚失败") // rollback failure kept, not swallowed
+    expect(result.message).toContain("activation store unavailable")
   })
 
   test("[ADD-DUP][ADD-BAD-ID][ADD-BAD-URL] invalid adds are rejected with a code and do not touch the file", async () => {
@@ -143,8 +205,39 @@ describe("endpoint manager (server)", () => {
     expect(h.text()).toContain("// user comment")
   })
 
-  test("[EDIT-ENV-LEGACY] legacy default (address lives in the /connect credential) cannot be edited or removed here", async () => {
-    const h = host(file())
+  test("[LEGACY-MIGRATE] migrate moves the connected address into options.endpoints.default and keeps every identity and option", async () => {
+    const h = host(file(undefined, ', "protocolOverrides": { "m": "chat" }, "futureOption": { "keep": 1 }'), { legacyUrl: "https://old.example" })
+    await h.manager.refresh?.()
+    const result = await h.manager.migrate()
+    expect(result).toEqual({ ok: true, migrated: true })
+    expect(h.options.endpoints).toEqual({
+      default: { baseUrl: "https://old.example", protocolOverrides: { m: "chat" } },
+    })
+    // after migration the default endpoint is a normal managed endpoint: edit and delete work
+    expect((await h.manager.edit({ endpointId: "default", baseUrl: "https://x.example" })).ok).toBe(true)
+    expect(h.options.endpoints?.default?.baseUrl).toBe("https://x.example")
+    expect((await h.manager.prepareRemove({ endpointId: "default" })).ok).toBe(true)
+    expect((await h.manager.remove({ endpointId: "default" })).ok).toBe(true)
+    expect(h.options.endpoints).toEqual({})
+    expect(h.removed).toContain("litellm.discovery.snapshot.v1")
+    // migrate is idempotent once explicit
+    expect(await h.manager.migrate()).toEqual({ ok: true, migrated: false })
+  })
+
+  test("[LEGACY-MIGRATE][ADD-ROLLBACK] a failed migration leaves the config untouched (no partial state)", async () => {
+    const h = host(file(undefined, ', "protocolOverrides": { "m": "chat" }'), {
+      legacyUrl: "https://old.example",
+      write: { rename: () => { throw new Error("disk full") } },
+    })
+    await h.manager.refresh?.()
+    const result = await h.manager.migrate()
+    expect(result.ok).toBe(false)
+    expect(JSON.parse(h.text().replace(/^\s*\/\/.*$/gmu, "")).plugins[0].options.endpoints).toBeUndefined()
+    expect(h.events).not.toContain("rebuild")
+  })
+
+  test("legacy default is refused (with a pointer to migration) if manage calls arrive before migrating", async () => {
+    const h = host(file(), { legacyUrl: "https://old.example" })
     expect((await h.manager.prepareRemove({ endpointId: "default" })).code).toBe("legacy-default")
     expect((await h.manager.edit({ endpointId: "default", baseUrl: "https://x.example" })).code).toBe("legacy-default")
   })
