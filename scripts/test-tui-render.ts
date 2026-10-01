@@ -392,7 +392,7 @@ try {
         "✓ default",
         "✓ company",
       ])
-      assert.deepEqual(endpointDialogs[1]?.options.map((item) => item.value), ["toggle", "connect", "back"])
+      assert.deepEqual(endpointDialogs[1]?.options.map((item) => item.value), ["toggle", "edit", "connect", "delete", "back"])
       assert.equal(endpointDialogs[3]?.options[3]?.title, "○ default")
       assert.equal(endpointDialogs[3]?.options[4]?.title, "✓ company")
     } finally {
