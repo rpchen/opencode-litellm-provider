@@ -14,6 +14,15 @@ if (!packageSpec || !/^(github:rpchen\/opencode-litellm-provider|git\+file:\/\/\
   throw new Error("E2E_PACKAGE_SPEC must pin this repository to a full Git commit")
 }
 const fixture = JSON.parse(readFileSync(path.join(root, "test/fixtures/litellm-model-info.json"), "utf8"))
+// [REAL-HOST-E2E] Runtime Identity expectations come from the candidate checkout itself:
+// the installed package is built from this commit, so its identity must match these files.
+const candidateIdentity = JSON.parse(readFileSync(path.join(root, "dist", "runtime-identity.json"), "utf8"))
+const candidateProvenance = JSON.parse(readFileSync(path.join(root, "dist", "core-provenance.json"), "utf8"))
+assert.equal(candidateIdentity.coreCommit, candidateProvenance.sha, "candidate identity coreCommit must match provenance")
+assert.match(candidateIdentity.artifactDigest, /^sha256:[0-9a-f]{64}$/u, "candidate identity digest must be valid")
+const expectedPluginVersion = candidateIdentity.pluginVersion
+const expectedShortDigest = candidateIdentity.artifactDigest.slice("sha256:".length, "sha256:".length + 8)
+const expectedShortCore = candidateIdentity.coreCommit.slice(0, 8)
 const workspace = mkdtempSync(path.join(os.tmpdir(), "opencode-v2-real-e2e-"))
 const project = path.join(workspace, "project")
 const home = path.join(workspace, "home")
@@ -429,7 +438,20 @@ try {
   runSessionCommand("litellm-audit-export")
   tui = startAttachedTui(sessionID)
   await waitForTui(tui, "LiteLLM 审查报告已导出")
+  const auditTuiText = tui.output()
   await stopAttachedTui(tui)
+
+  // [REAL-HOST-E2E] The exported audit report carries the full Runtime Identity of the candidate.
+  {
+    const auditDir = path.join(state, "opencode", "litellm-audit")
+    assert(existsSync(auditDir), `audit directory must exist: ${auditDir}`)
+    const auditFiles = readdirSync(auditDir).filter((name) => name.startsWith("litellm-audit-") && name.endsWith(".json"))
+    assert(auditFiles.length > 0, "real host audit export must write a report file")
+    const latestAudit = auditFiles.sort().at(-1)
+    const report = JSON.parse(readFileSync(path.join(auditDir, latestAudit), "utf8"))
+    assert.deepEqual(report.runtimeIdentity, candidateIdentity, "audit runtimeIdentity must equal the candidate artifact identity")
+    void auditTuiText
+  }
 
   // 3) Endpoint activation: execute before TUI startup, recover the pending selector, then prove
   // the host-native DOWN + ENTER path opens the endpoint detail and toggles it (main list -> detail -> toggle -> back).
@@ -529,7 +551,22 @@ try {
   const scopedDiagnostics = tui.output(mark)
   assert.doesNotMatch(scopedDiagnostics, /LiteLLM Endpoints · active \d+\/\d+/u,
     "endpoint-scoped diagnostics must not fall back to the multi-endpoint overview")
+  // [REAL-HOST-E2E] Endpoint-scoped diagnostics carry the candidate Runtime Identity (short form).
+  assert.match(scopedDiagnostics, /Runtime Identity/u, "diagnostics must show the Runtime Identity section")
+  assert(scopedDiagnostics.includes(`Plugin Version   ${expectedPluginVersion}`), "diagnostics plugin version must match the candidate")
+  assert(scopedDiagnostics.includes(`Artifact         ${expectedShortDigest}`), "diagnostics artifact digest must match the candidate")
+  assert(scopedDiagnostics.includes(`Core Commit      ${expectedShortCore}`), "diagnostics core commit must match the candidate provenance")
+  assert.doesNotMatch(scopedDiagnostics, /sk-e2e-/u, "diagnostics must not leak credentials")
   await stopAttachedTui(tui)
+
+  // [REAL-HOST-E2E] The server startup log records the same Runtime Identity.
+  {
+    const serverText = `${openCodeServer.output().stdout}\n${openCodeServer.output().stderr}`
+    assert.match(serverText, /LiteLLM Runtime Identity/u, "startup log must contain the Runtime Identity line")
+    assert(serverText.includes(`plugin=${expectedPluginVersion}`), "startup plugin version must match the candidate")
+    assert(serverText.includes(`artifact=${expectedShortDigest}`), "startup artifact digest must match the candidate")
+    assert(serverText.includes(`core=${expectedShortCore}`), "startup core commit must match the candidate")
+  }
 
   const pluginState = jsonOutput(api("GET", "/api/plugin"), "plugin.list")
   const plugins = payload(pluginState)

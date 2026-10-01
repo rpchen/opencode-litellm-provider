@@ -71,7 +71,8 @@ try {
   }))
   const required = [
     "package.json", "README.md", "LICENSE", "dist/index.js", "dist/index.d.ts", "dist/tui.js", "dist/tui.d.ts",
-    "dist/tui-card.js", "dist/tui-actions.js", "dist/core-provenance.json", "dist/host/models.js",
+    "dist/tui-card.js", "dist/tui-actions.js", "dist/core-provenance.json", "dist/runtime-identity.json", "dist/host/models.js",
+    "dist/host/runtime-identity.js",
     "dist/generated/discovery-core/index.js", "dist/generated/discovery-core/index.d.ts", "dist/generated/discovery-core/LICENSE",
   ]
   const missing = required.filter((file) => !files.has(file))
@@ -82,6 +83,18 @@ try {
   const cardSource = readFileSync(path.join(root, "dist", "tui-card.js"), "utf8")
   if (!cardSource.includes('from "solid-js"') || cardSource.includes("solid-js/dist/")) {
     throw new Error("TUI must share the host's Solid runtime through the bare module specifier")
+  }
+  // [PACKAGE-IDENTITY] The tarball identity must be present, valid, and consistent with provenance.
+  const identity = JSON.parse(readFileSync(path.join(root, "dist", "runtime-identity.json"), "utf8"))
+  const provenance = JSON.parse(readFileSync(path.join(root, "dist", "core-provenance.json"), "utf8"))
+  if (typeof identity.pluginVersion !== "string" || identity.pluginVersion !== manifest.version) {
+    throw new Error("Runtime identity pluginVersion must match package.json")
+  }
+  if (typeof identity.artifactDigest !== "string" || !/^sha256:[0-9a-f]{64}$/u.test(identity.artifactDigest)) {
+    throw new Error("Runtime identity artifactDigest must be sha256:<64 hex>")
+  }
+  if (typeof identity.coreCommit !== "string" || !/^[0-9a-f]{40}$/u.test(identity.coreCommit) || identity.coreCommit !== provenance.sha) {
+    throw new Error("Runtime identity coreCommit must match core provenance")
   }
   const distributionDigests = Object.fromEntries([...files].filter((file) => file.startsWith("dist/")).map((file) => [
     file, createHash("sha256").update(readFileSync(path.join(root, file))).digest("hex"),

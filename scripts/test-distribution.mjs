@@ -8,7 +8,7 @@ import {
 import os from "node:os"
 import path from "node:path"
 import { ROOT, GENERATED_PATH, main, readProvenance } from "./prepare-core.mjs"
-import { compareDistributions } from "./distribution.mjs"
+import { compareDistributions, computeArtifactDigest, readRuntimeIdentity } from "./distribution.mjs"
 
 function snapshot(directory, prefix = "") {
   return readdirSync(directory).sort().flatMap((name) => {
@@ -24,7 +24,7 @@ await main(() => {
   const selection = readProvenance(ROOT)
   const original = snapshot(path.join(ROOT, "dist"))
   const consumer = mkdtempSync(path.join(os.tmpdir(), "opencode-clean-build-"))
-  const execute = (script, args = [], expectedFailure = false) => {
+  const execute = (script, args = [], expectedFailure = false, expectedPattern = /Committed dist mismatch/u) => {
     const result = spawnSync(process.execPath, [path.join(consumer, "scripts", script), ...args], {
       cwd: consumer, encoding: "utf8", maxBuffer: 16 * 1024 * 1024,
       // Fixed verification must not use an ambient SHA instead of its provenance.
@@ -33,7 +33,7 @@ await main(() => {
     if (result.error) throw new Error("Could not start isolated distribution verification")
     if (expectedFailure) {
       assert.notEqual(result.status, 0, "tampered distribution must fail verification")
-      assert.match(result.stderr, /Committed dist mismatch/u, "failure must be a dist mismatch, not a build/network error")
+      assert.match(`${result.stdout}\n${result.stderr}`, expectedPattern, "failure must be a verification rejection, not a build/network error")
     } else if (result.status !== 0) {
       const diagnostics = `${result.stdout}\n${result.stderr}`
         .replaceAll(consumer, "<isolated-build>").replaceAll(ROOT, "<workspace>").replaceAll(os.homedir(), "<home>")
@@ -59,6 +59,18 @@ await main(() => {
     execute("build.mjs", ["--from-provenance"])
     compareDistributions(path.join(ROOT, "dist"), path.join(consumer, "dist"))
     execute("verify-dist.mjs")
+    // Runtime Identity ↔ bytes ↔ provenance consistency on the real candidate. [VERIFY-STRICT]
+    // A clean fixed rebuild in an isolated temp dir proves [REPRODUCIBLE-BUILD].
+    // No builtAt or plugin commit may enter the artifact. [OUT-OF-SCOPE]
+    {
+      const candidateIdentity = readRuntimeIdentity(path.join(ROOT, "dist"))
+      const manifest = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8"))
+      assert.equal(candidateIdentity.pluginVersion, manifest.version)
+      assert.equal(candidateIdentity.coreCommit, selection.sha)
+      assert.equal(candidateIdentity.artifactDigest, computeArtifactDigest(path.join(ROOT, "dist")))
+      const identityRaw = readFileSync(path.join(ROOT, "dist", "runtime-identity.json"), "utf8")
+      assert(!identityRaw.includes("builtAt"), "artifact must not contain builtAt")
+    }
     for (const kind of ["changed", "missing", "extra"]) {
       rmSync(path.join(consumer, "dist"), { recursive: true, force: true })
       cpSync(path.join(ROOT, "dist"), path.join(consumer, "dist"), { recursive: true })
@@ -67,7 +79,24 @@ await main(() => {
       if (kind === "missing") rmSync(entry)
       if (kind === "extra") writeFileSync(path.join(consumer, "dist", "unexpected.js"), "export {}\n")
       const before = snapshot(path.join(consumer, "dist"))
-      execute("verify-dist.mjs", [], true)
+      execute("verify-dist.mjs", [], true, /Committed dist mismatch|runtime identity/iu)
+      assert.deepEqual(snapshot(path.join(consumer, "dist")), before, "verifier must not repair its candidate")
+    }
+    // Formal identity verification rejects missing/malformed identity without silent fallback.
+    for (const kind of ["missing-identity", "malformed-digest", "mismatched-digest", "mismatched-core"]) {
+      rmSync(path.join(consumer, "dist"), { recursive: true, force: true })
+      cpSync(path.join(ROOT, "dist"), path.join(consumer, "dist"), { recursive: true })
+      const identityPath = path.join(consumer, "dist", "runtime-identity.json")
+      if (kind === "missing-identity") rmSync(identityPath)
+      else {
+        const identity = JSON.parse(readFileSync(identityPath, "utf8"))
+        if (kind === "malformed-digest") identity.artifactDigest = "not-a-digest"
+        if (kind === "mismatched-digest") identity.artifactDigest = `sha256:${"0".repeat(64)}`
+        if (kind === "mismatched-core") identity.coreCommit = "0".repeat(40)
+        writeFileSync(identityPath, JSON.stringify(identity, null, 2) + "\n")
+      }
+      const before = snapshot(path.join(consumer, "dist"))
+      execute("verify-dist.mjs", [], true, /runtime identity|Committed dist mismatch/iu)
       assert.deepEqual(snapshot(path.join(consumer, "dist")), before, "verifier must not repair its candidate")
     }
     assert.deepEqual(snapshot(path.join(ROOT, "dist")), original, "integration tests must not mutate the real distribution")
