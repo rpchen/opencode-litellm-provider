@@ -24,7 +24,7 @@ opencode plugin add github:rpchen/opencode-litellm-provider
 锁定当前发行版：
 
 ```bash
-opencode plugin add github:rpchen/opencode-litellm-provider#v0.4.3
+opencode plugin add github:rpchen/opencode-litellm-provider#v0.5.0
 ```
 
 要求：
@@ -286,7 +286,7 @@ opencode reload
 如果配置里使用固定 tag，`check/update` 参数也必须使用完整的固定来源，例如：
 
 ```text
-github:rpchen/opencode-litellm-provider#v0.4.3
+github:rpchen/opencode-litellm-provider#v0.5.0
 ```
 
 需要回滚时，将现有插件来源改回目标 tag 并重新加载即可。不要同时启用 Git 安装和本地 `file://` 两份 LiteLLM 插件。
@@ -330,4 +330,4 @@ github:rpchen/opencode-litellm-provider#v0.4.3
 
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [litellm-discovery-core](https://github.com/rpchen/litellm-discovery-core)
-- [v0.4.3 release notes](docs/releases/v0.4.3.md)
+- [v0.5.0 release notes](docs/releases/v0.5.0.md)
