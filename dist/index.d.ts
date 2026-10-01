@@ -4,6 +4,7 @@ import { type DiscoveryDependencies } from "./host/sync.js";
 export declare const PLUGIN_ID = "litellm";
 export declare function setupLiteLLM(rawContext: Plugin.Context, dependencies?: DiscoveryDependencies, internals?: {
     management?: Partial<ManagerHost>;
+    logger?: Pick<Console, "info" | "log">;
 }): Promise<() => Promise<void>>;
 declare const _default: Plugin.Plugin;
 export default _default;

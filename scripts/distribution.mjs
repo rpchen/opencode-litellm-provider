@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process"
+import { createHash } from "node:crypto"
 import {
   cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
   readdirSync, rmSync, symlinkSync, writeFileSync,
@@ -6,6 +7,107 @@ import {
 import os from "node:os"
 import path from "node:path"
 import { GENERATED_PATH, ROOT, prepareCore, provenanceFor, readProvenance } from "./prepare-core.mjs"
+
+export const RUNTIME_IDENTITY_FILE = "runtime-identity.json"
+
+function toPosixPath(value) {
+  return value.replaceAll("\\", "/")
+}
+
+/** Canonical digest inputs: every regular dist file except the identity file itself. */
+export function listDigestInputs(dist) {
+  const inputs = []
+  const walk = (absolute, prefix = "") => {
+    if (!existsSync(absolute) || !lstatSync(absolute).isDirectory() || lstatSync(absolute).isSymbolicLink()) {
+      throw new Error("Distribution directory is missing or unsafe")
+    }
+    for (const name of readdirSync(absolute).sort()) {
+      const relative = prefix ? `${prefix}/${name}` : name
+      const entry = path.join(absolute, name)
+      const stat = lstatSync(entry)
+      if (stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) {
+        throw new Error(`Non-regular distribution entry: ${relative}`)
+      }
+      if (stat.isDirectory()) walk(entry, relative)
+      else if (toPosixPath(relative) !== RUNTIME_IDENTITY_FILE) inputs.push(toPosixPath(relative))
+    }
+  }
+  walk(dist)
+  return inputs.sort()
+}
+
+export function computeArtifactDigest(dist) {
+  const manifest = listDigestInputs(dist)
+    .map((relative) => {
+      const bytes = readFileSync(path.join(dist, ...relative.split("/")))
+      return `${createHash("sha256").update(bytes).digest("hex")}  ${relative}\n`
+    })
+    .join("")
+  return `sha256:${createHash("sha256").update(manifest, "utf8").digest("hex")}`
+}
+
+export function readPackageVersion(root = ROOT) {
+  let value
+  try {
+    value = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"))
+  } catch {
+    throw new Error("Runtime identity requires a readable package.json version")
+  }
+  if (!value || typeof value.version !== "string" || value.version.length === 0) {
+    throw new Error("Runtime identity requires a non-empty package.json version")
+  }
+  return value.version
+}
+
+export function writeRuntimeIdentity(out, { pluginVersion, coreCommit }) {
+  if (typeof pluginVersion !== "string" || pluginVersion.length === 0) {
+    throw new Error("Runtime identity pluginVersion is missing")
+  }
+  if (typeof coreCommit !== "string" || !/^[0-9a-f]{40}$/u.test(coreCommit)) {
+    throw new Error("Runtime identity coreCommit must be a complete 40-character hexadecimal commit ID")
+  }
+  const artifactDigest = computeArtifactDigest(out)
+  const identity = { pluginVersion, artifactDigest, coreCommit }
+  writeFileSync(path.join(out, RUNTIME_IDENTITY_FILE), `${JSON.stringify(identity, null, 2)}\n`)
+  return identity
+}
+
+export function readRuntimeIdentity(dist) {
+  let value
+  try {
+    const file = path.join(dist, RUNTIME_IDENTITY_FILE)
+    if (!lstatSync(file).isFile() || lstatSync(file).isSymbolicLink()) throw new Error("Unsafe identity")
+    value = JSON.parse(readFileSync(file, "utf8"))
+  } catch {
+    throw new Error("Missing or unreadable runtime identity; rebuild dist to generate it")
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)
+      || typeof value.pluginVersion !== "string" || value.pluginVersion.length === 0
+      || typeof value.artifactDigest !== "string" || !/^sha256:[0-9a-f]{64}$/u.test(value.artifactDigest)
+      || typeof value.coreCommit !== "string" || !/^[0-9a-f]{40}$/u.test(value.coreCommit)) {
+    throw new Error("Invalid runtime identity fields")
+  }
+  return value
+}
+
+/** Formal verification: identity ↔ package version ↔ provenance SHA ↔ dist bytes. [VERIFY-STRICT] */
+export function verifyRuntimeIdentity({ root = ROOT, dist: distArg, selection } = {}) {
+  const dist = distArg ?? path.join(root, "dist")
+  const identity = readRuntimeIdentity(dist)
+  const expectedVersion = readPackageVersion(root)
+  if (identity.pluginVersion !== expectedVersion) {
+    throw new Error("Runtime identity pluginVersion does not match package.json")
+  }
+  const expectedCore = selection?.sha ?? readProvenance(root).sha
+  if (identity.coreCommit !== expectedCore) {
+    throw new Error("Runtime identity coreCommit does not match core provenance")
+  }
+  const expectedDigest = computeArtifactDigest(dist)
+  if (identity.artifactDigest !== expectedDigest) {
+    throw new Error("Runtime identity artifactDigest does not match distribution bytes")
+  }
+  return identity
+}
 
 export function run(command, args, cwd = ROOT) {
   const result = spawnSync(command, args, { cwd, stdio: "inherit" })
@@ -29,6 +131,7 @@ export function compileDistribution(root, out, selection, toolRoot = ROOT) {
   const license = path.join(out, "generated", "discovery-core", "LICENSE")
   mkdirSync(path.dirname(license), { recursive: true })
   cpSync(path.join(root, GENERATED_PATH, "LICENSE"), license)
+  writeRuntimeIdentity(out, { pluginVersion: readPackageVersion(root), coreCommit: selection.sha })
 }
 
 export function directoryEntries(root, prefix = "") {
@@ -90,11 +193,13 @@ export function verifyDistribution({ root = ROOT, cacheRoot, prepare = prepareCo
   const selection = readProvenance(root)
   const candidate = path.join(root, "dist")
   directoryEntries(candidate)
+  verifyRuntimeIdentity({ root, dist: candidate, selection })
   const temporary = isolatedBuildRoot(root)
   try {
     prepare({ root: temporary, selection, ...(cacheRoot ? { cacheRoot } : {}) })
     const rebuilt = path.join(temporary, "dist")
     compile(temporary, rebuilt, selection, root)
+    verifyRuntimeIdentity({ root: temporary, dist: rebuilt, selection })
     return { sha: selection.sha, files: compareDistributions(candidate, rebuilt) }
   } finally {
     rmSync(temporary, { recursive: true, force: true })

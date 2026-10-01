@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test"
 import { Plugin } from "@opencode/plugin"
 import plugin, { PLUGIN_ID, setupLiteLLM } from "../src/index.js"
+import { createAuditReport } from "../src/host/audit.js"
+import { createDiagnosticsLines } from "../src/host/diagnostics.js"
+import { getRuntimeIdentity, resetRuntimeIdentityForTests, setRuntimeIdentityForTests } from "../src/host/runtime-identity.js"
 import type { Scheduler } from "../src/host/sync.js"
 
 class TestScheduler implements Scheduler {
@@ -180,4 +183,94 @@ test("显式多 endpoint 在单一 V2 plugin context 中启动并暴露独立 in
   await cleanup()
   expect(eventAborts).toBe(2)
   expect(disposed).toBe(7)
+})
+
+test("startup log uses the canonical Runtime Identity [STARTUP-LOG] [CANONICAL-SINGLE]", async () => {
+  resetRuntimeIdentityForTests()
+  setRuntimeIdentityForTests({
+    pluginVersion: "0.5.0",
+    artifactDigest: `sha256:${"b".repeat(64)}`,
+    coreCommit: "8e155e0efe90f1e9e7c8e973239c206a97011477",
+  })
+  try {
+    const lines: string[] = []
+    const logger = { info: (line: string) => { lines.push(line) }, log: (line: string) => { lines.push(line) } }
+    const scheduler = new TestScheduler()
+    const registration = { dispose: async () => {} }
+    const context = {
+      options: { pollInterval: 30 },
+      integration: {
+        transform: async (callback: (editor: unknown) => void) => {
+          callback({
+            update: (_id: string, update: (value: { id: string; name: string }) => void) =>
+              update({ id: "litellm", name: "old" }),
+            method: { update: () => {} },
+          })
+          return registration
+        },
+        connection: {
+          active: async () => undefined,
+          resolve: async () => undefined,
+        },
+      },
+      provider: {
+        transform: async (callback: (editor: unknown) => void) => {
+          callback({ add: () => {} })
+          return registration
+        },
+        reload: async () => {},
+      },
+      rpc: { register: async () => ({ ...registration, events: { emit: async () => {} } }) },
+      command: {
+        transform: async (callback: (editor: { add: () => void }) => void) => {
+          callback({ add: () => {} })
+          return registration
+        },
+      },
+      event: {
+        subscribe: () => ({
+          [Symbol.asyncIterator]: () => ({ next: () => new Promise<IteratorResult<never>>(() => {}) }),
+        }),
+      },
+    } as unknown as Plugin.Context
+    const cleanup = await setupLiteLLM(context, { scheduler }, { logger })
+    const identity = getRuntimeIdentity()
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toContain(`plugin=${identity.pluginVersion}`)
+    expect(lines[0]).toContain("artifact=bbbbbbbb")
+    expect(lines[0]).toContain("core=8e155e0e")
+    // Same canonical source as diagnostics and audit.
+    const diagnosticsText = createDiagnosticsLines({ ready: false, models: [], audit: { status: "disconnected" } }).join("\n")
+    expect(diagnosticsText).toContain(`Plugin Version   ${identity.pluginVersion}`)
+    const audit = createAuditReport({ status: "disconnected" }) as { runtimeIdentity: unknown }
+    expect(audit.runtimeIdentity).toEqual({
+      pluginVersion: identity.pluginVersion,
+      artifactDigest: identity.artifactDigest,
+      coreCommit: identity.coreCommit,
+    })
+    await cleanup()
+  } finally {
+    resetRuntimeIdentityForTests()
+  }
+})
+
+test("runtime identity has no builtAt and no git dependency [OUT-OF-SCOPE] [IDENTITY-NO-GIT]", async () => {
+  const { readFileSync, existsSync } = await import("node:fs")
+  const { fileURLToPath } = await import("node:url")
+  const path = await import("node:path")
+  const testDir = path.dirname(fileURLToPath(import.meta.url))
+  // Source-level guard: always available, including in isolated build roots.
+  const source = readFileSync(path.join(testDir, "..", "src", "host", "runtime-identity.ts"), "utf8")
+  expect(source).not.toContain("child_process")
+  expect(source).not.toContain("rev-parse")
+  expect(source).not.toContain(".git")
+  expect(source).not.toContain("builtAt")
+  // Candidate artifact guard when the committed dist is present (skipped in
+  // isolated build roots where dist is compiled after unit tests).
+  const identityPath = path.join(testDir, "..", "dist", "runtime-identity.json")
+  if (existsSync(identityPath)) {
+    const identityRaw = readFileSync(identityPath, "utf8")
+    expect(identityRaw).not.toContain("builtAt")
+    expect(identityRaw).not.toContain("pluginCommit")
+  }
 })

@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { getRuntimeIdentity, shortArtifactDigest, shortCoreCommit } from "./runtime-identity.js";
 function readJSON(url) {
     try {
         return JSON.parse(readFileSync(url, "utf8"));
@@ -8,6 +9,16 @@ function readJSON(url) {
     }
 }
 export function runtimeBuildInfo() {
+    const identity = getRuntimeIdentity();
+    if (identity.pluginVersion !== "unknown") {
+        const provenance = readJSON(new URL("../core-provenance.json", import.meta.url)) ??
+            readJSON(new URL("../../dist/core-provenance.json", import.meta.url));
+        return {
+            pluginVersion: identity.pluginVersion,
+            coreSHA: identity.coreCommit,
+            coreBranch: typeof provenance?.branch === "string" ? provenance.branch : "unknown",
+        };
+    }
     const manifest = readJSON(new URL("../../package.json", import.meta.url));
     const provenance = readJSON(new URL("../core-provenance.json", import.meta.url)) ??
         readJSON(new URL("../../dist/core-provenance.json", import.meta.url));
@@ -93,5 +104,7 @@ export function createDiagnosticsLines(snapshot, now = Date.now(), timezoneOffse
     if (snapshot.diagnostics?.note)
         lines.push(`说明：${snapshot.diagnostics.note}`);
     lines.push(`Core：${build.coreBranch}@${build.coreSHA}`);
+    const identity = getRuntimeIdentity();
+    lines.push("Runtime Identity", `Plugin Version   ${identity.pluginVersion}`, `Artifact         ${shortArtifactDigest(identity)}`, `Core Commit      ${shortCoreCommit(identity)}`);
     return lines;
 }

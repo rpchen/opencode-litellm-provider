@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs"
 import type { ProviderSnapshot } from "./register.js"
+import { getRuntimeIdentity, shortArtifactDigest, shortCoreCommit } from "./runtime-identity.js"
 
 interface PackageManifest { version?: unknown }
 interface CoreProvenance { sha?: unknown; branch?: unknown }
@@ -13,6 +14,17 @@ function readJSON<T>(url: URL): T | undefined {
 }
 
 export function runtimeBuildInfo(): { pluginVersion: string; coreSHA: string; coreBranch: string } {
+  const identity = getRuntimeIdentity()
+  if (identity.pluginVersion !== "unknown") {
+    const provenance =
+      readJSON<CoreProvenance>(new URL("../core-provenance.json", import.meta.url)) ??
+      readJSON<CoreProvenance>(new URL("../../dist/core-provenance.json", import.meta.url))
+    return {
+      pluginVersion: identity.pluginVersion,
+      coreSHA: identity.coreCommit,
+      coreBranch: typeof provenance?.branch === "string" ? provenance.branch : "unknown",
+    }
+  }
   const manifest = readJSON<PackageManifest>(new URL("../../package.json", import.meta.url))
   const provenance =
     readJSON<CoreProvenance>(new URL("../core-provenance.json", import.meta.url)) ??
@@ -118,5 +130,12 @@ export function createDiagnosticsLines(
 
   if (snapshot.diagnostics?.note) lines.push(`说明：${snapshot.diagnostics.note}`)
   lines.push(`Core：${build.coreBranch}@${build.coreSHA}`)
+  const identity = getRuntimeIdentity()
+  lines.push(
+    "Runtime Identity",
+    `Plugin Version   ${identity.pluginVersion}`,
+    `Artifact         ${shortArtifactDigest(identity)}`,
+    `Core Commit      ${shortCoreCommit(identity)}`,
+  )
   return lines
 }

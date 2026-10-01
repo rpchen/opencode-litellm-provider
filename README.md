@@ -157,6 +157,7 @@ endpoint id 是用户定义的稳定 ASCII slug，必须匹配 `[a-z0-9][a-z0-9-
 - models.dev 命中情况
 - 协议 fallback 数量
 - 当前插件编入的 Core SHA
+- Runtime Identity（见下文）：当前运行 artifact 自身的不可变身份
 
 这个命令只读取现有状态，**不会发起模型请求，也不会产生额外 token 消耗**。
 
@@ -177,7 +178,7 @@ endpoint id 是用户定义的稳定 ASCII slug，必须匹配 `[a-z0-9][a-z0-9-
 - Windows：`%LOCALAPPDATA%\opencode\litellm-audit\`
 - macOS/Linux：`${XDG_STATE_HOME:-~/.local/state}/opencode/litellm-audit/`
 
-报告不包含 API Key 或 LiteLLM 地址，但会包含模型名、价格、限制等元数据；分享前请自行检查。
+报告不包含 API Key 或 LiteLLM 地址，但会包含模型名、价格、限制等元数据；分享前请自行检查。报告同时包含完整的 Runtime Identity（见下文），用于把问题对应到具体的运行 artifact。
 
 #### Desktop / Web 需要看到导出结果
 
@@ -208,6 +209,30 @@ opencode reload
 - 开启后，每次 `/litellm-audit-export` 会向当前会话提交一条插件生成的消息，并触发一次宿主会话/模型处理，因此会产生 token 消耗
 - 该消息包含报告的本地路径，该路径会进入会话上下文
 - 如果不希望模型接触报告路径，请保持该选项关闭
+
+### Runtime Identity
+
+Runtime Identity 是当前正在运行的插件 artifact 自身的不可变身份，用于把问题对应到具体的构建产物，而不是猜测 Git HEAD、分支或 Release。它包含三个字段：
+
+- `Plugin Version`：插件版本，取自 `package.json`
+- `Artifact`：当前 artifact 的确定性 SHA-256 摘要（相同产物相同，不同产物不同）
+- `Core Commit`：该 artifact 内嵌的 `litellm-discovery-core` 完整 commit SHA
+
+查看位置：
+
+- `/litellm-diagnostics` 末尾的 `Runtime Identity` 块（短形式，各取前 8 位）
+- `/litellm-audit-export` 导出的 JSON 中的 `runtimeIdentity`（完整值）
+- 插件启动日志中的 `LiteLLM Runtime Identity plugin=<ver> artifact=<short> core=<short>` 行
+
+```text
+Runtime Identity
+
+Plugin Version   0.5.0
+Artifact         e5aa34e0
+Core Commit      8e155e0e
+```
+
+反馈问题时，请附上 `/litellm-diagnostics` 中的 Runtime Identity 段落，或 audit 导出文件中的 `runtimeIdentity` 对象。
 
 ## 配置
 

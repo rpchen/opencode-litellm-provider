@@ -1,3 +1,4 @@
+import { getRuntimeIdentity } from "./runtime-identity.js";
 function variantSettings(settings) {
     if (!settings)
         return {};
@@ -53,12 +54,18 @@ function modelRecord(model, view) {
 }
 export function createAuditReport(snapshot, now = new Date()) {
     const view = snapshot.view;
+    const identity = getRuntimeIdentity();
     return {
         schemaVersion: 1,
         scope: "plugin-submitted",
         exportedAt: now.toISOString(),
         lastSuccessfulDiscoveryAt: snapshot.lastSuccessfulDiscoveryAt ?? null,
         status: snapshot.status,
+        runtimeIdentity: {
+            pluginVersion: identity.pluginVersion,
+            artifactDigest: identity.artifactDigest,
+            coreCommit: identity.coreCommit,
+        },
         units: {
             time: "ISO 8601 UTC",
             cost: "USD per million tokens",
@@ -79,10 +86,16 @@ export function createAuditReport(snapshot, now = new Date()) {
     };
 }
 export function createMultiEndpointAuditReport(endpoints, now = new Date()) {
+    const identity = getRuntimeIdentity();
     return {
         schemaVersion: 2,
         scope: "plugin-submitted",
         exportedAt: now.toISOString(),
+        runtimeIdentity: {
+            pluginVersion: identity.pluginVersion,
+            artifactDigest: identity.artifactDigest,
+            coreCommit: identity.coreCommit,
+        },
         endpoints: endpoints.map(({ id, snapshot }) => ({
             id,
             report: createAuditReport(snapshot, now),

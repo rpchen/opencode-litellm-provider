@@ -4,6 +4,7 @@ import { registerEndpointActivation } from "./host/endpoint-command.js"
 import { createEndpointManagement, type ManagerHost } from "./host/endpoint-manager.js"
 import { registerMultiEndpointAudit } from "./host/multi-audit-command.js"
 import { registerIntegration, registerIntegrations, registerProvider, type ProviderSnapshot } from "./host/register.js"
+import { formatStartupIdentityLine, getRuntimeIdentity } from "./host/runtime-identity.js"
 import { createDiscoveryLoop, type DiscoveryDependencies, type SyncContext } from "./host/sync.js"
 import {
   ACTIVATION_STORAGE_KEY,
@@ -219,9 +220,17 @@ async function pluginSourceTarget(context: EndpointContext): Promise<string | un
 export async function setupLiteLLM(
   rawContext: Plugin.Context,
   dependencies: DiscoveryDependencies = {},
-  internals: { management?: Partial<ManagerHost> } = {},
+  internals: { management?: Partial<ManagerHost>; logger?: Pick<Console, "info" | "log"> } = {},
 ): Promise<() => Promise<void>> {
   const context = rawContext as EndpointContext
+  try {
+    const startupLogger = internals.logger ?? console
+    const line = formatStartupIdentityLine(getRuntimeIdentity())
+    if (typeof startupLogger.info === "function") startupLogger.info(line)
+    else startupLogger.log(line)
+  } catch {
+    // Startup identity logging must never block plugin setup.
+  }
   let options = parseOptions(context.options)
   let activation = await readActivation(context)
   let runtime = await buildRuntime(context, options, dependencies, () => activation)

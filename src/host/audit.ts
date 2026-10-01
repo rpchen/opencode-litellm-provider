@@ -1,5 +1,6 @@
 import type { Model } from "@opencode/plugin"
 import type { AuditSnapshot, RegistrationView } from "./register.js"
+import { getRuntimeIdentity } from "./runtime-identity.js"
 
 function variantSettings(settings: Record<string, unknown> | undefined): Record<string, unknown> {
   if (!settings) return {}
@@ -56,12 +57,18 @@ function modelRecord(model: Model.Info, view: RegistrationView) {
 
 export function createAuditReport(snapshot: AuditSnapshot, now = new Date()): object {
   const view = snapshot.view
+  const identity = getRuntimeIdentity()
   return {
     schemaVersion: 1,
     scope: "plugin-submitted",
     exportedAt: now.toISOString(),
     lastSuccessfulDiscoveryAt: snapshot.lastSuccessfulDiscoveryAt ?? null,
     status: snapshot.status,
+    runtimeIdentity: {
+      pluginVersion: identity.pluginVersion,
+      artifactDigest: identity.artifactDigest,
+      coreCommit: identity.coreCommit,
+    },
     units: {
       time: "ISO 8601 UTC",
       cost: "USD per million tokens",
@@ -87,10 +94,16 @@ export function createMultiEndpointAuditReport(
   endpoints: readonly { id: string; snapshot: AuditSnapshot }[],
   now = new Date(),
 ): object {
+  const identity = getRuntimeIdentity()
   return {
     schemaVersion: 2,
     scope: "plugin-submitted",
     exportedAt: now.toISOString(),
+    runtimeIdentity: {
+      pluginVersion: identity.pluginVersion,
+      artifactDigest: identity.artifactDigest,
+      coreCommit: identity.coreCommit,
+    },
     endpoints: endpoints.map(({ id, snapshot }) => ({
       id,
       report: createAuditReport(snapshot, now),
