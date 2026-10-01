@@ -35,6 +35,8 @@ const result = {
         code: { type: "string" },
         message: { type: "string" },
         migrated: { type: "boolean" },
+        /** The config mutation is persisted even though the operation failed (post-commit reload failure). */
+        saved: { type: "boolean" },
         state,
     },
     required: ["ok", "state"],

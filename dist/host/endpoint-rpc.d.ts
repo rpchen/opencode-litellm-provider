@@ -181,6 +181,10 @@ export declare const endpointRpc: {
                     readonly migrated: {
                         readonly type: "boolean";
                     };
+                    /** The config mutation is persisted even though the operation failed (post-commit reload failure). */
+                    readonly saved: {
+                        readonly type: "boolean";
+                    };
                     readonly state: {
                         readonly type: "object";
                         readonly properties: {
@@ -278,6 +282,10 @@ export declare const endpointRpc: {
                     readonly migrated: {
                         readonly type: "boolean";
                     };
+                    /** The config mutation is persisted even though the operation failed (post-commit reload failure). */
+                    readonly saved: {
+                        readonly type: "boolean";
+                    };
                     readonly state: {
                         readonly type: "object";
                         readonly properties: {
@@ -371,6 +379,10 @@ export declare const endpointRpc: {
                         readonly type: "string";
                     };
                     readonly migrated: {
+                        readonly type: "boolean";
+                    };
+                    /** The config mutation is persisted even though the operation failed (post-commit reload failure). */
+                    readonly saved: {
                         readonly type: "boolean";
                     };
                     readonly state: {
@@ -468,6 +480,10 @@ export declare const endpointRpc: {
                     readonly migrated: {
                         readonly type: "boolean";
                     };
+                    /** The config mutation is persisted even though the operation failed (post-commit reload failure). */
+                    readonly saved: {
+                        readonly type: "boolean";
+                    };
                     readonly state: {
                         readonly type: "object";
                         readonly properties: {
@@ -556,6 +572,10 @@ export declare const endpointRpc: {
                         readonly type: "string";
                     };
                     readonly migrated: {
+                        readonly type: "boolean";
+                    };
+                    /** The config mutation is persisted even though the operation failed (post-commit reload failure). */
+                    readonly saved: {
                         readonly type: "boolean";
                     };
                     readonly state: {

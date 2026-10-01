@@ -112,7 +112,7 @@ endpoint id 是用户定义的稳定 ASCII slug，必须匹配 `[a-z0-9][a-z0-9-
 | **修改 Base URL** | 选中 endpoint → **修改 Base URL**。ID 不可修改（没有 rename）；`protocolOverrides` 等配置和你的注释原样保留 |
 | **连接 / 替换 / 断开 API Key** | 选中 endpoint → **连接 API Key** / **替换 API Key** / **断开凭据**。已保存的 Key 永远不会显示；断开只删除该 endpoint 的 Key |
 | **启用 / 停用** | 选中 endpoint → **启用** / **停用**；也可以用 **全部启用** / **全部停用**。立即生效，允许 0 个启用 |
-| **删除** | 选中 endpoint → **删除 endpoint**，确认后彻底删除：配置、启用状态、已保存的 Key、模型发现缓存 |
+| **删除** | 选中 endpoint → **删除 endpoint**，确认后彻底删除：配置、启用状态、已保存的 Key、模型发现缓存。**取消确认不会留下任何改动**（包括 legacy default 的内部迁移） |
 
 说明：
 
@@ -120,7 +120,7 @@ endpoint id 是用户定义的稳定 ASCII slug，必须匹配 `[a-z0-9][a-z0-9-
 - 管理中心与 `/connect` 操作**同一份** OpenCode 凭据，`/connect` 仍可照常使用。
 - endpoint 定义仍只有一份：声明本插件的 OpenCode 配置文件（`OPENCODE_CONFIG` 指向的文件，或全局 `opencode.jsonc`）里的 `plugins[].options.endpoints`。管理中心只做最小改动，保留注释、格式和你手写的其它字段；你也可以继续手工编辑，下次打开会看到文件里的真实状态。配置无法解析，或插件选项来自内联/项目配置（与该文件不一致）时，新增/修改/删除会被拒绝并说明原因，启用和凭据管理仍可用。
 - 新增/修改/删除后插件会重新加载 endpoint，各 endpoint 的模型会短暂重新注册。
-- 旧的单 endpoint 用法（`/connect` 时填写地址）不在配置文件里：此时 `default` 只能连接/启用/停用；新增第二个 endpoint 会先请你确认，再把现有地址迁移到 `options.endpoints.default`（integration、Key 不变，发现缓存重新生成）。
+- 旧的单 endpoint 用法（`/connect` 时填写地址）不在配置文件里：`default` 依然完整可管理——修改/替换 Key 前会先请你确认一次内部迁移，把现有地址迁移到 `options.endpoints.default`（integration、Key 不变，发现缓存重新生成）；删除则把迁移包含在最终删除确认里（确认后先迁移再立即删除），**取消删除不留任何改动**。新增第二个 endpoint 会先请你确认，再做同样的迁移。
 - 通过管理中心新增 endpoint 后，启用状态会固定为“明确选择的集合”；之后手工写进文件的新 endpoint 需要在管理中心里启用。
 - 仍需手工编辑配置文件：`protocolOverrides`、`pollInterval`、`contextTierCap`。endpoint ID 创建后不能直接改名；要换名请新增新 endpoint 并删除旧的。
 - 管理中心依赖终端 TUI；Desktop / Web 不加载 TUI 插件，请用配置文件和 `/connect`。

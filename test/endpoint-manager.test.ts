@@ -14,12 +14,13 @@ const file = (endpoints?: Record<string, unknown>, extra = "") => `{
 }
 `
 
-function host(content: string, opts: { legacyUrl?: string; inlineOptions?: unknown; write?: { rename?: (from: string, to: string) => void; beforeCommit?: () => void } } = {}) {
+function host(content: string, opts: { legacyUrl?: string; inlineOptions?: unknown; failRebuildOnce?: boolean; write?: { rename?: (from: string, to: string) => void; beforeCommit?: () => void } } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "oc-mgr-"))
   const target = { file: join(dir, "opencode.jsonc") }
   writeFileSync(target.file, content)
   let options: PluginOptions = parseOptions(opts.inlineOptions ?? readPluginOptions(target, PKG), { warn() {} })
   let activation: EndpointActivation = { mode: "all" }
+  let failRebuild = opts.failRebuildOnce === true
   const removed: string[] = []
   const events: string[] = []
   const ids = () => options.endpoints === undefined ? ["default"] : Object.keys(options.endpoints)
@@ -30,7 +31,11 @@ function host(content: string, opts: { legacyUrl?: string; inlineOptions?: unkno
     ids,
     activation: () => activation,
     async setActivation(next) { activation = next; events.push(`activation:${JSON.stringify(next)}`) },
-    async rebuild(next) { options = next; events.push("rebuild") },
+    async rebuild(next) {
+      if (failRebuild) { failRebuild = false; throw new Error("runtime rebuild failed") }
+      options = next
+      events.push("rebuild")
+    },
     async legacyBaseUrl() { return opts.legacyUrl },
     async removeStorage(key) { removed.push(key) },
     async sourceTarget() { return PKG },
@@ -93,9 +98,33 @@ describe("endpoint manager (server)", () => {
     await h.manager.refresh?.()
     const result = await h.manager.add({ endpointId: "lab", baseUrl: "https://lab.example" })
     expect(result.ok).toBe(false)
+    expect(result.saved).toBeUndefined() // nothing was committed — a plain failure
     expect(h.activation).toEqual({ mode: "all" }) // previous activation restored, not left materialised
     expect(h.events.at(-1)).toBe('activation:{"mode":"all"}') // runtime reconciled back through setActivation
     expect(JSON.parse(h.text().replace(/^\s*\/\/.*$/gmu, "")).plugins[0].options.endpoints).toEqual(TWO)
+    expect(h.active()).toEqual(["default", "company"])
+  })
+
+  test("[ADD-ROLLBACK] config committed but the runtime reload fails: activation is kept materialised (never back to 'all') and the result reports saved-but-reload-failed", async () => {
+    const h = host(file(TWO), { failRebuildOnce: true })
+    await h.manager.refresh?.()
+    const result = await h.manager.add({ endpointId: "lab", baseUrl: "https://lab.example" })
+    expect(result.ok).toBe(false)
+    expect(result.saved).toBe(true) // the config write IS committed — not a plain "Add failed"
+    expect(result.code).toBe("rebuild-failed")
+    expect(result.message).toContain("配置已保存")
+    expect(result.message).toContain("运行时重新加载失败")
+    // rolling back to the previous 'all' here would auto-activate lab on the next rebuild
+    expect(h.activation).toEqual({ mode: "selected", endpointIds: ["default", "company"] })
+    expect(h.events.at(-1)).not.toBe('activation:{"mode":"all"}')
+    expect(JSON.parse(h.text().replace(/^\s*\/\/.*$/gmu, "")).plugins[0].options.endpoints.lab).toEqual({ baseUrl: "https://lab.example" })
+    // the next successful rebuild shows the committed endpoint, still inactive
+    await h.manager.refresh?.()
+    expect(h.manager.endpoints().map((entry) => [entry.id, entry.active])).toEqual([
+      ["default", true],
+      ["company", true],
+      ["lab", false],
+    ])
     expect(h.active()).toEqual(["default", "company"])
   })
 
@@ -141,6 +170,27 @@ describe("endpoint manager (server)", () => {
     expect(result.message).toContain("disk full") // primary failure first
     expect(result.message).toContain("activation 回滚失败") // rollback failure kept, not swallowed
     expect(result.message).toContain("activation store unavailable")
+  })
+
+  test("[ADD-INACTIVE][LIST-LEGACY-GHOST] ghostless legacy first Add pins an empty activation — no stale default; a hand-added default later stays inactive", async () => {
+    const h = host(file()) // legacy with no connected address: there is no real default endpoint
+    await h.manager.refresh?.()
+    expect(h.manager.endpoints()).toEqual([])
+    const result = await h.manager.add({ endpointId: "company", baseUrl: "https://b.example" })
+    expect(result).toEqual({ ok: true, migrated: false })
+    // the runtime-internal legacy id "default" must never be materialised into activation
+    expect(h.activation).toEqual({ mode: "selected", endpointIds: [] })
+    expect(h.events).toContain('activation:{"mode":"selected","endpointIds":[]}')
+    expect(h.options.endpoints?.company).toEqual({ baseUrl: "https://b.example", protocolOverrides: {} })
+    expect(h.active()).toEqual([])
+    // later the user hand-adds endpoints.default in the config file
+    writeFileSync(h.target.file, file({ company: { baseUrl: "https://b.example" }, default: { baseUrl: "https://a.example" } }))
+    await h.manager.refresh?.()
+    expect(h.manager.endpoints().map((entry) => [entry.id, entry.active])).toEqual([
+      ["company", false],
+      ["default", false],
+    ])
+    expect(h.active()).toEqual([]) // no surprise activation from a stale default entry
   })
 
   test("[ADD-DUP][ADD-BAD-ID][ADD-BAD-URL] invalid adds are rejected with a code and do not touch the file", async () => {

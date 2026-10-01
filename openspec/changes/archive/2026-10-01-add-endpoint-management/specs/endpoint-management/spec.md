@@ -29,6 +29,7 @@ The management UI SHALL list every configured endpoint with its active state and
 #### Scenario: [LIST-LEGACY-GHOST] No ghost default without a legacy address
 - **WHEN** the plugin runs in legacy single-endpoint mode with no connected address
 - **THEN** the endpoint list shows no `default` row and offers Add instead
+- **THEN** activation materialised by management actions never contains the internal `default` identity
 
 ### Requirement: Add endpoint
 Add SHALL ask only for a user-defined endpoint ID and a Base URL. The new endpoint SHALL be inactive and MAY have no credential. Creating an endpoint SHALL NOT activate it.
@@ -52,6 +53,7 @@ Add SHALL ask only for a user-defined endpoint ID and a Base URL. The new endpoi
 #### Scenario: [ADD-INACTIVE] Default inactive and unconnected
 - **WHEN** an endpoint has just been added
 - **THEN** it is inactive, exposes no provider or model, and shows Not connected
+- **THEN** the activation materialised by the Add contains only configured endpoint definitions — a legacy `default` identity without a connected address is never written into activation
 
 #### Scenario: [ADD-PRESERVE] Existing endpoints are untouched
 - **WHEN** an endpoint is added to a configuration with other endpoints and global settings
@@ -61,9 +63,11 @@ Add SHALL ask only for a user-defined endpoint ID and a Base URL. The new endpoi
 - **WHEN** the plugin runs in legacy single-endpoint mode (address entered via `/connect`) and the user adds a second endpoint
 - **THEN** the UI asks for confirmation, then moves the connected address and top-level `protocolOverrides` into `options.endpoints.default` (keeping integration id `litellm` and its credential) and adds the new endpoint
 
-#### Scenario: [ADD-ROLLBACK] A failed Add restores the previous activation
-- **WHEN** endpoint creation fails (conflict, write failure or a concurrent external edit) after the activation was pinned
+#### Scenario: [ADD-ROLLBACK] A failed Add keeps the activation consistent with the committed configuration
+- **WHEN** endpoint creation fails before the configuration write commits (conflict, write failure or a concurrent external edit) after the activation was pinned
 - **THEN** the previous activation is restored, the runtime reconciles back to its previous state and the configuration has no new endpoint
+- **WHEN** the configuration write has committed but the runtime reload afterwards fails
+- **THEN** the materialised activation is kept and never restored to `all`, the new endpoint stays inactive in the committed configuration, and the UI reports that the configuration was saved while the runtime reload failed
 
 ### Requirement: Edit endpoint
 Edit SHALL change only the Base URL. The endpoint ID SHALL be read-only and rename SHALL NOT exist. Fields the UI does not manage SHALL be preserved byte-for-byte in value.
@@ -90,7 +94,7 @@ Edit SHALL change only the Base URL. The endpoint ID SHALL be read-only and rena
 
 #### Scenario: [LEGACY-MIGRATE] Legacy default is fully manageable through migration
 - **WHEN** the default endpoint is in legacy single-endpoint mode (its address lives in the `/connect` credential) and the user runs Edit, Delete, Connect or Replace
-- **THEN** the UI offers to migrate the connected address into `options.endpoints.default`, and after confirmation the action completes normally (endpoint id, integration id, saved credential and activation unchanged; no second endpoint definition appears)
+- **THEN** the connected address migrates into `options.endpoints.default` after the user's confirmation — for Edit/Connect as a migration confirmation, for Delete as part of the final Delete confirmation (see `[DEL-CANCEL]`) — and the action completes normally (endpoint id, integration id, saved credential and activation unchanged; no second endpoint definition appears)
 
 ### Requirement: Credential management
 The management UI SHALL show Connected / Not connected per endpoint and offer Connect, Replace API Key and Disconnect. It SHALL store credentials in the same host credential backend used by `/connect`, SHALL NEVER display an existing key, and SHALL NOT change activation.
@@ -154,8 +158,9 @@ Delete SHALL require explicit confirmation and SHALL remove everything the plugi
 - **THEN** a confirmation dialog states what will be removed before anything changes
 
 #### Scenario: [DEL-CANCEL] Cancelled delete changes nothing
-- **WHEN** the user declines or dismisses the confirmation
-- **THEN** the endpoint definition, activation, credential and snapshot are unchanged
+- **WHEN** the user declines or dismisses the final Delete confirmation
+- **THEN** the endpoint definition, activation, credential and discovery snapshot are unchanged
+- **THEN** no migration or cleanup has run: Cancel Delete never triggers the legacy migration, `prepareRemove`, `remove` or any credential removal, and the first persistent mutation happens only after the user confirms the deletion
 
 #### Scenario: [DEL-CLEANUP] Confirmed delete cleans all persisted state
 - **WHEN** the user confirms Delete

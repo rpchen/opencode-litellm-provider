@@ -22,6 +22,8 @@ export type MutationView = {
   code?: string
   message?: string
   migrated?: boolean
+  /** The config mutation is persisted even though the operation failed (post-commit reload failure). */
+  saved?: boolean
   state: EndpointActivationView
 }
 

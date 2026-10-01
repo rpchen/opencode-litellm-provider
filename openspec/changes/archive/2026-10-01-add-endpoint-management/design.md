@@ -33,11 +33,12 @@ Connect/Replace = `integration.connect.key` 后对新凭据 `credential.activate
 **表单校验（review 修正）**：legacy integration 的 key method 带必填 `url` form，OpenCode 会在认证前校验 form；漏传 `answer.url` 会被宿主拒绝。`saveKey` 先读取该 integration 的 key method：有 `url` 表单时必须带上 `answer: { url }`（地址来自 endpoint 定义/迁移），拿不到地址时直接拒绝并提示，绝不发送不完整的 connect。
 
 ### D6 activation 与 Add / Delete
-- Add：新 endpoint 必须 inactive。先把当前已激活集合物化为 `selected`（排除新 id）再写配置。取舍：此后手工新增的 endpoint 不会自动激活。**Add 失败必须回滚 activation**（review 修正）：记录 previous activation，写配置失败（conflict / 写失败 / 外部并发修改）时 best-effort 恢复 previous 并 reconcile runtime；回滚自身失败时不吞掉，primary + rollback 错误一并报告。
-- Delete（先清理、最后删定义，可重试）：确认 → RPC `prepareRemove`（取消激活、reconcile 停掉该 endpoint 的 loop/provider、删除 snapshot 存储）→ TUI 移除该 endpoint 所有 credential → RPC `remove`（改配置、rebuild、从 activation 剔除、再次清 snapshot）。任一步失败，定义仍在。
+- Add：新 endpoint 必须 inactive。先把当前已激活集合物化为 `selected`（排除新 id）再写配置。**物化只针对真实存在的 configured/managed endpoint 定义**（review 2 修正）：explicit 模式取 `Object.keys(options.endpoints)`；legacy 有已连接地址取 `["default"]`；legacy 无地址取 `[]`——runtime 内部 legacy id（永远是 `["default"]`）不得写进 activation，否则 ghostless 首次 Add 会留下 stale `default` 激活，日后手工加入 `endpoints.default` 会被自动启用。取舍：此后手工新增的 endpoint 不会自动激活。**Add 失败必须回滚 activation**（review 修正）：记录 previous activation，写配置失败（conflict / 写失败 / 外部并发修改）时 best-effort 恢复 previous 并 reconcile runtime；回滚自身失败时不吞掉，primary + rollback 错误一并报告。
+  - **rollback 只发生在配置写入 commit 之前**（review 2 修正）：配置已成功写入、但随后 rebuild 失败时，**保留物化后的 `selected`**（绝不恢复 `all`，否则新 endpoint 下次 rebuild 会被自动激活），新 endpoint 保持 inactive，结果用 `saved: true` + `code: "rebuild-failed"` 明确报告“配置已保存、运行时重新加载失败”，TUI 用 warning（而非 error）展示。
+- Delete（先清理、最后删定义，可重试）：**最终 Delete 确认必须发生在任何 migration/cleanup 之前**（review 2 修正）——legacy default 的删除用一条合并确认（说明确认后先内部迁移再立即删除），Cancel = 不调用 `rpc.migrate` / `prepareRemove` / `remove` / credential 移除。确认后：RPC `prepareRemove`（取消激活、reconcile 停掉该 endpoint 的 loop/provider、删除 snapshot 存储）→ TUI 移除该 endpoint 所有 credential → RPC `remove`（改配置、rebuild、从 activation 剔除、再次清 snapshot）。任一步失败，定义仍在。
 
 ### D7 legacy 单 endpoint（review 修正）
-legacy 模式下 `default` 的地址在 `/connect` 凭据里，不在配置文件。**不做产品例外**：详情页对 legacy default 同样提供 Edit / Delete / Connect / Replace，第一次执行这些动作时先提示迁移——把凭据里的地址与顶层 `protocolOverrides` 写入 `options.endpoints.default`（endpoint id、integration id、已保存 credential、activation 全部不变；旧 legacy snapshot key 清除，因为 fingerprint 身份变化会重新发现），随后动作照常执行。若 legacy 模式下没有已连接的地址，则不存在可管理的 `default`：列表不显示幽灵行，用户直接 Add。
+legacy 模式下 `default` 的地址在 `/connect` 凭据里，不在配置文件。**不做产品例外**：详情页对 legacy default 同样提供 Edit / Delete / Connect / Replace。Edit / Connect / Replace 第一次执行时先提示迁移——把凭据里的地址与顶层 `protocolOverrides` 写入 `options.endpoints.default`（endpoint id、integration id、已保存 credential、activation 全部不变；旧 legacy snapshot key 清除，因为 fingerprint 身份变化会重新发现），随后动作照常执行；**Delete 不单独提示迁移**（review 2 修正）：最终 Delete 确认合并说明迁移+删除，Confirm 后先迁移再删除，Cancel 不留任何迁移副作用。若 legacy 模式下没有已连接的地址，则不存在可管理的 `default`：列表不显示幽灵行，用户直接 Add。
 
 迁移与“新增第二个 endpoint 时的迁移”共用同一写入路径（`kind: "migrate"` / add 的 `migrateLegacy`），单次原子写入，失败不留半份配置。
 

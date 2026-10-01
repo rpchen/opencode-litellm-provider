@@ -122,8 +122,12 @@ export function createEndpointUi(deps) {
             confirmMigration = true;
         }
         const result = unwrap(await rpc.add({ endpointId: id, baseUrl, confirmMigration }));
-        if (!result.ok)
+        if (!result.ok) {
+            // saved = the config write is committed but the runtime reload failed: not a plain "Add failed".
+            if (result.saved)
+                return warn(result.message ?? "endpoint 配置已保存，但运行时重新加载失败；新 endpoint 保持未启用，可稍后重试 reload");
             return error(result.message ?? "新增 endpoint 失败");
+        }
         info(`已添加 endpoint ${id}（未启用、未连接）。请在列表中选择它来连接 API Key 并启用。`);
     };
     const editUrl = async (item) => {
@@ -165,12 +169,21 @@ export function createEndpointUi(deps) {
             error(`断开凭据失败：${messageOf(caught)}`);
         }
     };
+    /**
+     * Delete runs entirely after the user's final confirmation. The confirmation comes FIRST — including
+     * the internal legacy migration — so cancelling it leaves every kind of state untouched. Only after
+     * Confirm does the migration run, then cleanup, then the definition is removed.
+     */
     const deleteEndpoint = async (item) => {
         const ok = await dialog.confirm({
             title: `删除 endpoint ${item.id}`,
-            message: "将彻底删除：endpoint 配置、启用状态、已保存的 API Key、模型发现缓存/快照。此操作不可撤销，其他 endpoint 不受影响。是否删除？",
+            message: item.legacy
+                ? `该 endpoint 当前使用 legacy 单 endpoint 配置。确认删除后，将先完成内部迁移（写入 options.endpoints.${item.id}），然后立即删除：endpoint 配置、启用状态、已保存的 API Key、模型发现缓存/快照。此操作不可撤销。是否继续？`
+                : "将彻底删除：endpoint 配置、启用状态、已保存的 API Key、模型发现缓存/快照。此操作不可撤销，其他 endpoint 不受影响。是否删除？",
         });
         if (!ok)
+            return false;
+        if (item.legacy && !(await migrateNow("；删除未执行")))
             return false;
         try {
             // Cleanup first, definition last: a mid-way failure leaves the endpoint visible so Delete can be retried.
@@ -193,7 +206,22 @@ export function createEndpointUi(deps) {
             return false;
         }
     };
-    /** Legacy default: first migrate to the manageable config form, keeping every identity. */
+    /** One-way migration to the manageable config form; only called after the user already confirmed the action. */
+    const migrateNow = async (failureNote = "") => {
+        try {
+            const result = unwrap(await rpc.migrate({}));
+            if (!result.ok) {
+                error(`${result.message ?? "迁移失败"}${failureNote}`);
+                return false;
+            }
+            return true;
+        }
+        catch (caught) {
+            error(`迁移失败：${messageOf(caught)}${failureNote}`);
+            return false;
+        }
+    };
+    /** Legacy default: Edit / Connect first migrate to the manageable config form, keeping every identity. */
     const ensureManaged = async (item, action) => {
         if (!item.legacy)
             return true;
@@ -204,18 +232,7 @@ export function createEndpointUi(deps) {
         });
         if (!ok)
             return false;
-        try {
-            const result = unwrap(await rpc.migrate({}));
-            if (!result.ok) {
-                error(result.message ?? "迁移失败");
-                return false;
-            }
-            return true;
-        }
-        catch (caught) {
-            error(`迁移失败：${messageOf(caught)}`);
-            return false;
-        }
+        return migrateNow();
     };
     const detail = async (id) => {
         for (;;) {
@@ -226,8 +243,9 @@ export function createEndpointUi(deps) {
             if (!item)
                 return warn(`未知 LiteLLM endpoint：${id}`);
             const kind = await credentialKind(client, id);
-            // Legacy default is fully manageable: Edit/Connect/Delete first migrate it to
-            // options.endpoints.default (same id, integration and credential), then run normally.
+            // Legacy default is fully manageable: Edit/Connect first migrate it to
+            // options.endpoints.default (same id, integration and credential); Delete confirms first,
+            // then migrates as part of the confirmed deletion.
             const canWrite = state.writable !== false;
             const options = [
                 { title: item.active ? "停用" : "启用", value: "toggle" },
@@ -251,7 +269,7 @@ export function createEndpointUi(deps) {
                 await editUrl(item);
             else if (choice === "connect" && (await ensureManaged(item, "管理 API Key")))
                 await connect(item, kind);
-            else if (choice === "delete" && (await ensureManaged(item, "删除")) && (await deleteEndpoint(item)))
+            else if (choice === "delete" && (await deleteEndpoint(item)))
                 return;
         }
     };

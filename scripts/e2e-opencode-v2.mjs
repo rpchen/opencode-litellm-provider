@@ -839,9 +839,24 @@ try {
     ml = await choose(tl, ["＋ 新增 endpoint", "全部启用", "全部停用", "○ default"], "全部启用", { since: ml })
     await waitForTui(tl, /default[^|]*已启用 · 已连接/u, { from: ml })
 
+    // 3b. Legacy Delete Cancel (before any migration): cancelling the final confirmation is side-effect free
+    const legacyDetail = ["停用", "修改 Base URL", "替换 API Key", "断开凭据", "删除 endpoint", "返回"]
+    ml = await choose(tl, ["＋ 新增 endpoint", "全部启用", "全部停用", "✓ default"], "✓ default", { since: ml })
+    ml = await choose(tl, legacyDetail, "删除 endpoint", { anchor: /default[^|]*已启用 · 已连接/u, since: ml })
+    await waitForTui(tl, /legacy 单 endpoint/u, { from: ml }) // the combined confirmation explains the internal migration
+    const cancelFrom = tl.mark()
+    const beforeCancelConnections = connectionsOf("litellm").map((c) => c.id)
+    tl.write("\x1b") // Escape closes the confirmation unanswered = Cancel
+    await sleep(800)
+    assert.equal(legacyOptions().endpoints, undefined, "a cancelled Delete must not migrate the legacy configuration")
+    assert(readLegacy().includes("// phase 3: legacy single-endpoint configuration"), "a cancelled Delete modified the config")
+    assert.deepEqual(connectionsOf("litellm").map((c) => c.id), beforeCancelConnections, "a cancelled Delete must not remove the credential")
+    assert(integrationsNow().some((i) => i.id === "litellm"), "a cancelled Delete must keep the integration")
+    await waitForTui(tl, /default[^|]*已启用 · 已连接/u, { from: cancelFrom }) // back on the detail screen: still usable
+    ml = await choose(tl, legacyDetail, "返回", { anchor: /default[^|]*已启用 · 已连接/u, since: cancelFrom })
+
     // 4. credential management through the UI: Replace first migrates (confirm), then saves the new key
     ml = await choose(tl, ["＋ 新增 endpoint", "全部启用", "全部停用", "✓ default"], "✓ default", { since: ml })
-    const legacyDetail = ["停用", "修改 Base URL", "替换 API Key", "断开凭据", "删除 endpoint", "返回"]
     ml = await choose(tl, legacyDetail, "替换 API Key", { anchor: /default[^|]*已启用 · 已连接/u, since: ml })
     await waitForTui(tl, /迁移为可管理配置/u, { from: ml })
     ml = tl.mark()
@@ -920,6 +935,91 @@ try {
       new Promise((resolve) => legacyTarget.server.close(resolve)),
     ])
   }
+
+  // ===== Phase 4: ghostless legacy (no connected address) → first Add must not pin a stale default =====
+  openCodeServer.child.kill()
+  await sleep(1500)
+  const ghostUrl = "http://127.0.0.1:9"
+  writeFileSync(opencodeConfigFile, `{
+  // phase 4: ghostless legacy single-endpoint configuration
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [
+    {
+      "package": "${packageSpec}",
+      "options": {
+        "pollInterval": 30
+      }
+    }
+  ]
+}
+`)
+  openCodeServer = await startOpenCodeServer()
+  env.OPENCODE_PASSWORD = openCodeServer.password
+  for (let attempt = 0; attempt < 60; attempt++) {
+    const state = payload(jsonOutput(api("GET", "/api/plugin"), "plugin.list"))
+    const item = Array.isArray(state) ? state.find((entry) => entry.id === "litellm") : undefined
+    if (item?.state?.status === "active") break
+    await sleep(500)
+  }
+
+  const ghostSession = payload(jsonOutput(api("POST", "/api/session", "--data", JSON.stringify({ title: "LiteLLM ghostless mgmt" })), "session.create")).id
+  api("POST", `/api/session/${ghostSession}/command`, "--data", JSON.stringify({ name: "litellm-endpoints", text: "" }))
+  const tg = startAttachedTui(ghostSession)
+  let mg = tg.mark()
+  await waitForTui(tg, "＋ 新增 endpoint", { from: mg })
+  assert(!tg.output(mg).includes("default"), "ghostless legacy must not list a default row")
+  assert(!tg.output(mg).includes("全部启用"), "a ghostless legacy list must offer only Add")
+
+  // 1. first Add: no migration dialog exists (nothing to migrate); the endpoint starts inactive
+  const typeInto = async (tui, value) => { for (const ch of value) { tui.write(ch); await sleep(15) } await sleep(200) }
+  mg = await choose(tg, ["＋ 新增 endpoint"], "＋ 新增 endpoint", { since: mg })
+  await waitForTui(tg, /Endpoint ID/u, { from: mg })
+  await typeInto(tg, "company")
+  mg = tg.mark()
+  tg.write("\r")
+  await waitForTui(tg, /Base URL/u, { from: mg })
+  await typeInto(tg, ghostUrl)
+  mg = tg.mark()
+  tg.write("\r")
+  await waitForTui(tg, /company[^|]*未启用 · 未连接/u, { from: mg })
+  assert(!tg.output(mg).includes("default"), "the internal legacy default identity must not surface")
+  const ghostOptions = () => JSON.parse(readFileSync(opencodeConfigFile, "utf8").replace(/^\s*\/\/.*$/gmu, "")).plugins[0].options
+  assert.deepEqual(Object.keys(ghostOptions().endpoints), ["company"], "ghostless Add must write only the new endpoint")
+
+  // 2. hand-add endpoints.default: a stale default activation must not auto-activate it
+  writeFileSync(opencodeConfigFile, `{
+  // phase 4: ghostless legacy single-endpoint configuration
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": [
+    {
+      "package": "${packageSpec}",
+      "options": {
+        "pollInterval": 30,
+        "endpoints": {
+          "default": { "baseUrl": "${ghostUrl}" },
+          "company": { "baseUrl": "${ghostUrl}" }
+        }
+      }
+    }
+  ]
+}
+`)
+  tg.write("\x1b")
+  await sleep(300)
+  await stopAttachedTui(tg)
+
+  const ghostSession2 = payload(jsonOutput(api("POST", "/api/session", "--data", JSON.stringify({ title: "LiteLLM ghostless hand edit" })), "session.create")).id
+  api("POST", `/api/session/${ghostSession2}/command`, "--data", JSON.stringify({ name: "litellm-endpoints", text: "" }))
+  const tg2 = startAttachedTui(ghostSession2)
+  const mg2 = tg2.mark()
+  await waitForTui(tg2, "＋ 新增 endpoint", { from: mg2 })
+  await waitForTui(tg2, /○ default[^|]*未启用/u, { from: mg2 })
+  await waitForTui(tg2, /○ company[^|]*未启用/u, { from: mg2 })
+  assert(!tg2.output(mg2).includes("✓ default"), "a hand-added default must not be auto-activated by a stale default activation")
+  tg2.write("\x1b")
+  await sleep(300)
+  await stopAttachedTui(tg2)
+  console.log("Real OpenCode 2.0.16 ghostless legacy E2E passed: Add starts inactive and no stale default activation")
 
   console.log("Real OpenCode 2.0.16 E2E passed: startup recovery, native keyboard activation, endpoint-scoped diagnostics, credentials, providers and models are verified.")
 } catch (error) {

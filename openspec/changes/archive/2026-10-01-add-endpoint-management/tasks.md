@@ -24,6 +24,13 @@
 
 > 发版（feat → minor，需用户确认后打 tag）不属于本 change 的任务，见 PR 说明。
 
+## 7. Review 2 边界修复（随实施归档）
+- [x] 7.1 `[DEL-CANCEL]` Delete 流程重排：最终 Delete 确认（legacy 合并确认迁移+删除）之前零持久化变更，Cancel 不调用 `rpc.migrate` / `prepareRemove` / `remove` / credential 移除（`test/tui-endpoints.test.ts`）
+- [x] 7.2 `[ADD-INACTIVE]` `[LIST-LEGACY-GHOST]` activation 物化只针对真实 configured/managed 定义：ghostless legacy 首次 Add 产生 `selected([])`，不写入 stale `default`（`test/endpoint-manager.test.ts`）
+- [x] 7.3 `[ADD-ROLLBACK]` 区分 config commit 前后失败：commit 后 rebuild 失败保留物化 `selected`（不回退 `all`）、新 endpoint 保持 inactive、结果 `saved: true` + `code: "rebuild-failed"`、TUI 以 warning 报告“配置已保存、运行时重新加载失败”
+- [x] 7.4 spec/design 同步强化 `[DEL-CANCEL]` / `[ADD-INACTIVE]` / `[LIST-LEGACY-GHOST]` / `[ADD-ROLLBACK]` / `[LEGACY-MIGRATE]`；scenario coverage 保持 43/43（100%）
+- [x] 7.5 真实宿主 E2E 新增 legacy Delete Cancel 与 ghostless 首次 Add 场景（见 `scripts/e2e-opencode-v2.mjs`）
+
 ## Requirement / Scenario → Test Evidence
 
 | Scenario | Evidence files |
@@ -41,7 +48,7 @@
 | ADD-INACTIVE | test\endpoint-manager.test.ts, test\tui-endpoints.test.ts |
 | ADD-PRESERVE | test\config-file.test.ts, test\endpoint-manager.test.ts |
 | ADD-LEGACY | test\config-file.test.ts, test\endpoint-manager.test.ts, test\tui-endpoints.test.ts |
-| ADD-ROLLBACK | test\endpoint-manager.test.ts |
+| ADD-ROLLBACK | test\endpoint-manager.test.ts, test\tui-endpoints.test.ts |
 | EDIT-URL | test\config-file.test.ts, test\endpoint-manager.test.ts, test\tui-endpoints.test.ts |
 | EDIT-ID-READONLY | test\config-file.test.ts, test\tui-endpoints.test.ts |
 | EDIT-PRESERVE | test\config-file.test.ts, test\endpoint-manager.test.ts |

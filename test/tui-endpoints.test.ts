@@ -22,6 +22,8 @@ function world(initial: {
   writable?: boolean
   failCredentialRemove?: boolean
   failMigrate?: boolean
+  /** Add commits the config but the runtime reload fails afterwards (saved-but-not-reloaded). */
+  addSavedFailure?: boolean
   credentials?: Record<string, Array<{ type: string; id?: string; name?: string }>>
 }) {
   let endpoints = initial.endpoints.map((entry) => ({ ...entry, legacy: false }))
@@ -59,6 +61,9 @@ function world(initial: {
       if (initial.legacy && !input.confirmMigration) return wrap(false, "needs-migration", "需要确认")
       if (endpoints.some((e) => e.id === input.endpointId)) return wrap(false, "duplicate", "已存在")
       endpoints = [...endpoints.map((e) => e.legacy ? { ...e, legacy: false, baseUrl: "https://migrated.example" } : e), { id: input.endpointId, baseUrl: input.baseUrl, active: false, legacy: false }]
+      if (initial.addSavedFailure) {
+        return { ok: false, saved: true, code: "rebuild-failed", migrated: Boolean(initial.legacy), message: "endpoint 配置已保存，但运行时重新加载失败；新 endpoint 保持未启用，可稍后重试 reload", state: state() }
+      }
       return wrap(true, undefined, undefined, Boolean(initial.legacy))
     },
     edit: async (input) => {
@@ -188,6 +193,16 @@ describe("TUI endpoint management (host-native dialogs)", () => {
     expect(w.log.filter((l) => l.kind === "confirm")).toEqual([])
   })
 
+  test("[ADD-ROLLBACK] a saved-but-reload-failed Add is reported as saved (warning), not as a plain failure", async () => {
+    const w = world({ endpoints: TWO, addSavedFailure: true })
+    await w.run([{ select: "add" }, { prompt: "lab" }, { prompt: "https://lab.example" }, { select: undefined }])
+    const toast = w.toasts.at(-1)!
+    expect(toast.variant).toBe("warning") // not an "Add failed" error: the config IS saved
+    expect(toast.message).toContain("配置已保存")
+    expect(toast.message).toContain("运行时重新加载失败")
+    expect(w.endpoints().find((e) => e.id === "lab")).toMatchObject({ active: false }) // stays inactive
+  })
+
   test("Add is refused with the reason when the config is read-only", async () => {
     const w = world({ endpoints: TWO, writable: false })
     await w.run([{ select: "add" }, { select: undefined }])
@@ -283,16 +298,22 @@ describe("TUI endpoint management (host-native dialogs)", () => {
     expect(confirm.message).toContain("integration")
   })
 
-  test("[LEGACY-MIGRATE] declining the migration makes no change at all", async () => {
-    const w = world({ endpoints: [], legacy: true, legacyUrl: "https://old.example" })
+  test("[DEL-CANCEL][DEL-CONFIRM][LEGACY-MIGRATE] cancelling the legacy Delete runs no migration, no cleanup and no credential removal", async () => {
+    const w = world({ endpoints: [], legacy: true, legacyUrl: "https://old.example", credentials: { litellm: [{ type: "credential", id: "old-1" }] } })
     await w.run([{ select: "endpoint:default" }, { select: "delete" }, { confirm: false }, { select: "back" }, { select: undefined }])
-    expect(w.calls).toEqual([])
-    expect(w.endpoints().map((e) => e.id)).toEqual(["default"])
+    const confirm = w.log.find((l) => l.kind === "confirm")!
+    expect(confirm.title).toContain(`删除 endpoint default`)
+    expect(confirm.message).toContain("legacy") // the confirmation explains the internal migration up front
+    expect(confirm.message).toContain("options.endpoints.default")
+    expect(w.calls).toEqual([]) // no migrate / prepareRemove / cred.remove / remove at all
+    expect(w.endpoints().map((e) => e.id)).toEqual(["default"]) // config is still the legacy form
+    expect(w.endpoints()[0]!.active).toBe(true) // activation unchanged
+    expect(w.creds.litellm).toHaveLength(1) // credential connection unchanged
   })
 
-  test("[LEGACY-MIGRATE][DEL-CLEANUP] legacy Delete migrates first, then deletes definition and credential", async () => {
+  test("[LEGACY-MIGRATE][DEL-CLEANUP][DEL-CONFIRM] legacy Delete confirms the whole action first, then migrates and deletes definition and credential", async () => {
     const w = world({ endpoints: [], legacy: true, legacyUrl: "https://old.example", credentials: { litellm: [{ type: "credential", id: "old-1" }] } })
-    await w.run([{ select: "endpoint:default" }, { select: "delete" }, { confirm: true }, { confirm: true }, { select: undefined }])
+    await w.run([{ select: "endpoint:default" }, { select: "delete" }, { confirm: true }, { select: undefined }])
     expect(w.calls).toEqual(["migrate", "prepareRemove:default", "cred.remove:old-1", "remove:default"])
     expect(w.endpoints()).toEqual([])
   })

@@ -38,7 +38,7 @@ export interface ManagerHost {
   target?: ConfigTarget
 }
 
-type Outcome = { ok: boolean; code?: string; message?: string; migrated?: boolean }
+type Outcome = { ok: boolean; code?: string; message?: string; migrated?: boolean; saved?: boolean }
 
 const fail = (code: string, message: string): Outcome => ({ ok: false, code, message })
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
@@ -118,8 +118,21 @@ export function createEndpointManagement(host: ManagerHost): EndpointManagement 
     }))
   }
 
+  /**
+   * The endpoint definitions that really exist right now: explicit config entries, or legacy `default`
+   * only while its /connect credential carries an address. Runtime-internal ids (always `["default"]`
+   * in legacy mode) must NOT drive activation: a ghostless legacy has no `default` to activate.
+   */
+  const configuredIds = (): string[] => {
+    const options = host.options()
+    if (options.endpoints !== undefined) return Object.keys(options.endpoints)
+    return legacyUrl ? ["default"] : []
+  }
+
   const materializeActivation = async (exclude?: string) => {
-    const next = activeEndpointIds(host.ids(), host.activation()).filter((id) => id !== exclude)
+    // Pin the active set over the real configured definitions (without the excluded id) so newly added
+    // endpoints start inactive and stale/ghost identities are never written into activation.
+    const next = activeEndpointIds(configuredIds(), host.activation()).filter((id) => id !== exclude)
     const current = host.activation()
     const same = current.mode === "selected" &&
       current.endpointIds.length === next.length && next.every((id) => current.endpointIds.includes(id))
@@ -148,9 +161,10 @@ export function createEndpointManagement(host: ManagerHost): EndpointManagement 
       const target = (await locate())!
       const previousActivation = host.activation()
       let pinned = false
+      let configWritten = false
       try {
         const legacy = host.options().endpoints === undefined
-        const address = legacy ? await host.legacyBaseUrl() : undefined
+        const address = legacy ? legacyUrl : undefined
         // New endpoints start inactive: pin the current active set (without the new id) before writing.
         await materializeActivation(input.endpointId)
         pinned = true
@@ -161,21 +175,33 @@ export function createEndpointManagement(host: ManagerHost): EndpointManagement 
           ...(address ? { migrateLegacy: { baseUrl: address } } : {}),
           confirmMigration: input.confirmMigration === true,
         })
-        await afterWrite(target)
+        // The config mutation is committed from here on: never roll the activation back.
+        configWritten = true
         if (result.migratedLegacy) await host.removeStorage(discoverySnapshotKey("default", true)).catch(() => {})
+        await afterWrite(target)
         return { ok: true, migrated: result.migratedLegacy }
       } catch (error) {
-        // A failed Add must not leave the activation permanently materialised as "selected".
-        let rollbackFailure = ""
-        if (pinned) {
-          try {
-            await host.setActivation(previousActivation) // also reconciles the runtime back
-          } catch (rollbackError) {
-            rollbackFailure = `; activation 回滚失败：${messageOf(rollbackError)}`
+        if (!configWritten) {
+          // Before commit: a failed Add must not leave the activation permanently materialised as "selected".
+          let rollbackFailure = ""
+          if (pinned) {
+            try {
+              await host.setActivation(previousActivation) // also reconciles the runtime back
+            } catch (rollbackError) {
+              rollbackFailure = `; activation 回滚失败：${messageOf(rollbackError)}`
+            }
           }
+          const primary = error instanceof ConfigFileError ? fail(error.code, error.message) : fail("error", messageOf(error))
+          return rollbackFailure ? { ...primary, message: `${primary.message}${rollbackFailure}` } : primary
         }
-        const primary = error instanceof ConfigFileError ? fail(error.code, error.message) : fail("error", messageOf(error))
-        return rollbackFailure ? { ...primary, message: `${primary.message}${rollbackFailure}` } : primary
+        // After commit the endpoint definition is persisted: keep the materialised activation so the new
+        // endpoint stays inactive (restoring the previous "all" would auto-activate it on the next rebuild).
+        return {
+          ok: false,
+          saved: true,
+          code: "rebuild-failed",
+          message: `endpoint 配置已保存，但运行时重新加载失败；新 endpoint 保持未启用，可稍后重试 reload：${messageOf(error)}`,
+        }
       }
     },
 
