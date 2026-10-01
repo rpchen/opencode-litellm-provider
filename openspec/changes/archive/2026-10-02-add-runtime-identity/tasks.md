@@ -24,7 +24,7 @@
 - [x] 5.1 `README updated: Runtime Identity（diagnostics / audit-export / startup log）`
 
 ## 6. Closure
-- [ ] 6.1 `openspec archive add-runtime-identity` 后 `openspec validate --all --strict --no-interactive`，closure gate 通过
+- [x] 6.1 `openspec archive add-runtime-identity` 后 `openspec validate --all --strict --no-interactive`，closure gate 通过（本提交即归档提交，CI 复验）
 
 ## Requirement / Scenario → Test Evidence
 
