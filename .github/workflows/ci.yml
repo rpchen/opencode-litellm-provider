@@ -39,6 +39,9 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
+      - name: Test release index identity, opt-in and integrity boundaries
+        run: npm run test:codebase-memory
+
       # Never run the main-following update build before this check.
       - name: Verify untouched committed distribution at its provenance SHA
         run: npm run verify:dist

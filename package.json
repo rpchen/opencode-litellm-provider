@@ -37,7 +37,8 @@
     "validate:spec": "openspec validate --all --strict --no-interactive",
     "test:scenario-coverage": "node scripts/check-scenario-coverage.mjs",
     "test:openspec-closure": "node --test scripts/check-openspec-closure.test.mjs && node scripts/check-openspec-closure.mjs",
-    "test:release-metadata": "node scripts/check-release-metadata.mjs"
+    "test:release-metadata": "node scripts/check-release-metadata.mjs",
+    "test:codebase-memory": "node --test scripts/codebase-memory.test.mjs"
   },
   "peerDependencies": {
     "@opencode/plugin": ">=2.0.15 <2.1"

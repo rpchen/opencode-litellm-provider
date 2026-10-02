@@ -356,3 +356,13 @@ github:rpchen/opencode-litellm-provider#v0.6.0
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [litellm-discovery-core](https://github.com/rpchen/litellm-discovery-core)
 - [v0.6.0 release notes](docs/releases/v0.6.0.md)
+
+## 开发代码索引
+
+已入库的代码图谱使用与跨客户端配置、Release 附件及本地同步方式见 [docs/codebase-memory.md](docs/codebase-memory.md)。索引工具不属于插件运行时依赖。发布索引必须明确成功，降级结果会阻止导出；本地工作索引按当前 Git 根目录识别，并由客户端持久 MCP 会话跟踪修改。
+
+## Claude Code OpenSpec
+
+在本仓库启动 `claude`，可发现 `.claude/skills/` 中的 6 个 OpenSpec skills：propose、explore、apply-change、update-change、sync-specs、archive-change（命令名均以 `openspec-` 开头）。例如 `/openspec-propose "变更目标"` 创建提案；审阅后再用 `/openspec-apply-change <change-name>` 实施。描述供 Claude 按任务匹配，实际是否自动调用以工具记录为准。
+
+入口由 OpenSpec CLI 1.13.2 生成并入库；新 clone 无需重复初始化。新增 Claude 入口用 `openspec init --tools claude --no-animation`；升级用 `openspec update --force` 刷新 `.agents/skills/` 和 `.claude/skills/` 并审阅差异，两处均由 CLI 模板生成。`CLAUDE.md` 导入 [AGENTS.md](AGENTS.md)，不复制项目规则。

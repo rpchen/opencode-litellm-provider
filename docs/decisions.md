@@ -78,3 +78,12 @@
 - OpenSpec change 只有在 tasks 与证据一致、通过 CLI archive、canonical specs 已同步并再次 strict validation 后才算 Closed。
 - 下一会话开工前必须重新读取当前 main、未合并 PR、最新 tag/Release、README、dist provenance、active OpenSpec 与共享 testing-standard，不能只依赖上一会话记忆。
 - 会话结束前必须做 retrospective，检查是否把具体症状提升成通用不变量、是否存在文档/代码/Release 漂移、是否残留临时 workflow/branch，并把长期经验写入权威文档。
+
+
+## 开发代码索引（2026-10-02）
+
+已显式选择索引并入库；结构查询优先使用图谱与 coverage。Release 使用固定 0.11.0/full 从不可变 tag SHA 生成附件并回读验证；用户确认客户端下次启动同步发布快照，工作图谱另按当前源码刷新。新仓库不自动索引，不改变插件运行时依赖、discovery 语义、dist/provenance 或发行授权。详细流程见 docs/codebase-memory.md。
+
+## Claude Code OpenSpec 入口（2026-10-02）
+
+按用户要求使用 OpenSpec CLI 1.13.2 初始化 `.claude/skills/`，提供 propose、explore、apply、update、sync、archive 六个工作流。Claude Code 的项目 skill 发现路径是 `.claude/skills/`；不依赖它识别 `.agents/skills/`。原有共享入口保留，撤销删除 Claude 必要入口的旧规则；两处由 CLI 模板生成，升级时一起审阅，禁止手工分别维护。`CLAUDE.md` 导入 `AGENTS.md`。仅增加开发工具入口，不改变产品规格或运行时行为。
