@@ -135,13 +135,38 @@ test('[CBM-TOTAL-BUDGET] repeated main changes do not reset the original deadlin
   try {
     let calls = 0; const began = Date.now();
     const budget = process.platform === 'win32' ? 22000 : 1700;
-    await assert.rejects(prepare(f, { waitMs: budget, services: { syncSnapshot: async expected => {
-      calls++; await new Promise(resolve => setTimeout(resolve, process.platform === 'win32' ? 5000 : 350));
-      writeFileSync(path.join(f.writer, 'source.ts'), `advance ${calls}`); commit(f.writer); g(f.writer, 'push', '-q', 'origin', 'main'); return f.snapshot(expected.commit);
+    await assert.rejects(prepare(f, { waitMs: budget, services: { syncSnapshot: async (expected, _cache, { deadline } = {}) => {
+      calls++;
+      const execute = args => {
+        assert.ok(Date.now() < deadline, 'Index preparation timed out');
+        try { return run('git', args, { cwd: f.writer, timeout: Math.max(1, deadline - Date.now()) }); }
+        catch (error) { if (/ETIMEDOUT/.test(error.message)) throw new Error('Index preparation timed out'); throw error; }
+      };
+      await new Promise(resolve => setTimeout(resolve, Math.min(deadline - Date.now(), process.platform === 'win32' ? 5000 : 350)));
+      assert.ok(Date.now() < deadline, 'Index preparation timed out');
+      writeFileSync(path.join(f.writer, 'source.ts'), `advance ${calls}`); execute(['add', '.']); execute(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.com', 'commit', '-qm', 'fixture']); execute(['push', '-q', 'origin', 'main']); return f.snapshot(expected.commit);
     } } }), /timed out/);
     assert.ok(calls >= 2, 'The deadline must survive multiple target changes'); assert.ok(Date.now() - began < budget + 4000); assert.equal(f.state().head, f.A); assert.equal(existsSync(path.join(f.root, '.codebase-memory/ready.json')), false);
   } finally { f.cleanup(); }
 });
+test('[CBM-COMMON-MUTEX] linked worktrees share a lock while one client is downloading', async () => {
+  const f = fixture(); let release, first;
+  try {
+    const linked = path.join(f.dir, 'linked'); g(f.root, 'worktree', 'add', '-q', '-b', 'other-client', linked, f.A);
+    const before = f.state(linked); let entered;
+    const downloading = new Promise(resolve => { entered = resolve; });
+    const held = new Promise(resolve => { release = resolve; });
+    first = prepare(f, { services: { syncSnapshot: async expected => { entered(); await held; return f.snapshot(expected.commit); } } });
+    await downloading;
+    assert.equal(path.resolve(linked, g(linked, 'rev-parse', '--git-common-dir')), path.join(f.root, '.git'));
+    assert.equal(existsSync(path.join(f.root, '.git/codebase-memory-task.lock/owner.json')), true);
+    await assert.rejects(prepareMain(linked, { waitMs: 5000, services: f.services }), /timed out/);
+    assert.deepEqual(f.state(linked), before); assert.equal(f.state().head, f.A);
+    release(); assert.equal((await first).status, 'ready');
+    assert.equal(existsSync(path.join(f.root, '.git/codebase-memory-task.lock')), false);
+  } finally { release?.(); await first?.catch(() => {}); f.cleanup(); }
+});
+
 test('[CBM-FINAL-REMOTE] main advancing during activation is rechecked before ready', async () => {
   const f = fixture();
   try {

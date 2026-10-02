@@ -3,6 +3,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, mkdtempSync, renameSync, rmSync, rmdirSync, realpathSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -12,9 +13,14 @@ export const INDEX_BRANCH = 'codebase-memory-index';
 export const MAIN_ASSETS = ['graph.db.zst', 'artifact.json', 'manifest.json'];
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const oid = value => /^[a-f0-9]{40}$/.test(value ?? '');
-const git = (root, ...args) => run('git', args, { cwd: root });
+const taskContext = new AsyncLocalStorage();
+function boundedRun(command, args, options = {}) {
+  try { return run(command, args, { ...options, timeout: remaining(taskContext.getStore()?.deadline, options.timeout ?? 120000) }); }
+  catch (error) { if (/ETIMEDOUT/.test(error.message)) throw new Error('Index preparation timed out'); throw error; }
+}
+const git = (root, ...args) => boundedRun('git', args, { cwd: root });
 const assert = (value, message) => { if (!value) throw new Error(message); };
-function api(endpoint, data, { method = 'POST', deadline } = {}) {
+function api(endpoint, data, { method = 'POST', deadline = taskContext.getStore()?.deadline } = {}) {
   const args = ['api', endpoint, ...(data ? ['--method', 'POST', '--input', '-'] : [])];
   if (data) args[args.indexOf('POST')] = method;
   return JSON.parse(run('gh', args, { ...(data ? { input: JSON.stringify(data) } : {}), maxBuffer: 80 * 1024 * 1024, timeout: remaining(deadline, 30000) }));
@@ -137,6 +143,7 @@ export function syncMain(repo, cache = process.env.CBM_MAIN_CACHE ?? path.join(o
     };
     if (existsSync(path.join(target, 'manifest.json'))) { winner(); return target; }
     for (let attempt = 0; ; attempt++) {
+      remaining(taskContext.getStore()?.deadline);
       try { install(staging, target); break; }
       catch (error) {
         if (!['EEXIST', 'ENOTEMPTY', 'EPERM', 'EACCES'].includes(error.code)) throw error;
@@ -144,7 +151,7 @@ export function syncMain(repo, cache = process.env.CBM_MAIN_CACHE ?? path.join(o
         // Windows scanners can briefly hold the private staging directory.
         // Retry only a sharing/permission error with no winner, and stay bounded.
         if (!['EPERM', 'EACCES'].includes(error.code) || attempt === 7) throw error;
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.min(200, 50 * (attempt + 1)));
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.min(remaining(taskContext.getStore()?.deadline), 200, 50 * (attempt + 1)));
       }
     }
     winner();
@@ -187,7 +194,8 @@ function sourceDirty(root) {
   return git(root, 'status', '--porcelain', '--untracked-files=all', '--', '.', ':!.codebase-memory/artifact.json', ':!.codebase-memory/graph.db.zst', ':!.codebase-memory/task.lock', ':!.codebase-memory/ready.json');
 }
 export function checkoutState(root) {
-  const main = spawnSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/main'], { cwd: root, encoding: 'utf8', windowsHide: true });
+  const main = spawnSync('git', ['rev-parse', '--verify', '--quiet', 'refs/heads/main'], { cwd: root, encoding: 'utf8', windowsHide: true, timeout: remaining(taskContext.getStore()?.deadline) });
+  if (main.error?.code === 'ETIMEDOUT') throw new Error('Index preparation timed out');
   assert(!main.error && [0, 1].includes(main.status), 'Cannot read local main identity');
   return { branch: git(root, 'branch', '--show-current'), head: git(root, 'rev-parse', 'HEAD'),
     tree: git(root, 'rev-parse', 'HEAD^{tree}'), main: main.status === 0 ? main.stdout.trim() : '', dirty: sourceDirty(root) };
@@ -200,7 +208,8 @@ function fetchMain(root, deadline) {
   return { commit: git(root, 'rev-parse', 'origin/main'), verified_at: new Date().toISOString() };
 }
 function ancestor(root, older, newer) {
-  const result = spawnSync('git', ['merge-base', '--is-ancestor', older, newer], { cwd: root, windowsHide: true });
+  const result = spawnSync('git', ['merge-base', '--is-ancestor', older, newer], { cwd: root, windowsHide: true, timeout: remaining(taskContext.getStore()?.deadline) });
+  if (result.error?.code === 'ETIMEDOUT') throw new Error('Index preparation timed out');
   if (result.error || ![0, 1].includes(result.status)) throw new Error('Cannot prove Git ancestry');
   return result.status === 0;
 }
@@ -214,19 +223,21 @@ export function branchWasMerged(repo, branch, target, { request = api } = {}) {
   assert(Array.isArray(pulls), 'Cannot verify merged branch identity');
   return pulls.some(pull => pull.merged_at && pull.head?.sha === repo.commit && pull.base?.ref === 'main' && oid(pull.merge_commit_sha) && ancestor(repo.root, pull.merge_commit_sha, target));
 }
-async function prepareUnlocked(cwd, { mode = 'new', waitMs = 0, deadline, services = {} } = {}) {
+async function prepareUnlocked(cwd, { mode = 'new', waitMs = 0, deadline, services = {}, initialRepo } = {}) {
   assert(['new', 'resume', 'finish'].includes(mode) && Number.isInteger(waitMs) && waitMs >= 0 && waitMs <= 120000, 'Invalid preparation mode or wait duration');
-  const identify = services.repository ?? repository;
-  const original = identify(cwd);
+  const identify = services.repository ?? (value => repository(value, boundedRun));
+  const original = initialRepo ?? identify(cwd);
   if (!selection(original.root)) return { status: 'legacy', root: original.root, commit: original.commit };
   const fetch = () => (services.fetchMain ?? fetchMain)(original.root, deadline);
-  let remote = fetch();
   let state = checkoutState(original.root);
+  assert(state.head === original.commit, 'Checkout changed before preparation; branch and source are preserved');
+  let remote = fetch();
+  assertState(original.root, state);
   const { branch, dirty } = state;
   const merged = dirty ? false : branchWasMerged(original, branch, remote.commit, { request: services.request });
   if (dirty || !merged || !branch) {
     assert(mode === 'resume', `New task cannot use current checkout: ${dirty ? 'uncommitted source changes' : 'unfinished branch or detached HEAD'}. Existing work is preserved.`);
-    const status = (services.activate ?? refresh)(original);
+    const status = (services.activate ?? (repo => refresh(repo, { execute: boundedRun })))(original);
     return { status: 'working', root: original.root, branch, commit: original.commit, project: status.project, reason: 'existing work preserved' };
   }
   // One deadline covers lock acquisition, retargeting and every network wait.
@@ -237,7 +248,7 @@ async function prepareUnlocked(cwd, { mode = 'new', waitMs = 0, deadline, servic
     const target = remote.commit;
     const expected = { ...original, commit: target, tree: git(original.root, 'rev-parse', `${target}^{tree}`) };
     let snapshot;
-    try { snapshot = await (services.syncSnapshot ?? syncMain)(expected, undefined, { checkRemote: true, request: (endpoint, data, options) => api(endpoint, data, { ...options, deadline }) }); }
+    try { snapshot = await (services.syncSnapshot ?? syncMain)(expected, undefined, { checkRemote: true, deadline, request: (endpoint, data, options) => api(endpoint, data, { ...options, deadline }) }); }
     catch (error) {
       if (!/publication is pending/.test(error.message) || !waitMs) throw error;
       remaining(deadline);
@@ -292,6 +303,7 @@ async function prepareUnlocked(cwd, { mode = 'new', waitMs = 0, deadline, servic
     if (remote.commit !== target) { assert(waitMs > 0, 'Remote main changed; immediate preparation has no remaining wait budget'); continue; }
     remaining(deadline);
     const actual = checkoutState(repo.root);
+    remaining(deadline);
     assert(actual.branch === 'main' && actual.head === target && actual.tree === manifest.tree && !actual.dirty, 'Final checkout is not verified main');
     const receipt = { schema_version: 1, status: 'ready', repository: repo.slug, root: repo.root, branch: actual.branch, commit: actual.head,
       index_commit: manifest.commit, tree: actual.tree, remote_verified_at: remote.verified_at, snapshot, project: status.project, sha256: manifest.sha256,
@@ -301,10 +313,14 @@ async function prepareUnlocked(cwd, { mode = 'new', waitMs = 0, deadline, servic
   }
 }
 export async function prepareMain(cwd, options = {}) {
-  const repo = (options.services?.repository ?? repository)(cwd);
-  if (!selection(repo.root)) return { status: 'legacy', root: repo.root, commit: repo.commit };
   const started = Date.now();
   const deadline = options.waitMs > 0 ? started + options.waitMs : undefined;
+  return taskContext.run({ deadline }, () => prepareLocked(cwd, { ...options, started, deadline }));
+}
+async function prepareLocked(cwd, options) {
+  const { started, deadline } = options;
+  const repo = (options.services?.repository ?? (value => repository(value, boundedRun)))(cwd);
+  if (!selection(repo.root)) return { status: 'legacy', root: repo.root, commit: repo.commit };
   // All worktrees and all four clients share the same repository mutex.
   const lock = path.join(path.resolve(repo.root, git(repo.root, 'rev-parse', '--git-common-dir')), 'codebase-memory-task.lock');
   const ownerFile = path.join(lock, 'owner.json');
@@ -312,6 +328,7 @@ export async function prepareMain(cwd, options = {}) {
   const lockDeadline = Math.min(deadline ?? Infinity, started + 30000);
   let acquired = false;
   while (!acquired) {
+    remaining(deadline);
     try { mkdirSync(lock); acquired = true; writeFileSync(ownerFile, JSON.stringify({ pid: process.pid, token })); }
     catch (error) {
       if (acquired || error.code !== 'EEXIST') throw error;
@@ -329,7 +346,7 @@ export async function prepareMain(cwd, options = {}) {
   }
   try {
     rmSync(path.join(repo.root, '.codebase-memory/ready.json'), { force: true });
-    return await prepareUnlocked(cwd, { ...options, deadline });
+    return await prepareUnlocked(cwd, { ...options, deadline, initialRepo: repo });
   }
   finally {
     const owner = JSON.parse(readFileSync(ownerFile, 'utf8'));
