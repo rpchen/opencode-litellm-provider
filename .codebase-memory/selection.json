@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "project": "opencode-litellm-provider",
+  "distribution": "merged-main",
+  "index_branch": "codebase-memory-index"
+}

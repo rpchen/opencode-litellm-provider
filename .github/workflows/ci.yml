@@ -89,6 +89,11 @@ jobs:
           test -z "$(git ls-files --others --exclude-standard -- dist)"
           test -z "$(git ls-files -- src/core src/generated/discovery-core)"
 
+      - name: Install pinned native index runtime
+        run: npm install --global codebase-memory-mcp@0.11.0
+      - name: Verify index generation for the reviewed source
+        run: node scripts/codebase-memory-main.mjs build
+
 
   real-opencode-v2:
     name: Real OpenCode 2.0.16 E2E

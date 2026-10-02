@@ -65,4 +65,4 @@ npm run test:release-metadata
 
 ## codebase-memory
 
-仅在本 Git 根目录存在 `.codebase-memory/artifact.json` 时使用索引；结构查询先发现图谱工具并确认 project/root/status。新仓库不得自动建索引。Release 必须生成对应不可变 tag SHA 的图谱附件并回读校验；日常客户端启动按当前检出代码刷新工作索引。流程见 `docs/codebase-memory.md`。
+`.codebase-memory/selection.json` 是已入库的显式启用标记；新仓库不得自动选择或索引。每个新任务首先调用 `prepare_codebase_task`（mode=new），或执行 `node scripts/codebase-memory-main.mjs prepare`；源码 main 与准确 SHA 的远端索引都验证 ready 后才开始实施。续做未完成工作使用 mode=resume，不自动 stash/reset/clean。授权合并 PR 后必须调用 `finish_codebase_task` 或对应 finish 命令，回到最新 main 并核对本地/远端不可变快照的字节与源码 SHA；仅 PR merged 不算收尾完成。原生 artifact.json 和 graph.db.zst 是被忽略的工作输出，查询仍先确认其 project/root/status/coverage。每个 main 完整 CI 成功后，专用索引分支保存该 SHA 的快照；Release 另外生成对应 tag 附件。流程见 `docs/codebase-memory.md`。

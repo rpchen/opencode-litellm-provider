@@ -13,3 +13,7 @@ Thumbs.db
 # Generated from the selected discovery-core commit; never maintain these by hand.
 /src/core/
 /src/generated/discovery-core/
+
+# Generated working indexes; immutable shared snapshots live on codebase-memory-index.
+/.codebase-memory/*
+!/.codebase-memory/selection.json
