@@ -64,7 +64,12 @@ test('[CBM-INTEGRITY] corrupted graph, identity and schema are rejected', () => 
   const f = fixture();
   try {
     build(f.repo, tag, f.output, { execute: f.execute, binary: 'cbm-test' });
-    for (const change of [{ commit: 'b'.repeat(40) }, { slug: 'other/repo' }, { tag: 'v9.0.0' }, { project: 'wrong' }]) assert.throws(() => verify(f.output, { ...f.repo, tag, ...change }), /verification failed/);
+    for (const change of [{ commit: 'b'.repeat(40) }, { slug: 'other/repo' }, { tag: 'v9.0.0' }]) assert.throws(() => verify(f.output, { ...f.repo, tag, ...change }), /verification failed/);
+    const releasePath = path.join(f.output, ASSETS[2]);
+    const releaseBytes = readFileSync(releasePath);
+    const release = JSON.parse(releaseBytes); release.project = 'wrong'; writeFileSync(releasePath, JSON.stringify(release));
+    assert.throws(() => verify(f.output, { ...f.repo, tag }), /verification failed/);
+    writeFileSync(releasePath, releaseBytes);
     const original = readFileSync(path.join(f.output, ASSETS[0]));
     writeFileSync(path.join(f.output, ASSETS[0]), Buffer.from(original).fill(0, 4, 5));
     assert.throws(() => verify(f.output, { ...f.repo, tag }), /verification failed/);

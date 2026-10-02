@@ -43,7 +43,8 @@ function index(repo, persistence, execute, binary) {
   if (!version.includes(CBM_VERSION)) throw new Error(`Expected codebase-memory-mcp ${CBM_VERSION}, received ${version}`);
   const indexed = JSON.parse(execute(binary, ['cli', '--quiet', '--json', 'index_repository', '--repo-path', repo.root, '--name', repo.project, '--mode', 'full', '--persistence', String(persistence)], { cwd: repo.root }));
   if (indexed.isError || indexed.error) throw new Error('Index refresh failed');
-  const status = JSON.parse(execute(binary, ['cli', '--quiet', '--json', 'index_status', '--project', repo.project, '--format', 'json'], { cwd: repo.root }));
+  const indexedProject = indexed.structuredContent?.project ?? repo.project;
+  const status = JSON.parse(execute(binary, ['cli', '--quiet', '--json', 'index_status', '--project', indexedProject, '--format', 'json'], { cwd: repo.root }));
   const data = status.structuredContent ?? JSON.parse(status.content?.find(item => item.type === 'text')?.text ?? '{}');
   if (status.isError || status.error || data.status !== 'ready' || data.nodes <= 0) throw new Error('Index refresh failed');
 }
@@ -55,7 +56,7 @@ export function verify(directory, expected) {
   if (manifest.schema_version !== 1 || manifest.cbm_version !== CBM_VERSION || artifact.schema_version !== 2 ||
       !/^[a-f0-9]{40}$/.test(manifest.commit) || artifact.commit !== manifest.commit ||
       manifest.repository !== expected.slug || manifest.commit !== expected.commit || manifest.tag !== expected.tag ||
-      artifact.project !== expected.project || manifest.project !== expected.project || artifact.compressed_size !== graph.length || !Number.isInteger(artifact.nodes) || artifact.nodes <= 0 ||
+      !/^[\w.-]+$/.test(artifact.project ?? '') || manifest.project !== artifact.project || artifact.compressed_size !== graph.length || !Number.isInteger(artifact.nodes) || artifact.nodes <= 0 ||
       graph.subarray(0, 4).toString('hex') !== '28b52ffd' ||
       manifest.sha256?.[ASSETS[0]] !== sha256(graph) || manifest.sha256?.[ASSETS[1]] !== sha256(metadataBytes)) {
     throw new Error('Release index identity, SHA-256, or format verification failed');
@@ -73,7 +74,8 @@ export function build(repo, tag, destination, { execute = run, binary = binaryPa
   copyFileSync(path.join(repo.root, '.codebase-memory', 'graph.db.zst'), path.join(destination, ASSETS[0]));
   copyFileSync(path.join(repo.root, '.codebase-memory', 'artifact.json'), path.join(destination, ASSETS[1]));
   const hashes = Object.fromEntries(ASSETS.slice(0, 2).map(name => [name, sha256(readFileSync(path.join(destination, name)))]));
-  writeFileSync(path.join(destination, ASSETS[2]), JSON.stringify({ schema_version: 1, repository: repo.slug, tag, commit: repo.commit, project: repo.project, cbm_version: CBM_VERSION, sha256: hashes }, null, 2) + '\n');
+  const exported = JSON.parse(readFileSync(path.join(destination, ASSETS[1]), 'utf8'));
+  writeFileSync(path.join(destination, ASSETS[2]), JSON.stringify({ schema_version: 1, repository: repo.slug, tag, commit: repo.commit, project: exported.project, cbm_version: CBM_VERSION, sha256: hashes }, null, 2) + '\n');
   verify(destination, { ...repo, tag });
   return destination;
 }
