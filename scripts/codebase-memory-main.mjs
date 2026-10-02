@@ -136,10 +136,16 @@ export function syncMain(repo, cache = process.env.CBM_MAIN_CACHE ?? path.join(o
       }), 'Concurrent cache winner differs from remote');
     };
     if (existsSync(path.join(target, 'manifest.json'))) { winner(); return target; }
-    try { install(staging, target); }
-    catch (error) {
-      if (!['EEXIST', 'ENOTEMPTY', 'EPERM', 'EACCES'].includes(error.code) || !existsSync(target)) throw error;
-      winner();
+    for (let attempt = 0; ; attempt++) {
+      try { install(staging, target); break; }
+      catch (error) {
+        if (!['EEXIST', 'ENOTEMPTY', 'EPERM', 'EACCES'].includes(error.code)) throw error;
+        if (existsSync(target)) { winner(); break; }
+        // Windows scanners can briefly hold the private staging directory.
+        // Retry only a sharing/permission error with no winner, and stay bounded.
+        if (!['EPERM', 'EACCES'].includes(error.code) || attempt === 7) throw error;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.min(200, 50 * (attempt + 1)));
+      }
     }
     winner();
     return target;

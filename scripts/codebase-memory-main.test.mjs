@@ -221,6 +221,22 @@ for (const winner of ['valid', 'damaged', 'wrong identity']) {
   });
 }
 
+test('[CBM-CACHE-RETRY] transient permission failure without a winner retries a bounded private install', () => {
+  const f = fixture();
+  try {
+    const snapshot = f.snapshot(f.A), request = readApi(f, snapshot), cache = path.join(f.dir, 'cache'); let attempts = 0;
+    const install = (staging, target) => {
+      assert.equal(existsSync(target), false);
+      if (++attempts < 3) throw Object.assign(new Error('Transient Windows sharing violation'), { code: 'EPERM' });
+      renameSync(staging, target);
+    };
+    globalThis.__cbmReview = { request, install };
+    const result = syncMain(f.identify(f.root), cache, { request, install });
+    assert.equal(attempts, 3); assert.equal(verifyMain(result, f.identify(f.root)).commit, f.A);
+    assert.throws(() => syncMain({ ...f.identify(f.root), commit: f.A }, path.join(f.dir, 'never-cache'), { request, install: () => { throw Object.assign(new Error('Permanent denial'), { code: 'EACCES' }); } }), /Permanent denial/);
+  } finally { f.cleanup(); }
+});
+
 test('[CBM-SHA-QUEUE] late old CI cannot evict a different main SHA publisher', () => {
   const workflow = readFileSync(process.env.CBM_REVIEW_WORKFLOW ?? new URL('../.github/workflows/codebase-memory-main.yml', import.meta.url), 'utf8');
   assert.match(workflow, /group:.*github\.event\.workflow_run\.head_sha.*github\.sha/);
