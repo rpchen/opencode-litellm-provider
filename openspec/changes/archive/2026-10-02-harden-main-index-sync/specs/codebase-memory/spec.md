@@ -11,6 +11,10 @@ prepare 和 finish SHALL 在等待、下载校验后及返回前重新核验远�
 - **WHEN** 多次 main 前进或索引发布缺失耗尽最初的总等待预算
 - **THEN** SHALL 超时失败而不返回 ready
 
+#### Scenario: [CBM-WORKSPACE-BUDGET] workspace budget expires before the next selected root
+- **WHEN** 前一个已选仓库耗尽正数等待预算
+- **THEN** 整体 SHALL 失败，不将剩余预算变成无等待上限的零值尝试
+
 #### Scenario: [CBM-NOT-READY] invalid or unavailable service blocks readiness
 - **WHEN** 索引缺失、校验失败、网络失败或等待超时
 - **THEN** SHALL 保留工作且不写入本次成功 ready 回执
@@ -21,6 +25,10 @@ prepare 和 finish SHALL 在等待、下载校验后及返回前重新核验远�
 #### Scenario: [CBM-CONCURRENT-CHECKOUT] same SHA branch or source changes during download
 - **WHEN** 其他进程切到同 SHA 新分支，或产生 tracked/untracked/staged 修改、新提交
 - **THEN** SHALL 安全失败并保留分支、main ref、源码字节和暂存内容
+
+#### Scenario: [CBM-COMMON-MUTEX] linked worktrees prepare concurrently
+- **WHEN** 一个工作树的客户端正在下载索引而另一个工作树开始准备
+- **THEN** 两者 SHALL 使用同一 common Git 锁；后者等待超时失败而不改变分支或源码
 
 #### Scenario: [CBM-PRESERVE-WORK] existing unfinished source remains intact
 - **WHEN** 已有未完成分支、本地独有提交、修改或暂存内容
@@ -54,6 +62,10 @@ prepare 和 finish SHALL 在等待、下载校验后及返回前重新核验远�
 #### Scenario: [CBM-PARALLEL-CACHE] independent checkouts share one valid cache target
 - **WHEN** 两个独立 checkout 同时下载同 SHA 且一个落盘成功
 - **THEN** 两者 SHALL 复用同一完整缓存，不因 ENOTEMPTY 报失败
+
+#### Scenario: [CBM-CACHE-RETRY] private staging rename is temporarily denied
+- **WHEN** 目标尚不存在且落盘遇到短暂权限/共享冲突
+- **THEN** SHALL 有界重试；永久拒绝失败，不信任不存在或损坏的赢家
 
 #### Scenario: [CBM-CACHE-RACE] incomplete or foreign winning cache exists
 - **WHEN** 竞争赢家缺失文件、校验错误或身份错误

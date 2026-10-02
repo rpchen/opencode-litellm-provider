@@ -81,9 +81,9 @@ GitHub 默认 concurrency group 只有一个 pending 槽位，cancel-in-progress
 
 main 索引从隔离、固定的干净 Git 检出生成，前后核验原始与隔离 checkout 的 HEAD/tree/分支/dirty，以及原生 status 的 root/project/counts 和 artifact 的 git-clean-head 来源标记。manifest 增加 source.kind=isolated-git、commit/tree/clean。没有这份来源证明的旧 main 快照不再被接受为新协议 ready；保留旧快照不覆盖，后续合并的准确新 SHA 由更新后的 CI 正常生成。Release 附件协议保持原样。
 
-同 SHA 的缓存下载各用独立 staging 目录。rename 输家只在严格验证赢家的源码身份、完整三文件、SHA-256 和远端 Git blob 后复用；缺失、损坏或错误身份的赢家不会被信任或删除。工作区已选择子仓的 metadata 损坏或身份不符必须使整体准备失败；仅缺失工作 artifact 的已选择新 clone 仍纳入预期集合，必须成功恢复才可 ready。所有预期仓库的回执须齐全且与实际 Git 身份一致。
+同 SHA 的缓存下载各用独立 staging 目录。无赢家的短暂 EPERM/EACCES 仅有界重试，永久拒绝失败；测试临时目录清理可重试瞬时文件占用，断言不变。rename 输家只在严格验证赢家的源码身份、完整三文件、SHA-256 和远端 Git blob 后复用；缺失、损坏或错误身份的赢家不会被信任或删除。工作区已选择子仓的 metadata 损坏或身份不符必须使整体准备失败；仅缺失工作 artifact 的已选择新 clone 仍纳入预期集合，必须成功恢复才可 ready。所有预期仓库的回执须齐全且与实际 Git 身份一致。
 
-四客户端通过同一已安装 stdio 入口执行失败门禁，Pi 也转发到该入口。门禁从原生 tools/list schema 识别 project、base_project、target_project 等项目参数，额外覆盖原生接受的 project_name/project_id/projectName。用原生 index_status 解析别名、路径和数据库内部名称到同一根目录，比较工具任一目标失败均被拒绝；无法解析时不放行。list_projects/index_status 仅保留诊断能力。每个新任务是否主动调用 prepare 仍由代理遵守 AGENTS 约定；MCP 无法感知宿主对话的任务边界，也不能拦截任意 shell/编辑器写入。此部分不宣称已有四宿主级强制任务拦截器。
+四客户端通过同一已安装 stdio 入口执行失败门禁，Pi 也转发到该入口。门禁从原生 tools/list schema 识别 project、base_project、target_project 等项目参数，额外覆盖原生接受的 project_name/project_id/projectName。用原生 index_status 解析别名、路径和数据库内部名称到同一根目录，metadata 损坏时也保留路径派生数据库名与选中项目的 main 快照名屏障，比较工具任一目标失败均被拒绝；无法解析时不放行。list_projects/index_status 仅保留诊断能力。每个新任务是否主动调用 prepare 仍由代理遵守 AGENTS 约定；MCP 无法感知宿主对话的任务边界，也不能拦截任意 shell/编辑器写入。此部分不宣称已有四宿主级强制任务拦截器。
 
 共享回归入口为 node --test scripts/codebase-memory-main.test.mjs；使用临时 bare remote、独立 checkout、实际 Git 状态和独立子进程，索引服务模拟 GitHub API但实际写 Git 对象/ref。覆盖目标前进、同 SHA 换分支、tracked/untracked/staged/commit、预算、失败边界、固定源码、CI 乱序、并发发布与同 SHA 缓存。workspace 的 codebase-memory-client.test.mjs 另含真实原生 MCP 的 schema、别名/路径/compare 双目标失败门禁，以及已选 metadata 损坏/缺失/身份与回执校验。历史负向控制入口 node scripts/codebase-memory-review-baseline.mjs <审核前提交> 仅适配外部 I/O，不修改旧状态机或测试断言；旧故障必须使同一回归失败。
 

@@ -91,7 +91,7 @@ export function buildMain(repo, destination, { execute = run, binary = binaryPat
     throw error;
   } finally {
     assert(path.dirname(isolation) === os.tmpdir() && path.basename(isolation).startsWith('cbm-main-source-'), 'Unsafe isolation cleanup path');
-    rmSync(isolation, { recursive: true, force: true });
+    rmSync(isolation, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
 function branchHead(slug, request = api) {
@@ -158,7 +158,7 @@ export function syncMain(repo, cache = process.env.CBM_MAIN_CACHE ?? path.join(o
     return target;
   } finally {
     assert(staging.startsWith(path.dirname(target) + path.sep), 'Unsafe staging cleanup path');
-    rmSync(staging, { recursive: true, force: true });
+    rmSync(staging, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
 export function publishMain(repo, directory, { request = api, cache, checkCI = verifyMainCI } = {}) {

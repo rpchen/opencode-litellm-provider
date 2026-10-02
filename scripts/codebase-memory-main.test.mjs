@@ -48,7 +48,7 @@ function fixture() {
   }
   function state(cwd = root) { return { branch: g(cwd, 'branch', '--show-current'), head: g(cwd, 'rev-parse', 'HEAD'), main: g(cwd, 'rev-parse', 'main'), status: g(cwd, 'status', '--porcelain'), staged: g(cwd, 'diff', '--cached'), source: readFileSync(path.join(cwd, 'source.ts'), 'utf8') }; }
   const services = { repository: identify, activate, syncRelease: () => undefined, syncSnapshot: expected => snapshot(expected.commit), request: endpoint => { if (endpoint.includes('/pulls?')) return []; throw new Error(`Unexpected fixture request: ${endpoint}`); } };
-  return { dir, root, remote, writer, A, advance, snapshot, identify, services, state, cleanup() { assert.ok(dir.startsWith(base + path.sep)); rmSync(dir, { recursive: true, force: true }); } };
+  return { dir, root, remote, writer, A, advance, snapshot, identify, services, state, cleanup() { assert.ok(dir.startsWith(base + path.sep)); rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } };
 }
 async function prepare(f, options = {}) {
   const services = { ...f.services, ...options.services };
