@@ -18,6 +18,6 @@
 
 `node scripts/codebase-memory.mjs sync` 下载最新 Release，`sync vX.Y.Z` 下载指定版本。快照保存在用户目录 `~/.cache/codebase-memory-releases/<owner>/<repo>/<commit>/`，不会覆盖 checkout、切分支或修改 tag。它与当前分支的工作图谱是两份不同用途的数据。
 
-`node scripts/codebase-memory.mjs refresh` 刷新本地工作图谱缓存，不改入库快照。`build vX.Y.Z` 要求 HEAD 与该 tag 相同，更新本地 `.codebase-memory/` 并在 `.tmp/codebase-memory-release/` 生成附件；不会推送、打 tag 或创建 Release。新机器客户端接入步骤见 [工作区说明](https://github.com/rpchen/litellm-provider-workspace/blob/main/docs/codebase-memory.md)。
+`node scripts/codebase-memory.mjs refresh` 刷新本地工作图谱缓存。CBM 0.11.0 会对已有持久目录自动重新导出，因此即使 persistence=false，也可能更新 .codebase-memory/ 中的生成文件；这些变化按 Release/里程碑审阅提交，不自动提交或推送。`build vX.Y.Z` 要求 HEAD 与该 tag 相同，更新本地 `.codebase-memory/` 并在 `.tmp/codebase-memory-release/` 生成附件；不会推送、打 tag 或创建 Release。新机器客户端接入步骤见 [工作区说明](https://github.com/rpchen/litellm-provider-workspace/blob/main/docs/codebase-memory.md)。
 
 普通 PR 合并不生成 Release 附件；本地工作索引在工具启动时刷新，支持 MCP 的客户端另由 watcher 跟踪已索引仓库。没有会话运行时不承诺后台即时同步。本机离线期间，云端 Release 保留最新发布快照，下一次在线启动补齐。
