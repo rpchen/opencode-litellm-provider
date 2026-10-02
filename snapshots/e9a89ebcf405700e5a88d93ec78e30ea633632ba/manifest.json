@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "kind": "merged-main",
+  "repository": "rpchen/opencode-litellm-provider",
+  "commit": "e9a89ebcf405700e5a88d93ec78e30ea633632ba",
+  "tree": "7cfa331cbe67e68d0b5d14b8e8a2778e65b8592e",
+  "project": "rpchen-opencode-litellm-provider-main-e9a89ebcf405700e5a88d93ec78e30ea633632ba",
+  "cbm_version": "0.11.0",
+  "sha256": {
+    "graph.db.zst": "46f80a5cdfa3296a3ec9cbd5534ea5f05dccd4bed5e913ec6d394801492c8b3a",
+    "artifact.json": "81a8d5fdc03b977a6c194e6336963a8794069d5a18e05f5cd4d01d16baabfc99"
+  }
+}

@@ -1,0 +1,12 @@
+{
+    "schema_version": 2,
+    "commit": "e9a89ebcf405700e5a88d93ec78e30ea633632ba",
+    "indexed_at": "2026-10-02T12:37:48Z",
+    "project": "rpchen-opencode-litellm-provider-main-e9a89ebcf405700e5a88d93ec78e30ea633632ba",
+    "nodes": 2934,
+    "edges": 5762,
+    "original_size": 8192000,
+    "compressed_size": 1359851,
+    "compression_level": 9,
+    "reconcile_basis": "git-clean-head"
+}
