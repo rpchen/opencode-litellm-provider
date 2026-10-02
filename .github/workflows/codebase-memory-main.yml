@@ -11,7 +11,8 @@ permissions:
   contents: write
 
 concurrency:
-  group: publish-codebase-memory-main
+  # Pending runs of different source commits must never replace each other.
+  group: publish-codebase-memory-main-${{ github.event.workflow_run.head_sha || github.sha }}
   cancel-in-progress: false
 
 jobs:

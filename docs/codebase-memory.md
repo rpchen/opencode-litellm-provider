@@ -70,3 +70,21 @@ GitHub 无法向关机或离线的电脑写文件。本地按用户确认的方�
 工作区 `npm test` 覆盖发布边界、降级状态、最近 Git 根、JSONC 首/中/末项及嵌套/注释、原始字节备份和 CLI 失败；`npm run test:mcp` 使用真实 0.11.0 验证新路径 clone、子目录启动和工作区独立子仓库修改源码后，保持同一 MCP 会话查询新符号。三个子仓库 CI 都执行 `npm run test:codebase-memory`，包括 structuredContent 和 content/text 两种原生降级返回。实际 Release 是否完成必须核对 workflow 和已发布附件；合并 PR、打 tag、创建 Release 仍须用户明确授权。
 
 接口依据：[codebase-memory 配置](https://github.com/DeusData/codebase-memory-mcp/blob/v0.11.0/docs/CONFIGURATION.md)、[Pi 官方桥接生成器](https://github.com/DeusData/codebase-memory-mcp/blob/v0.11.0/src/cli/client_adapter.c)、[OpenCode v2 MCP schema](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/config/mcp.ts)、[Codex MCP 文档](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。
+
+## 本轮审核后的同步安全边界
+
+prepare/finish 在等待与下载完成后重新 fetch main；原生工作图谱激活后再次核验远端。目标 SHA 前进时获取新 SHA 的准确索引，沿用第一次调用的总等待预算；失败和超时清除本次 ready 回执。ready 的 remote_verified_at 是最终远端核验时刻，commit/index_commit/tree 与实际 symbolic branch/HEAD、三文件 snapshot_sha256 一致。这是该时刻的事实，不冻结以后发生的 GitHub 合并。
+
+同步锁位于 Git common dir，所有工作树和客户端共用；owner 带 PID 与随机 token。下载后和每次 Git 修改前核对分支、HEAD、main 引用和工作区状态。先安全检出目标提交，再以旧 OID CAS 更新明确的 refs/heads/main，最后正常切 main；不通过当前 HEAD 合并其他分支。并发分支、源码、暂存或未跟踪变化会安全失败，Git ref 和文件不被强制覆盖。普通编辑器与其他直接 Git 命令不参与 MCP 的互斥；状态保护和非强制 Git 命令阻止覆盖，ready 只证明最终检查时刻。
+
+GitHub 默认 concurrency group 只有一个 pending 槽位，cancel-in-progress:false 仍可能取消旧 pending。发布 group 改为完整 source SHA，较旧 CI 晚完成不会挤掉最新 main 的任务；同 SHA 重复任务由不可变快照幂等处理。不同 SHA 的发布者并发创建 Git 对象，共享索引分支只接受 fast-forward；409/422 重新取父提交、退避并重试，禁止 force=true。永久网络/权限失败仍会使任务失败，需要重跑失败工作流或 workflow_dispatch；不能把失败称为 ready。
+
+main 索引从隔离、固定的干净 Git 检出生成，前后核验原始与隔离 checkout 的 HEAD/tree/分支/dirty，以及原生 status 的 root/project/counts 和 artifact 的 git-clean-head 来源标记。manifest 增加 source.kind=isolated-git、commit/tree/clean。没有这份来源证明的旧 main 快照不再被接受为新协议 ready；保留旧快照不覆盖，后续合并的准确新 SHA 由更新后的 CI 正常生成。Release 附件协议保持原样。
+
+同 SHA 的缓存下载各用独立 staging 目录。rename 输家只在严格验证赢家的源码身份、完整三文件、SHA-256 和远端 Git blob 后复用；缺失、损坏或错误身份的赢家不会被信任或删除。工作区已选择子仓的 metadata 损坏或身份不符必须使整体准备失败；仅缺失工作 artifact 的已选择新 clone 仍纳入预期集合，必须成功恢复才可 ready。所有预期仓库的回执须齐全且与实际 Git 身份一致。
+
+四客户端通过同一已安装 stdio 入口执行失败门禁，Pi 也转发到该入口。门禁从原生 tools/list schema 识别 project、base_project、target_project 等项目参数，额外覆盖原生接受的 project_name/project_id/projectName。用原生 index_status 解析别名、路径和数据库内部名称到同一根目录，比较工具任一目标失败均被拒绝；无法解析时不放行。list_projects/index_status 仅保留诊断能力。每个新任务是否主动调用 prepare 仍由代理遵守 AGENTS 约定；MCP 无法感知宿主对话的任务边界，也不能拦截任意 shell/编辑器写入。此部分不宣称已有四宿主级强制任务拦截器。
+
+共享回归入口为 node --test scripts/codebase-memory-main.test.mjs；使用临时 bare remote、独立 checkout、实际 Git 状态和独立子进程，索引服务模拟 GitHub API但实际写 Git 对象/ref。覆盖目标前进、同 SHA 换分支、tracked/untracked/staged/commit、预算、失败边界、固定源码、CI 乱序、并发发布与同 SHA 缓存。workspace 的 codebase-memory-client.test.mjs 另含真实原生 MCP 的 schema、别名/路径/compare 双目标失败门禁，以及已选 metadata 损坏/缺失/身份与回执校验。历史负向控制入口 node scripts/codebase-memory-review-baseline.mjs <审核前提交> 仅适配外部 I/O，不修改旧状态机或测试断言；旧故障必须使同一回归失败。
+
+排队语义依据：[GitHub concurrency 官方文档](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)。
