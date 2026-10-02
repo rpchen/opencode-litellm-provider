@@ -80,7 +80,7 @@ prepare 和 finish SHALL 在等待、下载校验后及返回前重新核验远�
 
 #### Scenario: [CBM-TOTAL-BUDGET] repeated target changes cannot restart timeout
 - **WHEN** 多次 main 前进或索引发布缺失耗尽最初的总等待预算
-- **THEN** SHALL 超时失败而不返回 ready
+- **THEN** SHALL 以稳定超时语义失败而不返回 ready
 
 #### Scenario: [CBM-WORKSPACE-BUDGET] workspace budget expires before the next selected root
 - **WHEN** 前一个已选仓库耗尽正数等待预算
@@ -93,14 +93,6 @@ prepare 和 finish SHALL 在等待、下载校验后及返回前重新核验远�
 ### Requirement: synchronization protects actual symbolic Git state
 同步 SHALL 使用 Git common dir 互斥、分支/HEAD/main ref/工作区状态保护及旧 OID CAS；每次 Git 修改前重新核验，返回前读取实际分支和提交，不硬编码成功。不得强制切换、reset、clean 或 stash 用户工作。排队客户端 SHALL 只在锁前读取定位锁所需的稳定路径信息；分支、HEAD、tree 与工作区状态 SHALL 在获锁后重新读取并验证。前一个排队任务合法推进 checkout 与回执后，后续任务 SHALL 接受该新状态继续准备；真实用户并发修改仍 SHALL 安全拒绝。ready 回执 SHALL 仅在准备失败时失效，排队任务不得误删前一任务刚生成的有效回执。
 
-#### Scenario: [CBM-QUEUED-LOCK] a queued second client accepts the advanced checkout
-- **WHEN** 两个独立客户端进程在同一 checkout 上排队获锁，第一个推进 main 到 B 并写入有效 ready 回执，第二个持锁前旧状态获锁
-- **THEN** 第二个 SHALL 在锁内重读并验证实际状态，成功准备 B，且前一任务的有效回执保留
-
-#### Scenario: [CBM-QUEUED-USER-CHANGE] a queued client rejects concurrent user changes
-- **WHEN** 排队客户端获锁前真实用户产生未提交修改
-- **THEN** SHALL 安全失败并保留用户修改与分支状态，不返回 ready
-
 #### Scenario: [CBM-CONCURRENT-CHECKOUT] same SHA branch or source changes during download
 - **WHEN** 其他进程切到同 SHA 新分支，或产生 tracked/untracked/staged 修改、新提交
 - **THEN** SHALL 安全失败并保留分支、main ref、源码字节和暂存内容
@@ -112,6 +104,14 @@ prepare 和 finish SHALL 在等待、下载校验后及返回前重新核验远�
 #### Scenario: [CBM-PRESERVE-WORK] existing unfinished source remains intact
 - **WHEN** 已有未完成分支、本地独有提交、修改或暂存内容
 - **THEN** new/finish SHALL 失败且原状态不丢失，只有显式 resume 可继续旧工作
+
+#### Scenario: [CBM-QUEUED-LOCK] a queued second client accepts the advanced checkout
+- **WHEN** 两个独立客户端进程在同一 checkout 上排队获锁，第一个推进 main 到 B 并写入有效 ready 回执，第二个持锁前旧状态获锁
+- **THEN** 第二个 SHALL 在锁内重读并验证实际状态，成功准备 B，且前一任务的有效回执保留
+
+#### Scenario: [CBM-QUEUED-USER-CHANGE] a queued client rejects concurrent user changes
+- **WHEN** 排队客户端获锁前真实用户产生未提交修改
+- **THEN** SHALL 安全失败并保留用户修改与分支状态，不返回 ready
 
 ### Requirement: publication scheduling isolates source commits
 生成任务 SHALL 按完整 source SHA 隔离排队，不让较旧 CI 替换另一 SHA 的 pending 发布；共享分支追加 SHALL 处理 ref 冲突、退避重试和同 SHA 幂等，不得强推。
