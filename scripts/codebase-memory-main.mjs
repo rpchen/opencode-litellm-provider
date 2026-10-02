@@ -16,7 +16,10 @@ const oid = value => /^[a-f0-9]{40}$/.test(value ?? '');
 const taskContext = new AsyncLocalStorage();
 function boundedRun(command, args, options = {}) {
   try { return run(command, args, { ...options, timeout: remaining(taskContext.getStore()?.deadline, options.timeout ?? 120000) }); }
-  catch (error) { if (/ETIMEDOUT/.test(error.message)) throw new Error('Index preparation timed out'); throw error; }
+  catch (error) {
+    if (error.code === 'ETIMEDOUT' || /ETIMEDOUT|timed out/.test(error.message)) throw new Error('Index preparation timed out');
+    throw error;
+  }
 }
 const git = (root, ...args) => boundedRun('git', args, { cwd: root });
 const assert = (value, message) => { if (!value) throw new Error(message); };
@@ -223,10 +226,12 @@ export function branchWasMerged(repo, branch, target, { request = api } = {}) {
   assert(Array.isArray(pulls), 'Cannot verify merged branch identity');
   return pulls.some(pull => pull.merged_at && pull.head?.sha === repo.commit && pull.base?.ref === 'main' && oid(pull.merge_commit_sha) && ancestor(repo.root, pull.merge_commit_sha, target));
 }
-async function prepareUnlocked(cwd, { mode = 'new', waitMs = 0, deadline, services = {}, initialRepo } = {}) {
+async function prepareUnlocked(cwd, { mode = 'new', waitMs = 0, deadline, services = {} } = {}) {
   assert(['new', 'resume', 'finish'].includes(mode) && Number.isInteger(waitMs) && waitMs >= 0 && waitMs <= 120000, 'Invalid preparation mode or wait duration');
+  // This function runs only while holding the repository lock; the identity
+  // and checkout state are read here, from the live checkout.
   const identify = services.repository ?? (value => repository(value, boundedRun));
-  const original = initialRepo ?? identify(cwd);
+  const original = identify(cwd);
   if (!selection(original.root)) return { status: 'legacy', root: original.root, commit: original.commit };
   const fetch = () => (services.fetchMain ?? fetchMain)(original.root, deadline);
   let state = checkoutState(original.root);
@@ -319,10 +324,15 @@ export async function prepareMain(cwd, options = {}) {
 }
 async function prepareLocked(cwd, options) {
   const { started, deadline } = options;
-  const repo = (options.services?.repository ?? (value => repository(value, boundedRun)))(cwd);
-  if (!selection(repo.root)) return { status: 'legacy', root: repo.root, commit: repo.commit };
+  const identify = options.services?.repository ?? (value => repository(value, boundedRun));
+  // Before the lock, read only the stable repository location needed to take
+  // the correct lock. HEAD, branch and working-tree state are re-read inside
+  // the lock: a queued client must never act on a snapshot taken while
+  // another client still owned the checkout.
+  const locate = identify(cwd);
+  if (!selection(locate.root)) return { status: 'legacy', root: locate.root, commit: locate.commit };
   // All worktrees and all four clients share the same repository mutex.
-  const lock = path.join(path.resolve(repo.root, git(repo.root, 'rev-parse', '--git-common-dir')), 'codebase-memory-task.lock');
+  const lock = path.join(path.resolve(locate.root, git(locate.root, 'rev-parse', '--git-common-dir')), 'codebase-memory-task.lock');
   const ownerFile = path.join(lock, 'owner.json');
   const token = randomUUID();
   const lockDeadline = Math.min(deadline ?? Infinity, started + 30000);
@@ -345,8 +355,17 @@ async function prepareLocked(cwd, options) {
     }
   }
   try {
-    rmSync(path.join(repo.root, '.codebase-memory/ready.json'), { force: true });
-    return await prepareUnlocked(cwd, { ...options, deadline, initialRepo: repo });
+    // Everything inside the lock re-reads the live checkout. A queued
+    // predecessor may legitimately have advanced main and written a fresh
+    // receipt; this client must prepare that state, not its stale snapshot.
+    return await prepareUnlocked(cwd, { ...options, deadline });
+  }
+  catch (error) {
+    // A failed attempt leaves no receipt claiming readiness: the checkout may
+    // have half-advanced, or diverged from what any older receipt described.
+    // Removal never masks the original failure.
+    try { rmSync(path.join(locate.root, '.codebase-memory/ready.json'), { force: true }); } catch { /* Receipt removal is best effort on failure. */ }
+    throw error;
   }
   finally {
     const owner = JSON.parse(readFileSync(ownerFile, 'utf8'));

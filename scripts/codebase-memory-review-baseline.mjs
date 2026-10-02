@@ -23,7 +23,7 @@ code = code.replace(/if \(parent\) run\('gh',[^\n]+/, "if (parent) api(`repos/${
 writeFileSync(path.join(output, 'codebase-memory-main.mjs'), code);
 copyFileSync('scripts/codebase-memory.mjs', path.join(output, 'codebase-memory.mjs'));
 writeFileSync(path.join(output, 'codebase-memory-main.yml'), run('git', ['show', `${revision}:.github/workflows/codebase-memory-main.yml`]));
-const result = spawnSync(process.execPath, ['--test', '--test-reporter=spec', '--test-name-pattern=CBM-RETARGET|CBM-CONCURRENT-CHECKOUT.*same-SHA|CBM-WAIT-MAIN|CBM-DIRTY-BUILD|CBM-NATIVE-BASIS|CBM-PARALLEL-CACHE|CBM-SHA-QUEUE', 'scripts/codebase-memory-main.test.mjs'],
+const result = spawnSync(process.execPath, ['--test', '--test-reporter=spec', '--test-name-pattern=CBM-RETARGET|CBM-CONCURRENT-CHECKOUT.*same-SHA|CBM-WAIT-MAIN|CBM-DIRTY-BUILD|CBM-NATIVE-BASIS|CBM-PARALLEL-CACHE|CBM-SHA-QUEUE|CBM-QUEUED-LOCK', 'scripts/codebase-memory-main.test.mjs'],
   { encoding: 'utf8', env: { ...process.env, CBM_REVIEW_BASELINE: path.join(output, 'codebase-memory-main.mjs'), CBM_REVIEW_WORKFLOW: path.join(output, 'codebase-memory-main.yml') }, windowsHide: true, timeout: 600000 });
 const log = (result.stdout ?? '') + (result.stderr ?? ''); writeFileSync(path.join(output, 'result.log'), log);
 console.log(log); console.log(`Historical control: ${revision}; evidence: ${output}`);

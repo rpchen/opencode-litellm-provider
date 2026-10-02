@@ -24,6 +24,7 @@ export function binaryPath() {
 }
 export function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: 'utf8', windowsHide: true, timeout: 120000, ...options });
+  if (result.error?.code === 'ETIMEDOUT') throw Object.assign(new Error(`${path.basename(command)} timed out`), { code: 'ETIMEDOUT' });
   if (result.error || result.status !== 0) throw new Error(`${path.basename(command)} failed: ${result.error?.message ?? result.stderr?.trim() ?? result.status}`);
   return result.stdout.trim();
 }

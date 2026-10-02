@@ -277,14 +277,70 @@ function worker(f, configuration, suffix) {
   child.stdout.on('data', value => output += value); child.stderr.on('data', value => error += value);
   return new Promise(resolve => { child.on('error', value => resolve({ code: 1, error: value.message })); child.on('close', code => resolve({ code, output, error })); });
 }
-async function release(barrier, count) {
+async function arrive(barrier, count) {
   const began = Date.now();
   while (!existsSync(barrier) || readdirSync(barrier).filter(name => /^\d+$/.test(name)).length < count) {
     assert.ok(Date.now() - began < 30000, 'All independent processes must reach the actual collision');
     await new Promise(resolve => setTimeout(resolve, 20));
   }
+}
+async function release(barrier, count) {
+  await arrive(barrier, count);
   writeFileSync(path.join(barrier, 'release'), 'go');
 }
+test('[CBM-QUEUED-LOCK] a queued second client re-reads checkout state inside the lock and keeps the fresh receipt', async () => {
+  const f = fixture();
+  try {
+    const B = f.advance();
+    const snapshots = path.join(f.dir, 'queued-snapshots');
+    const barrier = path.join(f.dir, 'queued-barrier');
+    // The queued second client performs its pre-lock state read while the
+    // checkout is still at A, then waits at the barrier. The first client
+    // owns the lock, advances the checkout to B and writes a fresh receipt.
+    // Only then does the second client acquire the same lock with its stale
+    // pre-lock snapshot in hand.
+    const second = worker(f, { action: 'prepare', remote: f.remote, barrier, snapshots, cwd: f.root, waitMs: 120000 }, 'second');
+    await arrive(barrier, 1);
+    const first = await worker(f, { action: 'prepare', remote: f.remote, snapshots, cwd: f.root, waitMs: 120000 }, 'first');
+    assert.equal(first.code, 0, JSON.stringify(first));
+    assert.equal(JSON.parse(first.output).result.status, 'ready');
+    assert.equal(JSON.parse(first.output).result.commit, B);
+    writeFileSync(path.join(barrier, 'release'), 'go');
+    const queued = await second;
+    assert.equal(queued.code, 0, JSON.stringify(queued));
+    const report = JSON.parse(queued.output);
+    assert.equal(report.preLock.head, f.A, 'the queued client really read the pre-lock state');
+    assert.equal(report.result.status, 'ready');
+    assert.equal(report.result.commit, B);
+    assert.equal(report.result.index_commit, B);
+    // The valid receipt written by the first client must survive the second.
+    const receipt = JSON.parse(readFileSync(path.join(f.root, '.codebase-memory/ready.json'), 'utf8'));
+    assert.equal(receipt.status, 'ready'); assert.equal(receipt.commit, B); assert.equal(receipt.index_commit, B);
+    assert.equal(f.state().head, B); assert.equal(f.state().main, B); assert.equal(f.state().branch, 'main'); assert.equal(f.state().status, '');
+  } finally { f.cleanup(); }
+});
+test('[CBM-QUEUED-USER-CHANGE] a queued second client still rejects real concurrent user changes', async () => {
+  const f = fixture();
+  try {
+    const B = f.advance();
+    const snapshots = path.join(f.dir, 'queued-snapshots');
+    const barrier = path.join(f.dir, 'user-change-barrier');
+    const second = worker(f, { action: 'prepare', remote: f.remote, barrier, snapshots, cwd: f.root, waitMs: 120000 }, 'second');
+    await arrive(barrier, 1);
+    const first = await worker(f, { action: 'prepare', remote: f.remote, snapshots, cwd: f.root, waitMs: 120000 }, 'first');
+    assert.equal(first.code, 0, JSON.stringify(first));
+    // A real user edit races the queued second client after it acquired the lock.
+    writeFileSync(path.join(f.root, 'user.txt'), 'user edit after first client finished');
+    const before = f.state();
+    writeFileSync(path.join(barrier, 'release'), 'go');
+    const queued = await second;
+    assert.equal(queued.code, 1);
+    assert.match(queued.error, /uncommitted source changes|Existing work is preserved/);
+    assert.equal(readFileSync(path.join(f.root, 'user.txt'), 'utf8'), 'user edit after first client finished');
+    assert.equal(existsSync(path.join(f.root, '.codebase-memory/ready.json')), false);
+    assert.deepEqual(f.state(), before);
+  } finally { f.cleanup(); }
+});
 test('[CBM-PUBLISH-RACE] out-of-order A/B/C publishers preserve every SHA, retry Git ref conflicts and are idempotent', async () => {
   const f = fixture();
   try {
