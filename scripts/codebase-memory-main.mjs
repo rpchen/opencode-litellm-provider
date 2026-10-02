@@ -134,7 +134,7 @@ export function publishMain(repo, directory) {
   }
 }
 function sourceDirty(root) {
-  return git(root, 'status', '--porcelain', '--untracked-files=normal', '--', '.', ':!.codebase-memory/artifact.json', ':!.codebase-memory/graph.db.zst');
+  return git(root, 'status', '--porcelain', '--untracked-files=normal', '--', '.', ':!.codebase-memory/artifact.json', ':!.codebase-memory/graph.db.zst', ':!.codebase-memory/task.lock', ':!.codebase-memory/ready.json');
 }
 function ancestor(root, older, newer) {
   const result = spawnSync('git', ['merge-base', '--is-ancestor', older, newer], { cwd: root, windowsHide: true });

@@ -17,3 +17,5 @@
 ## Impact
 
 四仓库的开发脚本、CI、AGENTS、文档；客户端入口由 workspace 维护。其他三个仓库同名 change 互相引用；脚本各仓库独立运行。
+
+跨仓库 PR：https://github.com/rpchen/litellm-provider-workspace/pull/2、https://github.com/rpchen/litellm-discovery-core/pull/25、https://github.com/rpchen/opencode-litellm-provider/pull/52、https://github.com/rpchen/pi-litellm-provider/pull/44
