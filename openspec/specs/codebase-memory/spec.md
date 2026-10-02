@@ -27,6 +27,10 @@
 - **WHEN** 图谱损坏、SHA-256/schema 或仓库/tag/commit/project 身份不一致
 - **THEN** 校验 SHALL 拒绝该快照
 
+#### Scenario: [CBM-DEGRADED] non-success native indexing prevents export
+- **WHEN** 原生返回 degraded、未知、缺失或其他非 indexed 状态，即使后续 status 为 ready 且存在少量节点
+- **THEN** 构建 SHALL 失败，不能输出发布 manifest
+
 ### Requirement: local release snapshots preserve working checkout
 客户端启动 SHALL 对已索引仓库同步最新已发布快照，并保持当前源码、分支和 tag 不变；本地工作图谱单独按当前源码刷新。
 

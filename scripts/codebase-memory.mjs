@@ -2,7 +2,7 @@
 // Standalone repository tooling; no sibling checkout or runtime package dependency.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, mkdtempSync, renameSync, rmSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -38,16 +38,28 @@ export function repository(cwd = process.cwd(), execute = run) {
   if (!match || !/^[\w.-]+$/.test(artifact.project) || !/^[a-f0-9]{40}$/.test(commit)) throw new Error('Invalid GitHub repository, project, or commit');
   return { root, project: artifact.project, commit, slug: match[1] };
 }
+export function toolData(envelope) {
+  if (envelope.isError || envelope.error) throw new Error('Index refresh failed');
+  const data = envelope.structuredContent ?? JSON.parse(envelope.content?.find(item => item.type === 'text')?.text ?? '{}');
+  if (!data || typeof data !== 'object') throw new Error('Index response is invalid');
+  return data;
+}
 function index(repo, persistence, execute, binary) {
   const version = execute(binary, ['--version']);
   if (!version.includes(CBM_VERSION)) throw new Error(`Expected codebase-memory-mcp ${CBM_VERSION}, received ${version}`);
-  const indexed = JSON.parse(execute(binary, ['cli', '--quiet', '--json', 'index_repository', '--repo-path', repo.root, '--name', repo.project, '--mode', 'full', '--persistence', String(persistence)], { cwd: repo.root }));
-  if (indexed.isError || indexed.error) throw new Error('Index refresh failed');
-  const indexedProject = indexed.structuredContent?.project ?? repo.project;
+  const indexRoot = realpathSync(repo.root);
+  // Working graphs use the native path-derived identity, exactly as MCP sessions do.
+  // A portable release marker is not a local database key in a new clone.
+  const indexed = JSON.parse(execute(binary, ['cli', '--quiet', '--json', 'index_repository', '--repo-path', indexRoot, ...(persistence ? ['--name', repo.project] : []), '--mode', 'full', '--persistence', String(persistence)], { cwd: indexRoot }));
+  const indexedData = toolData(indexed);
+  if (indexedData.status !== 'indexed' || !/^[\w.-]+$/.test(indexedData.project ?? '')) throw new Error('Index refresh did not return indexed status');
+  const indexedProject = indexedData.project;
   const status = JSON.parse(execute(binary, ['cli', '--quiet', '--json', 'index_status', '--project', indexedProject, '--format', 'json'], { cwd: repo.root }));
-  const data = status.structuredContent ?? JSON.parse(status.content?.find(item => item.type === 'text')?.text ?? '{}');
-  if (status.isError || status.error || data.status !== 'ready' || data.nodes <= 0) throw new Error('Index refresh failed');
+  const data = toolData(status);
+  if (data.status !== 'ready' || data.nodes <= 0) throw new Error('Index refresh failed');
+  return data;
 }
+export function refresh(repo, { execute = run, binary = binaryPath() } = {}) { return index(repo, false, execute, binary); }
 export function verify(directory, expected) {
   const graph = readFileSync(path.join(directory, ASSETS[0]));
   const metadataBytes = readFileSync(path.join(directory, ASSETS[1]));
@@ -112,7 +124,7 @@ export async function main(args = process.argv.slice(2)) {
   const repo = repository();
   if (action === 'build') console.log(build(repo, value ?? process.env.GITHUB_REF_NAME, path.resolve('.tmp/codebase-memory-release')));
   else if (action === 'verify') { verify(path.resolve(value ?? '.tmp/codebase-memory-release'), { ...repo, tag: process.env.GITHUB_REF_NAME }); console.log('Release index verified'); }
-  else if (action === 'refresh') { index(repo, false, run, binaryPath()); console.log(`Working index refreshed: ${repo.project} at ${repo.commit}`); }
+  else if (action === 'refresh') { const data = refresh(repo); console.log(`Working index refreshed: ${data.project ?? repo.project} at ${repo.commit}`); }
   else if (action === 'sync') { console.log(sync(repo, process.env.CBM_RELEASE_CACHE ?? path.join(os.homedir(), '.cache', 'codebase-memory-releases'), { tag: value })); }
   else throw new Error('Usage: node scripts/codebase-memory.mjs build <tag> | verify <directory> | refresh | sync [tag]');
 }

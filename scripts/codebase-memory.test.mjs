@@ -26,7 +26,7 @@ function fixture() {
       return commit;
     }
     if (args[0] === '--version') return 'codebase-memory-mcp 0.11.0';
-    if (args.includes('index_repository')) { exportGraph(); return '{"isError":false}'; }
+    if (args.includes('index_repository')) { exportGraph(); return JSON.stringify({ structuredContent: { status: 'indexed', project }, isError: false }); }
     if (args.includes('index_status')) return '{"structuredContent":{"status":"ready","nodes":2},"isError":false}';
     throw new Error(`Unexpected command: ${command} ${args.join(' ')}`);
   }
@@ -77,6 +77,21 @@ test('[CBM-INTEGRITY] corrupted graph, identity and schema are rejected', () => 
     const artifact = JSON.parse(readFileSync(path.join(f.output, ASSETS[1]), 'utf8'));
     artifact.schema_version = 1; writeFileSync(path.join(f.output, ASSETS[1]), JSON.stringify(artifact));
     assert.throws(() => verify(f.output, { ...f.repo, tag }), /verification failed/);
+  } finally { f.cleanup(); }
+});
+
+test('[CBM-DEGRADED] degraded, unknown and missing native status cannot publish a manifest', () => {
+  const f = fixture();
+  try {
+    for (const status of ['degraded', 'error', 'aborted_previous_preserved', 'persist_failed', 'cancelled', 'unknown', undefined]) {
+      for (const format of ['structuredContent', 'content']) {
+        const data = { status, project, nodes: 2, expected_nodes: 200 };
+        const response = format === 'structuredContent' ? { structuredContent: data, isError: false } : { content: [{ type: 'text', text: JSON.stringify(data) }], isError: false };
+        const execute = (command, args) => args.includes('index_repository') ? JSON.stringify(response) : f.execute(command, args);
+        assert.throws(() => build(f.repo, tag, f.output, { execute, binary: 'cbm-test' }), /Index/);
+        assert.equal(existsSync(path.join(f.output, ASSETS[2])), false);
+      }
+    }
   } finally { f.cleanup(); }
 });
 test('[CBM-SYNC] release download validates tag SHA, retains checkout, and supports repeated startup', () => {
