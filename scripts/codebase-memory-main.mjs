@@ -141,6 +141,16 @@ function ancestor(root, older, newer) {
   if (result.error || ![0, 1].includes(result.status)) throw new Error('Cannot prove Git ancestry');
   return result.status === 0;
 }
+export function branchWasMerged(repo, branch, target) {
+  if (ancestor(repo.root, repo.commit, target)) return true;
+  if (!branch || branch === 'main') return false;
+  // Squash merges do not preserve feature-head ancestry. Require GitHub's
+  // merged record for this exact head and a merge commit on the current main.
+  const head = encodeURIComponent(`${repo.slug.split('/')[0]}:${branch}`);
+  const pulls = api(`repos/${repo.slug}/pulls?state=closed&base=main&head=${head}&per_page=100`);
+  assert(Array.isArray(pulls), 'Cannot verify merged branch identity');
+  return pulls.some(pull => pull.merged_at && pull.head?.sha === repo.commit && pull.base?.ref === 'main' && oid(pull.merge_commit_sha) && ancestor(repo.root, pull.merge_commit_sha, target));
+}
 async function prepareUnlocked(cwd, { mode = 'new', waitMs = 0 } = {}) {
   assert(['new', 'resume', 'finish'].includes(mode) && Number.isInteger(waitMs) && waitMs >= 0 && waitMs <= 120000, 'Invalid preparation mode or wait duration');
   const original = repository(cwd);
@@ -149,7 +159,7 @@ async function prepareUnlocked(cwd, { mode = 'new', waitMs = 0 } = {}) {
   const target = git(original.root, 'rev-parse', 'origin/main');
   const branch = git(original.root, 'branch', '--show-current');
   const dirty = sourceDirty(original.root);
-  const merged = ancestor(original.root, original.commit, target);
+  const merged = dirty ? false : branchWasMerged(original, branch, target);
   if (dirty || !merged || !branch) {
     assert(mode === 'resume', `New task cannot use current checkout: ${dirty ? 'uncommitted source changes' : 'unfinished branch or detached HEAD'}. Existing work is preserved.`);
     const status = refresh(original);

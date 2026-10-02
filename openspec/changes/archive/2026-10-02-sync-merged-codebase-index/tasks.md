@@ -18,3 +18,5 @@
 实际证据：四个 base main 分别为 6f78d50/78a4204/e9a89eb/6a08cfb，完整 CI 36999584966/36999573239/37001013286/37001048940，真实 native 构建/publish 后回读 blob 成功。MCP 实际 tools/list 为 19，new 在未合并分支拒绝，resume 保留四仓库源代码与分支；Pi 0.99.2 原生 extension loader 发现两新工具且 index_status ready。首轮 PR 精确提交 CI：Workspace 80365a6（37008325677）、Core b9ba6e2（37008344050）、OpenCode fd2f61a（37008357549，真实宿主 E2E 成功）、Pi 81f8a21（37008370017，真实宿主 E2E 成功）。本 change 实施完成；最终授权合并后的 receipt 是每次 PR 的收尾协议，不能以当前 base main 证据替代未来 merge SHA 验证。
 
 归档后 strict validation 成功，closure 在归档入库后以真实 Git ancestry 证明先后顺序，0 mismatches / 0 ambiguous histories。
+
+四个隔离 main checkout 均实际 prepare=ready 与 finish=ready，准确 SHA 匹配远端 main，远端三 blob 与本地缓存字节一致。另核对现存 squash PR（OpenCode #50/Pi #42）：feature head 不属于 main ancestry，但准确 merged PR 的 head/merge SHA 证明允许安全回 main，不修改合并策略。
