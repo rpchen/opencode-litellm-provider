@@ -91,6 +91,15 @@ jobs:
           test -z "$(git ls-files --others --exclude-standard -- dist)"
           test -z "$(git ls-files -- src/core src/generated/discovery-core)"
 
+      - name: Test release index boundaries
+        run: npm run test:codebase-memory
+
+      - name: Install pinned codebase-memory runtime
+        run: npm install --global codebase-memory-mcp@0.11.0
+
+      - name: Generate codebase-memory snapshot for the exact release tag
+        run: node scripts/codebase-memory.mjs build "$GITHUB_REF_NAME"
+
       - name: Pack release artifacts
         id: pack
         shell: bash
@@ -117,6 +126,9 @@ jobs:
           files: |
             ${{ steps.pack.outputs.tarball }}
             ${{ steps.pack.outputs.checksum }}
+            .tmp/codebase-memory-release/codebase-memory.graph.db.zst
+            .tmp/codebase-memory-release/codebase-memory.artifact.json
+            .tmp/codebase-memory-release/codebase-memory.release.json
 
       - name: Download and verify published release assets
         shell: bash
@@ -146,3 +158,8 @@ jobs:
             echo '```'
             echo 'Downloaded archive, checksum, and extracted dist match the verified candidate.'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Download and verify published codebase-memory snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/codebase-memory.mjs sync "$GITHUB_REF_NAME"

@@ -356,3 +356,7 @@ github:rpchen/opencode-litellm-provider#v0.6.0
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [litellm-discovery-core](https://github.com/rpchen/litellm-discovery-core)
 - [v0.6.0 release notes](docs/releases/v0.6.0.md)
+
+## 开发代码索引
+
+已入库的代码图谱使用与跨客户端配置、Release 附件及本地同步方式见 [docs/codebase-memory.md](docs/codebase-memory.md)。索引工具不属于插件运行时依赖。

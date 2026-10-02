@@ -62,3 +62,7 @@ npm run test:release-metadata
 8. **模型发布边界**：必须遵守共享 testing-standard 的 Discovery 不变量。Core 可以保留 limit 未知的模型用于 diagnostics，但宿主 `buildModelSpecs` 不得向 OpenCode 发布 `limit.context <= 0` 或 `limit.output <= 0` 的模型；必须用通用 adapter 测试锁住该边界，不得只针对某个具体模型。
 9. **发版与跨会话事实基线**：用户可见 `feat:`/`fix:` 合入后检查 Release/tag 是否落后于 main；release PR 必须同步 package/lockfile、README 当前固定版本和 release notes，并通过 `test:release-metadata`。CI/Release 必须运行 `test:openspec-closure`，禁止已完成 change 留在 active。下一会话开工前重新核对 main、最新 Release/tag、README、`dist/core-provenance.json`、active OpenSpec 和共享 testing-standard；结束前执行 retrospective，不能把“规范已写但实现未通用保证”的状态带入下一会话。
 10. **agent skills 单副本**：OpenSpec 代理 skills 只维护在 `.agents/skills/`（openspec CLI 的 vendor-neutral 目标）。若 `openspec init`/`update` 又为具体工具生成了 `.opencode/skills/`、`.claude/skills/` 或 `.pi/skills/` 副本，删掉它们，避免同名 skill 多副本独立漂移；日常刷新用 `openspec update --force`，它只重写 `.agents/skills/`。
+
+## codebase-memory
+
+仅在本 Git 根目录存在 `.codebase-memory/artifact.json` 时使用索引；结构查询先发现图谱工具并确认 project/root/status。新仓库不得自动建索引。Release 必须生成对应不可变 tag SHA 的图谱附件并回读校验；日常客户端启动按当前检出代码刷新工作索引。流程见 `docs/codebase-memory.md`。
