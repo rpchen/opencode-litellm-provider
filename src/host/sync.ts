@@ -1,11 +1,22 @@
 import type { ConnectionInfo } from "@opencode/client"
 import type { ModelSpec } from "../core/build.js"
-import { buildModelSpecs, modelFingerprint, toOpenCodeModelSpec } from "../core/build.js"
+import { buildModelSpecs, hasOperationalLimits, modelFingerprint, toOpenCodeModelSpec } from "../core/build.js"
 import {
   createDiscoveryCacheDiagnostics,
   diagnoseModelSpecs,
   type DiscoveryDiagnostics,
 } from "../core/diagnostics.js"
+import {
+  buildPublicationResult,
+  classifyMetadataFailure,
+  capturedPublicationVerdict,
+  createLastKnownGoodEntry,
+  groupLiteLLMDeployments,
+  lastKnownGoodKey,
+  type LastKnownGoodStore,
+  type MetadataFailure,
+  type PublishableEntry,
+} from "../generated/discovery-core/index.js"
 import { normalizeLiteLLMURL } from "../core/litellm.js"
 import { createDiscoveryCoordinator } from "../core/refresh.js"
 import {
@@ -25,6 +36,12 @@ import {
   type FetchLike,
 } from "../net/fetch.js"
 import { createRegistrationView, type ProviderSnapshot, type DiscoveryStatus } from "./register.js"
+import {
+  createPublicationState,
+  summarizePublication,
+  type PublicationSummary,
+} from "./publication.js"
+import { buildPublicationModels } from "./models.js"
 
 interface KeyCredential {
   type: "key"
@@ -96,6 +113,35 @@ const defaultScheduler: Scheduler = {
   clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 }
 
+/** Record complete configured models as Last Known Good for future outages. */
+function seedPublicationLKG(
+  store: LastKnownGoodStore,
+  litellmResponse: unknown,
+  publishable: readonly PublishableEntry[],
+  now: number,
+): void {
+  const groups = new Map(groupLiteLLMDeployments(litellmResponse).map((item) => [item.modelName, item]))
+  for (const entry of publishable) {
+    if (entry.assessment.status !== "configured") continue
+    const group = groups.get(entry.spec.id)
+    if (!group) continue
+    try {
+      store.set(
+        lastKnownGoodKey(entry.spec.id),
+        createLastKnownGoodEntry(
+          group,
+          entry.assessment.identity.selected,
+          entry.spec,
+          now,
+          capturedPublicationVerdict(entry.assessment),
+        ),
+      )
+    } catch {
+      // Seeding is best-effort; it must never fail a discovery.
+    }
+  }
+}
+
 function isKeyCredential(value: unknown): value is KeyCredential {
   return typeof value === "object" && value !== null && (value as { type?: unknown }).type === "key" &&
     typeof (value as { key?: unknown }).key === "string"
@@ -129,6 +175,8 @@ export function createDiscoveryLoop(
     models: ModelSpec[]
     fingerprint: string
     diagnostics?: DiscoveryDiagnostics
+    publication?: PublicationSummary
+    snapshotSpecs?: ModelSpec[]
   }>()
   const abortEvents = new AbortController()
   snapshot.audit ??= { status: "disconnected" }
@@ -359,7 +407,9 @@ export function createDiscoveryLoop(
     })
     const previousPersisted = await loadPersistedSnapshot(nextIdentity, expectedEndpoint)
     if (!snapshot.ready && previousPersisted) {
-      const restoredModels = previousPersisted.models.map(toOpenCodeModelSpec)
+      const restoredModels = previousPersisted.models
+        .map(toOpenCodeModelSpec)
+        .filter(hasOperationalLimits)
       const restoredView = createRegistrationView(restoredModels, addresses.apiBaseURL, endpoint)
       snapshot.ready = true
       snapshot.connection = connection
@@ -387,20 +437,42 @@ export function createDiscoveryLoop(
         nextIdentity,
         async () => {
           const response = await fetchModelInfo(addresses, resolved.key, dependencies.fetchImpl)
-          const catalog = await fetchCatalog({
-            fetchImpl: dependencies.fetchImpl,
-            logger,
-          })
+          let catalog: unknown
+          let catalogFailure: MetadataFailure | undefined
+          try {
+            catalog = await fetchCatalog({
+              fetchImpl: dependencies.fetchImpl,
+              logger,
+            })
+          } catch (error) {
+            catalog = {}
+            catalogFailure = classifyMetadataFailure(error)
+          }
           if (dependencies.buildModels) {
             const models = buildModels(response, catalog, options)
             return { models, fingerprint: fingerprint(models) }
           }
+          const controller = snapshot.publicationState ??= createPublicationState()
+          const now = Date.now()
+          const { models, result } = buildPublicationModels(response, catalog, options, {
+            store: controller.store,
+            acceptedDegradedIDs: controller.acceptedDegradedIDs,
+            failure: catalogFailure,
+            now,
+          })
+          seedPublicationLKG(controller.store, response, result.publishable, now)
+          const snapshotSpecs = result.publishable
+            .filter((entry) => entry.degraded === undefined)
+            .map((entry) => entry.spec)
+            .map(toOpenCodeModelSpec)
+            .filter(hasOperationalLimits)
           const diagnosed = diagnoseModelSpecs(response, catalog, options)
-          const models = diagnosed.models.map(toOpenCodeModelSpec)
           return {
             models,
             fingerprint: fingerprint(models),
             diagnostics: diagnosed.diagnostics,
+            publication: summarizePublication(result, catalogFailure?.kind),
+            snapshotSpecs,
           }
         },
         {
@@ -419,6 +491,7 @@ export function createDiscoveryLoop(
         if (snapshot.audit?.view) snapshot.audit = { ...snapshot.audit, status: "stale" }
         snapshot.diagnostics = {
           discovery: coordinated.value.diagnostics ?? snapshot.diagnostics?.discovery,
+          publication: coordinated.value.publication ?? snapshot.diagnostics?.publication,
           cache: createDiscoveryCacheDiagnostics({
             source: "stale",
             stale: true,
@@ -432,9 +505,10 @@ export function createDiscoveryLoop(
       }
 
       const { models, fingerprint: nextFingerprint } = coordinated.value
+      const persistModels = neutralModels(coordinated.value.snapshotSpecs ?? models)
       const nextPersisted = createDiscoverySnapshot(
         expectedEndpoint,
-        neutralModels(models),
+        persistModels,
         new Date(coordinated.refreshedAt).toISOString(),
       )
       if (previousPersisted) {
@@ -464,6 +538,7 @@ export function createDiscoveryLoop(
       }
       snapshot.diagnostics = {
         discovery: coordinated.value.diagnostics,
+        publication: coordinated.value.publication,
         cache: createDiscoveryCacheDiagnostics({
           source: coordinated.source === "cache" ? "memory-cache" : "network",
           stale: false,

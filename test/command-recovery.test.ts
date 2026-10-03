@@ -16,6 +16,13 @@ test("多 endpoint diagnostics 即使 completed 事件丢失也能从 latest 恢
   const registration = await registerMultiEndpointAudit({
     rpc: {
       register: async (_schema: unknown, nextHandlers: typeof handlers) => {
+        const id = typeof _schema === "object" && _schema !== null ? (_schema as { id?: unknown }).id : undefined
+        if (id !== "litellm-audit-export") {
+          return {
+            events: { emit: async () => {} },
+            dispose: async () => {},
+          }
+        }
         handlers = nextHandlers
         return {
           events: { emit: async () => { emitted++ } },

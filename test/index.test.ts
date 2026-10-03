@@ -90,7 +90,7 @@ test("cleanup 停止发现并释放注册", async () => {
   const scheduled = scheduler.all[0]!
 
   await cleanup()
-  expect(disposed).toBe(6)
+  expect(disposed).toBe(7)
   expect(scheduler.active).toHaveLength(0)
 
   scheduled()
@@ -182,7 +182,7 @@ test("显式多 endpoint 在单一 V2 plugin context 中启动并暴露独立 in
 
   await cleanup()
   expect(eventAborts).toBe(2)
-  expect(disposed).toBe(7)
+  expect(disposed).toBe(8)
 })
 
 test("startup log uses the canonical Runtime Identity [STARTUP-LOG] [CANONICAL-SINGLE]", async () => {

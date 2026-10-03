@@ -34,7 +34,14 @@ test("PR8 的总 context 语义贯穿 Core 到 OpenCode 模型", () => {
   const neutral = discover(litellm, modelsDev, options)
   const adapted = neutral.map(toOpenCodeModelSpec)
   const shared = adapted.find((model) => model.id === "shared-route")
-  expect(shared?.limit).toEqual({ context: 1050000, input: 128000, output: 128000 })
+  // shared-route aggregates a claude-haiku (200k) and a gpt-5.5 (128k)
+  // deployment with no declared equivalence. Under group identity rules
+  // the enrichment is ambiguous and the wire spec keeps conservative
+  // deployment-min fallbacks (no vendor record); the conflicting
+  // context values are not merged into a fake known limit, and output
+  // stays 0 (unknown) because neither deployment nor a trusted record
+  // declares it. Publication blocks the model.
+  expect(shared?.limit).toEqual({ context: 128000, input: 128000, output: 0 })
   expect(shared?.package).toBe("@opencode/ai/providers/openai-compatible")
 })
 

@@ -173,7 +173,7 @@ const cleanup = await setupAuditTui(context, (callback) => {
   tick = callback
   return () => { stopped++ }
 })
-const live = await testRender(() => render({ sessionID: "current" }), { width: 110, height: 20 })
+const live = await testRender(() => render({ sessionID: "current" }), { width: 110, height: 24 })
 async function clickLive(label: string) {
   await live.renderOnce()
   const lines = live.captureCharFrame().split("\n")
@@ -270,6 +270,9 @@ try {
             id: "gpt-diagnostics",
             release_date: "2026-05-01",
             modalities: { input: ["text"], output: ["text"] },
+            limit: { context: 100000, output: 10000 },
+            tool_call: false,
+            reasoning: false,
           },
         },
       },
@@ -285,6 +288,13 @@ try {
   const serverRegistration = await registerAudit({
     rpc: {
       register: async (_schema: unknown, handlers: typeof auditServerHandlers) => {
+        const id = typeof _schema === "object" && _schema !== null ? (_schema as { id?: unknown }).id : undefined
+        if (id !== "litellm-audit-export") {
+          return {
+            events: { emit: async () => {} },
+            dispose: async () => {},
+          }
+        }
         auditServerHandlers = handlers
         return {
           events: {

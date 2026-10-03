@@ -27,6 +27,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "name": "anthropic-direct",
     "package": "@opencode/ai/providers/anthropic",
     "protocol": "messages",
+    "reasoningSupported": "supported",
     "releaseUnit": "unix-ms",
     "released": 1754352000000,
     "variants": [
@@ -68,6 +69,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "name": "claude-bedrock",
     "package": "@opencode/ai/providers/anthropic",
     "protocol": "messages",
+    "reasoningSupported": "supported",
     "releaseUnit": "unix-ms",
     "released": 1759104000000,
     "variants": [
@@ -118,6 +120,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "name": "claude-db",
     "package": "@opencode/ai/providers/anthropic",
     "protocol": "messages",
+    "reasoningSupported": "supported",
     "releaseUnit": "unix-ms",
     "released": 1759104000000,
     "variants": [
@@ -166,6 +169,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "name": "glm-5.3",
     "package": "@opencode/ai/providers/openai-compatible",
     "protocol": "chat",
+    "reasoningSupported": "supported",
     "releaseUnit": "unix-ms",
     "released": 1770854400000,
     "variants": [],
@@ -197,6 +201,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "name": "gpt-5.5",
     "package": "@opencode/ai/providers/openai/responses",
     "protocol": "responses",
+    "reasoningSupported": "supported",
     "releaseUnit": "unix-ms",
     "released": 1772323200000,
     "variants": [
@@ -245,40 +250,22 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "cost": {
       "cacheRead": 0,
       "cacheWrite": 0,
-      "input": 1,
-      "output": 4,
+      "input": 0,
+      "output": 0,
     },
     "id": "minimax-m3",
     "limit": {
-      "context": 512000,
-      "input": 512000,
+      "context": 500000,
+      "input": 500000,
       "output": 131072,
     },
     "name": "minimax-m3",
     "package": "@opencode/ai/providers/openai-compatible",
     "protocol": "chat",
+    "reasoningSupported": "unknown",
     "releaseUnit": "unix-ms",
-    "released": 1768003200000,
-    "variants": [
-      {
-        "id": "low",
-        "settings": {
-          "reasoningEffort": "low",
-        },
-      },
-      {
-        "id": "medium",
-        "settings": {
-          "reasoningEffort": "medium",
-        },
-      },
-      {
-        "id": "high",
-        "settings": {
-          "reasoningEffort": "high",
-        },
-      },
-    ],
+    "released": 1768089600000,
+    "variants": [],
   },
   {
     "capabilities": {
@@ -305,6 +292,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "name": "multi-endpoint-model",
     "package": "@opencode/ai/providers/openai/responses",
     "protocol": "responses",
+    "reasoningSupported": "unknown",
     "releaseUnit": "none",
     "released": 0,
     "variants": [],
@@ -313,7 +301,6 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "capabilities": {
       "input": [
         "text",
-        "image",
         "video",
       ],
       "output": [
@@ -336,71 +323,10 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "name": "qwen3.7-plus",
     "package": "@opencode/ai/providers/openai-compatible",
     "protocol": "chat",
+    "reasoningSupported": "unknown",
     "releaseUnit": "unix-ms",
     "released": 1769904000000,
     "variants": [],
-  },
-  {
-    "capabilities": {
-      "input": [
-        "text",
-        "image",
-        "pdf",
-      ],
-      "output": [
-        "text",
-      ],
-      "tools": true,
-    },
-    "cost": {
-      "cacheRead": 0,
-      "cacheWrite": 0,
-      "input": 0,
-      "output": 0,
-    },
-    "id": "shared-route",
-    "limit": {
-      "context": 1050000,
-      "input": 128000,
-      "output": 128000,
-    },
-    "name": "shared-route",
-    "package": "@opencode/ai/providers/openai-compatible",
-    "protocol": "chat",
-    "releaseUnit": "unix-ms",
-    "released": 1772323200000,
-    "variants": [
-      {
-        "id": "none",
-        "settings": {
-          "reasoningEffort": "none",
-        },
-      },
-      {
-        "id": "low",
-        "settings": {
-          "reasoningEffort": "low",
-        },
-      },
-      {
-        "id": "medium",
-        "settings": {
-          "reasoningEffort": "medium",
-        },
-      },
-      {
-        "id": "high",
-        "settings": {
-          "reasoningEffort": "high",
-        },
-      },
-      {
-        "id": "xhigh",
-        "settings": {
-          "reasoningEffort": "xhigh",
-        },
-      },
-    ],
   },
 ]
 `;
