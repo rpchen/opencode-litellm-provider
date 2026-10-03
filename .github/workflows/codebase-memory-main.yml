@@ -1,0 +1,42 @@
+name: Publish main index
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  # Pending runs of different source commits must never replace each other.
+  group: publish-codebase-memory-main-${{ github.event.workflow_run.head_sha || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.19.0
+      - name: Verify this exact main commit passed CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/codebase-memory-main.mjs check-ci
+      - run: npm install --global codebase-memory-mcp@0.11.0
+      - name: Build and verify the immutable merged commit snapshot
+        run: node scripts/codebase-memory-main.mjs build
+      - name: Publish and download the same snapshot for byte verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/codebase-memory-main.mjs publish

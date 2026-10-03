@@ -24,14 +24,17 @@ export function binaryPath() {
 }
 export function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: 'utf8', windowsHide: true, timeout: 120000, ...options });
+  if (result.error?.code === 'ETIMEDOUT') throw Object.assign(new Error(`${path.basename(command)} timed out`), { code: 'ETIMEDOUT' });
   if (result.error || result.status !== 0) throw new Error(`${path.basename(command)} failed: ${result.error?.message ?? result.stderr?.trim() ?? result.status}`);
   return result.stdout.trim();
 }
 export function repository(cwd = process.cwd(), execute = run) {
   const root = execute('git', ['rev-parse', '--show-toplevel'], { cwd });
   // Stop at the nearest Git root: an unindexed child must not inherit a parent's graph.
-  if (!existsSync(path.join(root, '.codebase-memory', 'artifact.json'))) throw new Error('Repository has no opted-in .codebase-memory/artifact.json; explicit indexing is required');
-  const artifact = JSON.parse(readFileSync(path.join(root, '.codebase-memory', 'artifact.json'), 'utf8'));
+  const artifactPath = path.join(root, '.codebase-memory', 'artifact.json');
+  const selectionPath = path.join(root, '.codebase-memory', 'selection.json');
+  if (!existsSync(artifactPath) && !existsSync(selectionPath)) throw new Error('Repository has no explicit codebase-memory selection; explicit indexing is required');
+  const artifact = JSON.parse(readFileSync(existsSync(artifactPath) ? artifactPath : selectionPath, 'utf8'));
   const commit = execute('git', ['rev-parse', 'HEAD'], { cwd: root });
   const origin = execute('git', ['remote', 'get-url', 'origin'], { cwd: root });
   const match = origin.match(/^(?:https:\/\/github\.com\/|git@github\.com:)([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/);
