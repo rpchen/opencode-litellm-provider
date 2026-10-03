@@ -16,6 +16,8 @@ function harness(
   let command: { execute: (input: { sessionID: string }) => Promise<void> } | undefined
   const commands: Array<{ name?: string; execute: (input: { sessionID: string }) => Promise<void> }> = []
   let handlers: { export: (input: { sessionID: string }) => Promise<unknown>; latest: () => Promise<unknown> } | undefined
+  let publicationHandlers: { state: () => Promise<unknown>; accept: (input: unknown) => Promise<unknown> } | undefined
+  const publicationEmits: unknown[] = []
   let emits: unknown[] = []
   const eventNames: string[] = []
   let disposed = 0
@@ -23,6 +25,11 @@ function harness(
   const context = {
     rpc: {
       register: async (_schema: unknown, input: typeof handlers) => {
+        const id = typeof _schema === "object" && _schema !== null ? (_schema as { id?: unknown }).id : undefined
+        if (id === "litellm-publication") {
+          publicationHandlers = input as unknown as typeof publicationHandlers
+          return { events: { emit: async (event: string, value: unknown) => { publicationEmits.push({ event, value }) } }, dispose: async () => { disposed++ } }
+        }
         handlers = input
         return { events: { emit: async (event: string, value: unknown) => { eventNames.push(event); emits.push(value) } }, dispose: async () => { disposed++ } }
       },
@@ -52,6 +59,8 @@ function harness(
     get command() { return command! },
     get commands() { return commands },
     get handlers() { return handlers! },
+    get publicationHandlers() { return publicationHandlers! },
+    get publicationEmits() { return publicationEmits },
     get emits() { return emits },
     get eventNames() { return eventNames },
     get disposed() { return disposed },
@@ -150,7 +159,7 @@ describe('审查导出命令', () => {
       return 'C:/audit/example.json'
     })
     const registration = await registerAudit(h.context, snapshot, { writeFile: h.writeFile })
-    expect(h.commands.map((item) => item.name)).toEqual(["litellm-diagnostics", "litellm-audit-export"])
+    expect(h.commands.map((item) => item.name)).toEqual(["litellm-diagnostics", "litellm-audit-export", "litellm-accept-degraded"])
     expect(await h.handlers.latest()).toEqual({ sequence: 0, sessionID: '', ok: false, path: '', error: '' })
     await h.command.execute({ sessionID: 'session-1' })
     expect(written).toHaveLength(1)
@@ -161,7 +170,7 @@ describe('审查导出命令', () => {
     // 开关默认关闭：命令路径也不得调用会话输入 API
     expect(h.prompts.calls).toEqual([])
     await registration.dispose()
-    expect(h.disposed).toBe(2)
+    expect(h.disposed).toBe(3)
   })
 
   test('失败仅传递允许的错误类别，不泄漏异常或影响后续导出', async () => {

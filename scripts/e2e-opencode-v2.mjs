@@ -518,6 +518,8 @@ try {
   let models = command(["models", "--server", openCodeServer.url], { timeout: 120_000 })
   assert.match(models.stdout, /litellm\//u, "CLI models must include the active default LiteLLM endpoint")
   assert.doesNotMatch(models.stdout, /litellm-company\//u, "CLI models must exclude the disabled company endpoint")
+  assert.doesNotMatch(models.stdout, /litellm\/invalid-fields/u,
+    "incomplete fixture models must never disguise as normal host models")
 
   // Re-enable company through the same real selector (main list -> detail -> enable -> back).
   runSessionCommand("litellm-endpoints")
@@ -548,6 +550,7 @@ try {
   // PTY text normalization may collapse the full-width colon, so assert semantic spacing.
   await waitForTui(tui, /Endpoint\s+company/u, { from: mark })
   await waitForTui(tui, /models\.dev\s+ok/u, { from: mark })
+  await waitForTui(tui, /invalid-fields/u, { from: mark })
   const scopedDiagnostics = tui.output(mark)
   assert.doesNotMatch(scopedDiagnostics, /LiteLLM Endpoints · active \d+\/\d+/u,
     "endpoint-scoped diagnostics must not fall back to the multi-endpoint overview")

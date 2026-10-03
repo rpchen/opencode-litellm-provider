@@ -4,6 +4,7 @@ import type { ModelSpec } from "../core/build.js"
 import type { DiscoveryCacheDiagnostics, DiscoveryDiagnostics } from "../generated/discovery-core/index.js"
 import { PROTOCOL_PACKAGES } from "../core/protocol.js"
 import { endpointIdentity, type EndpointIdentity } from "../endpoints.js"
+import type { PublicationState, PublicationSummary } from "./publication.js"
 
 export interface Registration {
   readonly dispose: () => Promise<void>
@@ -49,6 +50,7 @@ export interface AuditSnapshot {
 
 export interface ProviderDiagnosticsSnapshot {
   readonly discovery?: DiscoveryDiagnostics
+  readonly publication?: PublicationSummary
   readonly cache?: DiscoveryCacheDiagnostics
   readonly note?: string
 }
@@ -61,6 +63,8 @@ export interface ProviderSnapshot {
   registrationView?: RegistrationView
   audit?: AuditSnapshot
   diagnostics?: ProviderDiagnosticsSnapshot
+  /** Per-endpoint publication controller memory (LKG store + degraded acceptance). */
+  publicationState?: PublicationState
 }
 
 export function applyIntegration(editor: IntegrationEditorLike, endpoint: EndpointIdentity = DEFAULT_IDENTITY): void {

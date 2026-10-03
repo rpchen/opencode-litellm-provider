@@ -27,6 +27,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "name": "anthropic-direct",
     "package": "@opencode/ai/providers/anthropic",
     "protocol": "messages",
+    "reasoningSupported": "supported",
     "releaseUnit": "unix-ms",
     "released": 1754352000000,
     "variants": [
@@ -68,6 +69,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "name": "claude-bedrock",
     "package": "@opencode/ai/providers/anthropic",
     "protocol": "messages",
+    "reasoningSupported": "supported",
     "releaseUnit": "unix-ms",
     "released": 1759104000000,
     "variants": [
@@ -118,6 +120,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "name": "claude-db",
     "package": "@opencode/ai/providers/anthropic",
     "protocol": "messages",
+    "reasoningSupported": "supported",
     "releaseUnit": "unix-ms",
     "released": 1759104000000,
     "variants": [
@@ -166,6 +169,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "name": "glm-5.3",
     "package": "@opencode/ai/providers/openai-compatible",
     "protocol": "chat",
+    "reasoningSupported": "supported",
     "releaseUnit": "unix-ms",
     "released": 1770854400000,
     "variants": [],
@@ -197,6 +201,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "name": "gpt-5.5",
     "package": "@opencode/ai/providers/openai/responses",
     "protocol": "responses",
+    "reasoningSupported": "supported",
     "releaseUnit": "unix-ms",
     "released": 1772323200000,
     "variants": [
@@ -257,6 +262,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "name": "minimax-m3",
     "package": "@opencode/ai/providers/openai-compatible",
     "protocol": "chat",
+    "reasoningSupported": "supported",
     "releaseUnit": "unix-ms",
     "released": 1768003200000,
     "variants": [
@@ -305,6 +311,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "name": "multi-endpoint-model",
     "package": "@opencode/ai/providers/openai/responses",
     "protocol": "responses",
+    "reasoningSupported": "unknown",
     "releaseUnit": "none",
     "released": 0,
     "variants": [],
@@ -313,7 +320,6 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "capabilities": {
       "input": [
         "text",
-        "image",
         "video",
       ],
       "output": [
@@ -336,6 +342,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "name": "qwen3.7-plus",
     "package": "@opencode/ai/providers/openai-compatible",
     "protocol": "chat",
+    "reasoningSupported": "unknown",
     "releaseUnit": "unix-ms",
     "released": 1769904000000,
     "variants": [],
@@ -367,6 +374,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "name": "shared-route",
     "package": "@opencode/ai/providers/openai-compatible",
     "protocol": "chat",
+    "reasoningSupported": "supported",
     "releaseUnit": "unix-ms",
     "released": 1772323200000,
     "variants": [

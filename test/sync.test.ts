@@ -300,12 +300,24 @@ describe("发现循环", () => {
         {
           model_name: "mixed-model",
           litellm_params: { model: "openai/mixed-model" },
-          model_info: { supported_endpoints: ["/v1/responses"] },
+          model_info: {
+            supported_endpoints: ["/v1/responses"],
+            max_input_tokens: 100000,
+            max_output_tokens: 10000,
+            supports_function_calling: true,
+            supports_reasoning: false,
+          },
         },
         {
           model_name: "mixed-model",
           litellm_params: { model: "openai/mixed-model" },
-          model_info: { supported_endpoints: ["/v1/chat/completions"] },
+          model_info: {
+            supported_endpoints: ["/v1/chat/completions"],
+            max_input_tokens: 100000,
+            max_output_tokens: 10000,
+            supports_function_calling: true,
+            supports_reasoning: false,
+          },
         },
       ],
     }))
