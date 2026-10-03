@@ -298,8 +298,10 @@ test('[CBM-QUEUED-LOCK] a queued second client re-reads checkout state inside th
     // checkout is still at A, then waits at the barrier. The first client
     // owns the lock, advances the checkout to B and writes a fresh receipt.
     // Only then does the second client acquire the same lock with its stale
-    // pre-lock snapshot in hand.
-    const second = worker(f, { action: 'prepare', remote: f.remote, barrier, snapshots, cwd: f.root, waitMs: 120000 }, 'second');
+    // pre-lock snapshot in hand. The barrier is inside the implementation's
+    // own pre-lock identity read, so the unfixed pre-lock-snapshot
+    // implementation really does carry A into the lock and fails.
+    const second = worker(f, { action: 'prepare', remote: f.remote, preLockBarrier: barrier, snapshots, cwd: f.root, waitMs: 120000 }, 'second');
     await arrive(barrier, 1);
     const first = await worker(f, { action: 'prepare', remote: f.remote, snapshots, cwd: f.root, waitMs: 120000 }, 'first');
     assert.equal(first.code, 0, JSON.stringify(first));
@@ -325,7 +327,7 @@ test('[CBM-QUEUED-USER-CHANGE] a queued second client still rejects real concurr
     const B = f.advance();
     const snapshots = path.join(f.dir, 'queued-snapshots');
     const barrier = path.join(f.dir, 'user-change-barrier');
-    const second = worker(f, { action: 'prepare', remote: f.remote, barrier, snapshots, cwd: f.root, waitMs: 120000 }, 'second');
+    const second = worker(f, { action: 'prepare', remote: f.remote, preLockBarrier: barrier, snapshots, cwd: f.root, waitMs: 120000 }, 'second');
     await arrive(barrier, 1);
     const first = await worker(f, { action: 'prepare', remote: f.remote, snapshots, cwd: f.root, waitMs: 120000 }, 'first');
     assert.equal(first.code, 0, JSON.stringify(first));

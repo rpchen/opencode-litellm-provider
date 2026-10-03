@@ -65,6 +65,11 @@ async function waitForBarrier(barrier, label) {
   const began = Date.now();
   while (!existsSync(path.join(barrier, 'release'))) { if (Date.now() - began > 120000) throw new Error(`${label} barrier timed out`); pause(10); }
 }
+function waitForBarrierSync(barrier, label) {
+  mkdirSync(barrier, { recursive: true }); writeFileSync(path.join(barrier, String(process.pid)), 'waiting');
+  const began = Date.now();
+  while (!existsSync(path.join(barrier, 'release'))) { if (Date.now() - began > 120000) throw new Error(`${label} barrier timed out`); pause(10); }
+}
 if (process.argv[2] === 'worker') {
   const configuration = JSON.parse(readFileSync(process.argv[3], 'utf8'));
   const implementation = await import(process.env.CBM_REVIEW_BASELINE ? pathToFileURL(path.resolve(process.env.CBM_REVIEW_BASELINE)).href : './codebase-memory-main.mjs');
@@ -87,9 +92,23 @@ if (process.argv[2] === 'worker') {
     // worker records the pre-lock state read, waits at the barrier while the
     // first client owns the lock, then acquires the same lock afterwards.
     const preLock = { head: run('git', ['rev-parse', 'HEAD'], { cwd: configuration.cwd }) };
+    let preLockRead = false;
+    const repositoryService = cwd => {
+      const actual = run('git', ['rev-parse', '--show-toplevel'], { cwd });
+      const snapshot = { root: actual, commit: run('git', ['rev-parse', 'HEAD'], { cwd: actual }), slug: 'example/fixture', project: 'fixture' };
+      // The barrier must hold the implementation's OWN pre-lock identity read,
+      // not a fixture-side read before prepareMain: otherwise the old
+      // pre-lock-snapshot defect is never exercised and the regression passes
+      // against the unfixed implementation too. The first repository() call is
+      // that pre-lock read; a fixed implementation re-reads the live state
+      // after acquiring the lock, while an unfixed one carries the barrier-time
+      // snapshot in.
+      if (configuration.preLockBarrier && !preLockRead) { preLockRead = true; waitForBarrierSync(configuration.preLockBarrier, 'pre-lock'); }
+      return snapshot;
+    };
     if (configuration.barrier) await waitForBarrier(configuration.barrier, 'prepare');
     const result = await implementation.prepareMain(configuration.cwd, { waitMs: configuration.waitMs ?? 120000, services: {
-      repository: cwd => { const actual = run('git', ['rev-parse', '--show-toplevel'], { cwd }); return { root: actual, commit: run('git', ['rev-parse', 'HEAD'], { cwd: actual }), slug: 'example/fixture', project: 'fixture' }; },
+      repository: repositoryService,
       request: endpoint => { if (endpoint.includes('/pulls?')) return []; throw new Error(`Unexpected fixture request: ${endpoint}`); },
       activate: repo => {
         const marker = { schema_version: 2, project: 'native-fixture', commit: repo.commit, nodes: 2, edges: 1 };
