@@ -250,41 +250,22 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "cost": {
       "cacheRead": 0,
       "cacheWrite": 0,
-      "input": 1,
-      "output": 4,
+      "input": 0,
+      "output": 0,
     },
     "id": "minimax-m3",
     "limit": {
-      "context": 512000,
-      "input": 512000,
+      "context": 500000,
+      "input": 500000,
       "output": 131072,
     },
     "name": "minimax-m3",
     "package": "@opencode/ai/providers/openai-compatible",
     "protocol": "chat",
-    "reasoningSupported": "supported",
+    "reasoningSupported": "unknown",
     "releaseUnit": "unix-ms",
-    "released": 1768003200000,
-    "variants": [
-      {
-        "id": "low",
-        "settings": {
-          "reasoningEffort": "low",
-        },
-      },
-      {
-        "id": "medium",
-        "settings": {
-          "reasoningEffort": "medium",
-        },
-      },
-      {
-        "id": "high",
-        "settings": {
-          "reasoningEffort": "high",
-        },
-      },
-    ],
+    "released": 1768089600000,
+    "variants": [],
   },
   {
     "capabilities": {

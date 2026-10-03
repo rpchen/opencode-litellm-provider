@@ -19,6 +19,8 @@ const COMPLETE_INFO = {
   max_output_tokens: 10000,
   supports_function_calling: true,
   supports_reasoning: false,
+  supports_vision: false,
+  supports_audio_output: false,
 }
 
 const COMPLETE_RESPONSE = {
@@ -44,6 +46,7 @@ const COMPLETE_CATALOG = {
         limit: { context: 100000, output: 10000 },
         tool_call: true,
         reasoning: false,
+        modalities: { input: ["text"], output: ["text"] },
       },
     },
   },
@@ -262,6 +265,24 @@ describe("publication longitudinal: Core -> snapshot -> RPC -> TUI lines", () =>
       )
       expect(summary.blocked).toEqual([])
       expect(acceptDegradedForSnapshot({ diagnostics: undefined }, "nope").accepted).toBeFalse()
+      const invalid = acceptDegradedForSnapshot({
+        diagnostics: {
+          publication: {
+            publishable: [],
+            degradedIDs: [],
+            lkgIDs: [],
+            blocked: [{
+              id: "invalid-model",
+              status: "invalid-metadata",
+              gaps: ["limit.context"],
+              degradationEligible: false,
+              degradationReason: "illegal metadata cannot be accepted as an unknown risk",
+            }],
+          },
+        },
+      }, "invalid-model")
+      expect(invalid.accepted).toBeFalse()
+      expect(invalid.reason).toContain("illegal")
       await registration.dispose()
     } finally {
       await h.loop.dispose()

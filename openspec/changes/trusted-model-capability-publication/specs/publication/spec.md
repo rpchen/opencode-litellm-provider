@@ -62,8 +62,12 @@ the degraded label with remaining gaps and SHALL never re-label such
 models as fully configured.
 
 #### Scenario: Accept degraded model
-- **WHEN** the user accepts a blocked model through the publication RPC
+- **WHEN** the user accepts a Core-eligible blocked model through the publication RPC
 - **THEN** the model registers on the degraded path on the next refresh and diagnostics still lists it as degraded with its gaps
+
+#### Scenario: Ineligible model is rejected
+- **WHEN** the user accepts an invalid, ambiguous, or unmatched model
+- **THEN** the RPC reports Core's rejection and does not claim success
 
 #### Scenario: Degraded model is distinguishable
 - **WHEN** diagnostics lines are displayed (command output and TUI)

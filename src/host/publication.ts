@@ -9,7 +9,9 @@
  */
 import {
   createLastKnownGoodStore,
+  degradationEligibility,
   type BlockedEntry,
+  type CompletenessAssessment,
   type LastKnownGoodStore,
   type PublishableEntry,
 } from "../generated/discovery-core/index.js"
@@ -23,6 +25,9 @@ export interface PublicationBlockedModel {
   readonly id: string
   readonly status: string
   readonly gaps: readonly string[]
+  /** Core eligibility. Adapters must not re-derive this from status strings. */
+  readonly degradationEligible: boolean
+  readonly degradationReason?: string
 }
 
 /** Adapter-visible slice of the Core publication partition. */
@@ -59,15 +64,20 @@ export function summarizePublication(
     lkgIDs: publication.publishable
       .filter((entry) => entry.assessment.usingLKG)
       .map((entry) => entry.spec.id),
-    blocked: publication.blocked.map((entry) => ({
-      id: entry.spec.id,
-      status: entry.assessment.status,
-      gaps: [
-        ...entry.assessment.missingFields,
-        ...entry.assessment.unknownFields,
-        ...entry.assessment.illegalFields,
-      ],
-    })),
+    blocked: publication.blocked.map((entry) => {
+      const eligibility = degradationEligibility(entry.assessment)
+      return {
+        id: entry.spec.id,
+        status: entry.assessment.status,
+        degradationEligible: eligibility.eligible,
+        degradationReason: eligibility.eligible ? undefined : eligibility.reason,
+        gaps: [
+          ...entry.assessment.missingFields,
+          ...entry.assessment.unknownFields,
+          ...entry.assessment.illegalFields,
+        ],
+      }
+    }),
     failureKind,
   }
 }
@@ -100,8 +110,22 @@ export function acceptDegradedForSummary(
       ? { accepted: false, reason: "already-configured" }
       : { accepted: false, reason: "unknown-model" }
   }
+  if (!blocked.degradationEligible) {
+    return {
+      accepted: false,
+      status: blocked.status,
+      gaps: blocked.gaps,
+      reason: blocked.degradationReason ?? "not-eligible",
+    }
+  }
   accepted.add(modelId)
   return { accepted: true, status: blocked.status, gaps: blocked.gaps }
+}
+
+/** Test/helper seam: eligibility always comes from Core, never from a local status table. */
+export function degradationReasonFor(assessment: CompletenessAssessment): string | undefined {
+  const eligibility = degradationEligibility(assessment)
+  return eligibility.eligible ? undefined : eligibility.reason
 }
 
 export interface SnapshotPublicationLike {

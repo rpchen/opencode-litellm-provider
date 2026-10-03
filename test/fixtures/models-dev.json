@@ -21,6 +21,7 @@
     "models": {
       "claude-sonnet-4-5": {
         "id": "claude-sonnet-4-5",
+        "canonical_model_id": "anthropic/claude-sonnet-4-5",
         "name": "Claude Sonnet 4.5",
         "release_date": "2025-09-29",
         "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
@@ -33,6 +34,7 @@
       },
       "claude-opus-4-1": {
         "id": "claude-opus-4-1",
+        "canonical_model_id": "anthropic/claude-opus-4-1",
         "name": "Claude Opus 4.1",
         "release_date": "2025-08-05",
         "limit": { "context": 200000, "output": 32000 },

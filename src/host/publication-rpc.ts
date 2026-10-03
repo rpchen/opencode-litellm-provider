@@ -16,8 +16,10 @@ const blockedModel = {
     id: { type: "string" },
     status: { type: "string" },
     gaps: { type: "array", items: { type: "string" } },
+    degradationEligible: { type: "boolean" },
+    degradationReason: { type: "string" },
   },
-  required: ["id", "status", "gaps"],
+  required: ["id", "status", "gaps", "degradationEligible"],
   additionalProperties: false,
 } as const
 

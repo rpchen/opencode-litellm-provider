@@ -9,6 +9,7 @@ import {
 import {
   buildPublicationResult,
   classifyMetadataFailure,
+  capturedPublicationVerdict,
   createLastKnownGoodEntry,
   groupLiteLLMDeployments,
   lastKnownGoodKey,
@@ -127,7 +128,13 @@ function seedPublicationLKG(
     try {
       store.set(
         lastKnownGoodKey(entry.spec.id),
-        createLastKnownGoodEntry(group, entry.assessment.identity.selected, entry.spec, now),
+        createLastKnownGoodEntry(
+          group,
+          entry.assessment.identity.selected,
+          entry.spec,
+          now,
+          capturedPublicationVerdict(entry.assessment),
+        ),
       )
     } catch {
       // Seeding is best-effort; it must never fail a discovery.

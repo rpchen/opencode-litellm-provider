@@ -22,13 +22,13 @@ describe("models.dev 记录选择", () => {
     ])
   })
 
-  test("大小写不敏感地优先原厂记录", () => {
+  test("没有可验证 identity 时不因名字选择原厂", () => {
     const selected = selectModelsDevRecord(
       one("minimax-m3", "openai/minimax-m3", { base_model: "minimax-m3" }),
       modelsDev,
     )
-    expect(selected?.providerID).toBe("minimax")
-    expect(selected?.modelID).toBe("MiniMax-M3")
+    expect(selected?.providerID).not.toBe("minimax")
+    expect(selected?.selectionSource).not.toBe("legacy-family-compatibility")
   })
 
   test("原厂缺失时使用 OpenCode Zen", () => {
