@@ -12,7 +12,7 @@
 - [x] Consume Core degradation eligibility in `/litellm-accept-degraded`; reject ineligible statuses without a success message.
 - [x] Seed LKG with the Core captured publication verdict.
 - [x] Source-level typecheck, unit tests, and TUI render against reviewed Core head `1cd6bc285cdf692c335d3fd401a4e4436eb515ef`.
-- [x] Align Core-copy fixtures/tests with group-wide limit/modality/identity evidence (Core branch head `e71393d5c503272b663ecc1ef237a23198b46916`).
+- [x] Align Core-copy fixtures/tests with group-wide limit/modality/identity evidence (Core branch head `8afc3e7d7a7b98581626fedb0322099ad3933cce`).
 - [x] Extend Real OpenCode 2.0.16 E2E assertions for the publication boundary (incomplete fixture model never listed, diagnostics names it).
 - [ ] `npm run build:dist` to the merged Core SHA + `npm run verify:dist`, `npm run test:distribution`, `npm run test:package` (blocked until rpchen/litellm-discovery-core#26 merges).
 - [ ] Real OpenCode 2.0.16 E2E run (blocked: it installs a committed dist, so it must run after the Core merge + dist refresh).
