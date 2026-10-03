@@ -69,6 +69,15 @@ models as fully configured.
 - **WHEN** the user accepts an invalid, ambiguous, or unmatched model
 - **THEN** the RPC reports Core's rejection and does not claim success
 
+### Requirement: Group-wide evidence flows through the adapter unchanged
+The plugin SHALL consume Core's group-wide completeness verdicts
+(consistency of limits, modalities, identity) verbatim and SHALL NOT
+re-derive any completeness, conflict, or eligibility judgment locally.
+
+#### Scenario: Conflict-blocked groups stay blocked
+- **WHEN** Core reports a group blocked for conflicting deployment evidence (limits disagree or identities cannot be proven equal)
+- **THEN** the model stays unregistered with status and conflict fields visible in diagnostics
+
 #### Scenario: Degraded model is distinguishable
 - **WHEN** diagnostics lines are displayed (command output and TUI)
 - **THEN** degraded models are listed separately from fully configured models
