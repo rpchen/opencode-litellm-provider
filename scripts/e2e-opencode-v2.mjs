@@ -343,11 +343,16 @@ async function choose(tui, labelsInOrder, target, { anchor, since } = {}) {
   // Never send keys before the dialog is on screen: stray keys would land in the session prompt.
   await waitForTui(tui, anchor ?? target, { from: since ?? 0 })
   await sleep(400)
+  // If the target menu carries a 返回 entry the caller expects a DETAIL view; refuse to
+  // navigate from the main list because the DOWN indices would land on the wrong rows.
+  if (labelsInOrder.includes("返回") && !tui.output().includes("返回")) {
+    throw new Error(`choose(${JSON.stringify(target)}) called while the main list is on screen; open the endpoint detail first`)
+  }
   const screen = tui.output()
   // The canonical DETAIL menu inserts "重新应用" before "删除 endpoint" only when canRetry.
   // Detect that case from the rendered screen and treat it as if it were present in
   // `labelsInOrder` for index arithmetic.
-  const effective = screen.includes("重新应用") && !labelsInOrder.includes("重新应用")
+  const effective = screen.includes("重新应用") && labelsInOrder.includes("删除 endpoint") && !labelsInOrder.includes("重新应用")
     ? [...labelsInOrder.slice(0, -2), "重新应用", ...labelsInOrder.slice(-2)]
     : labelsInOrder
   const index = effective.indexOf(target)
@@ -978,7 +983,7 @@ try {
 
     // 8. DELETE (confirm): definition, credential and provider all go; company keeps everything
     m = await choose(t, DETAIL(false, true), "删除 endpoint", { anchor: /e2e\S*[^|]*未启用[^|]*已保存/u, since: m })
-    await waitForTui(t, "将彻底删除", { from: m })
+    await waitForTui(t, /将彻底删/u, { from: m })
     m = t.mark()
     t.write("\r")
     // Completion is asserted on the observable end state (the management list comes back without the
@@ -1161,7 +1166,7 @@ try {
 
     // 7. Delete through the UI (definition + credential go)
     ml = await choose(tl, legacyDetail, "删除 endpoint", { anchor: /default[^|]*已启用[^|]*已保存/u, since: ml })
-    await waitForTui(tl, /将彻底删除/u, { from: ml })
+    await waitForTui(tl, /将彻底删/u, { from: ml })
     ml = tl.mark()
     tl.write("\r") // Confirm (default focus)
     // Same as the explicit flow: assert completion via the list coming back without the endpoint —
