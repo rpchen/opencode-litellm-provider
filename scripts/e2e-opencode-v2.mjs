@@ -309,11 +309,14 @@ async function stopAttachedTui(tui) {
   activeTuis.delete(tui)
 }
 
-const DETAIL = (active, connected = false) => [
+const DETAIL = (active, connected = false, canRetry = false) => [
   active ? "停用" : "启用",
   "修改 Base URL",
   connected ? "替换 API Key" : "连接 API Key",
   ...(connected ? ["断开凭据"] : []),
+  // "重新应用" is only present when the endpoint is enabled, valid, credentialed AND
+  // not currently applied — see `canRetry`. Tests must opt in when they care.
+  ...(canRetry ? ["重新应用"] : []),
   "删除 endpoint",
   "返回",
 ]
@@ -332,12 +335,22 @@ async function endpointDetailToggle(tui, listLabel, { expectAfter, connected, wa
 
 // Drive the real TUI selector: press DOWN until the wanted option is the highlighted one, then ENTER.
 // Matching is on the rendered screen text after each key, so a fake (non-interactive) menu cannot pass.
+// The actual menu may include "重新应用" (only when canRetry); position is computed from
+// the currently-rendered screen, not from the caller's static array, so a present/absent
+// Retry entry never desynchronises navigation.
 async function choose(tui, labelsInOrder, target, { anchor, since } = {}) {
-  const index = labelsInOrder.indexOf(target)
-  if (index < 0) throw new Error(`option ${target} not in ${JSON.stringify(labelsInOrder)}`)
+  if (!labelsInOrder.includes(target)) throw new Error(`option ${target} not in ${JSON.stringify(labelsInOrder)}`)
   // Never send keys before the dialog is on screen: stray keys would land in the session prompt.
   await waitForTui(tui, anchor ?? target, { from: since ?? 0 })
   await sleep(400)
+  const screen = tui.output()
+  // Compute the index of `target` inside the menu currently painted on screen. We use
+  // `labelsInOrder` filtered by what the screen actually shows — this drops "重新应用"
+  // from navigation when canRetry is false (menu has no such entry), and keeps it when
+  // canRetry is true (menu does have it).
+  const onScreen = labelsInOrder.filter((label) => screen.includes(label))
+  const index = onScreen.indexOf(target)
+  if (index < 0) throw new Error(`option ${target} not visible on screen; labels=${JSON.stringify(labelsInOrder)} onScreen=${JSON.stringify(onScreen)}`)
   for (let i = 0; i < index; i++) {
     tui.write("\x1b[B")
     await sleep(150)
