@@ -14,6 +14,6 @@
 - [x] Source-level typecheck, unit tests, and TUI render against reviewed Core head `1cd6bc285cdf692c335d3fd401a4e4436eb515ef`.
 - [x] Align Core-copy fixtures/tests with group-wide limit/modality/identity evidence (Core branch head `8afc3e7d7a7b98581626fedb0322099ad3933cce`).
 - [x] Extend Real OpenCode 2.0.16 E2E assertions for the publication boundary (incomplete fixture model never listed, diagnostics names it).
-- [ ] `npm run build:dist` to the merged Core SHA + `npm run verify:dist`, `npm run test:distribution`, `npm run test:package` (blocked until rpchen/litellm-discovery-core#26 merges).
-- [ ] Real OpenCode 2.0.16 E2E run (blocked: it installs a committed dist, so it must run after the Core merge + dist refresh).
-- [ ] Archive the change with OpenSpec CLI and re-run strict validation (blocked on the same merge order).
+- [x] `npm run build:dist` to the merged Core SHA + `npm run verify:dist`, `npm run test:distribution`, `npm run test:package` (Core #26 merged as `649bc84fff85488a5fc6bda0c2a2a9504a357db4`; dist rebuilt to that SHA and all package/distribution gates green locally and in PR #53 CI).
+- [x] Real OpenCode 2.0.16 E2E run (PR #53 head `c625f11a3625e437991df67b8a8550c5a74047c9`: `CI` SUCCESS + `Real OpenCode 2.0.16 E2E` SUCCESS, covering the publication partition, toggle reasoning, LKG substitution, degraded accept/reject and metadata-failure diagnostics).
+- [x] Archive the change with OpenSpec CLI and re-run strict validation (dist refreshed to merged Core `649bc84fff85488a5fc6bda0c2a2a9504a357db4`, PR #53 CI + Real OpenCode 2.0.16 E2E green).
