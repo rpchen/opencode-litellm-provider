@@ -1,11 +1,14 @@
-import { buildModelSpecs, modelFingerprint, toOpenCodeModelSpec } from "../core/build.js";
+import { buildModelSpecs, hasOperationalLimits, modelFingerprint, toOpenCodeModelSpec } from "../core/build.js";
 import { createDiscoveryCacheDiagnostics, diagnoseModelSpecs, } from "../core/diagnostics.js";
+import { classifyMetadataFailure, capturedPublicationVerdict, createLastKnownGoodEntry, groupLiteLLMDeployments, lastKnownGoodKey, } from "../generated/discovery-core/index.js";
 import { normalizeLiteLLMURL } from "../core/litellm.js";
 import { createDiscoveryCoordinator } from "../core/refresh.js";
 import { compareDiscoverySnapshots, createDiscoverySnapshot, endpointFingerprint, inspectDiscoverySnapshot, } from "../core/snapshot.js";
 import { endpointIdentity } from "../endpoints.js";
 import { DiscoveryError, fetchLiteLLMModelInfo, getModelsDevCatalog, redact, } from "../net/fetch.js";
 import { createRegistrationView } from "./register.js";
+import { createPublicationState, summarizePublication, } from "./publication.js";
+import { buildPublicationModels } from "./models.js";
 const DISCOVERY_SNAPSHOT_STORAGE_KEY = "litellm.discovery.snapshot.v1";
 const DEFAULT_ENDPOINT = endpointIdentity("default", undefined, true);
 /** Storage key of an endpoint's persisted discovery snapshot (legacy default keeps the unsuffixed key). */
@@ -16,6 +19,23 @@ const defaultScheduler = {
     setTimeout: (callback, milliseconds) => setTimeout(callback, milliseconds),
     clearTimeout: (handle) => clearTimeout(handle),
 };
+/** Record complete configured models as Last Known Good for future outages. */
+function seedPublicationLKG(store, litellmResponse, publishable, now) {
+    const groups = new Map(groupLiteLLMDeployments(litellmResponse).map((item) => [item.modelName, item]));
+    for (const entry of publishable) {
+        if (entry.assessment.status !== "configured")
+            continue;
+        const group = groups.get(entry.spec.id);
+        if (!group)
+            continue;
+        try {
+            store.set(lastKnownGoodKey(entry.spec.id), createLastKnownGoodEntry(group, entry.assessment.identity.selected, entry.spec, now, capturedPublicationVerdict(entry.assessment)));
+        }
+        catch {
+            // Seeding is best-effort; it must never fail a discovery.
+        }
+    }
+}
 function isKeyCredential(value) {
     return typeof value === "object" && value !== null && value.type === "key" &&
         typeof value.key === "string";
@@ -257,7 +277,9 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
         });
         const previousPersisted = await loadPersistedSnapshot(nextIdentity, expectedEndpoint);
         if (!snapshot.ready && previousPersisted) {
-            const restoredModels = previousPersisted.models.map(toOpenCodeModelSpec);
+            const restoredModels = previousPersisted.models
+                .map(toOpenCodeModelSpec)
+                .filter(hasOperationalLimits);
             const restoredView = createRegistrationView(restoredModels, addresses.apiBaseURL, endpoint);
             snapshot.ready = true;
             snapshot.connection = connection;
@@ -282,20 +304,43 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
         try {
             const coordinated = await coordinator.refresh(nextIdentity, async () => {
                 const response = await fetchModelInfo(addresses, resolved.key, dependencies.fetchImpl);
-                const catalog = await fetchCatalog({
-                    fetchImpl: dependencies.fetchImpl,
-                    logger,
-                });
+                let catalog;
+                let catalogFailure;
+                try {
+                    catalog = await fetchCatalog({
+                        fetchImpl: dependencies.fetchImpl,
+                        logger,
+                    });
+                }
+                catch (error) {
+                    catalog = {};
+                    catalogFailure = classifyMetadataFailure(error);
+                }
                 if (dependencies.buildModels) {
                     const models = buildModels(response, catalog, options);
                     return { models, fingerprint: fingerprint(models) };
                 }
+                const controller = snapshot.publicationState ??= createPublicationState();
+                const now = Date.now();
+                const { models, result } = buildPublicationModels(response, catalog, options, {
+                    store: controller.store,
+                    acceptedDegradedIDs: controller.acceptedDegradedIDs,
+                    failure: catalogFailure,
+                    now,
+                });
+                seedPublicationLKG(controller.store, response, result.publishable, now);
+                const snapshotSpecs = result.publishable
+                    .filter((entry) => entry.degraded === undefined)
+                    .map((entry) => entry.spec)
+                    .map(toOpenCodeModelSpec)
+                    .filter(hasOperationalLimits);
                 const diagnosed = diagnoseModelSpecs(response, catalog, options);
-                const models = diagnosed.models.map(toOpenCodeModelSpec);
                 return {
                     models,
                     fingerprint: fingerprint(models),
                     diagnostics: diagnosed.diagnostics,
+                    publication: summarizePublication(result, catalogFailure?.kind),
+                    snapshotSpecs,
                 };
             }, {
                 forceRefresh,
@@ -312,6 +357,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                     snapshot.audit = { ...snapshot.audit, status: "stale" };
                 snapshot.diagnostics = {
                     discovery: coordinated.value.diagnostics ?? snapshot.diagnostics?.discovery,
+                    publication: coordinated.value.publication ?? snapshot.diagnostics?.publication,
                     cache: createDiscoveryCacheDiagnostics({
                         source: "stale",
                         stale: true,
@@ -324,7 +370,8 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                 return;
             }
             const { models, fingerprint: nextFingerprint } = coordinated.value;
-            const nextPersisted = createDiscoverySnapshot(expectedEndpoint, neutralModels(models), new Date(coordinated.refreshedAt).toISOString());
+            const persistModels = neutralModels(coordinated.value.snapshotSpecs ?? models);
+            const nextPersisted = createDiscoverySnapshot(expectedEndpoint, persistModels, new Date(coordinated.refreshedAt).toISOString());
             if (previousPersisted) {
                 const diff = compareDiscoverySnapshots(previousPersisted, nextPersisted);
                 if (diff.drift) {
@@ -351,6 +398,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
             };
             snapshot.diagnostics = {
                 discovery: coordinated.value.diagnostics,
+                publication: coordinated.value.publication,
                 cache: createDiscoveryCacheDiagnostics({
                     source: coordinated.source === "cache" ? "memory-cache" : "network",
                     stale: false,

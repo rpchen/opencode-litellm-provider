@@ -4,7 +4,7 @@
  */
 import { mapCapabilities } from "./capabilities.js";
 import { groupLiteLLMDeployments } from "./litellm.js";
-import { buildVariants, releaseTimestamp, selectModelsDevRecord, } from "./modelsdev.js";
+import { buildVariants, releaseTimestamp, resolveReasoningState, selectModelsDevRecord, } from "./modelsdev.js";
 import { resolveProtocol } from "./protocol.js";
 /**
  * Whether a neutral model has the minimum positive token limits required by
@@ -36,6 +36,7 @@ export function buildModelSpecs(litellmResponse, modelsDevCatalog, options) {
                 : typeof sourceDate === "string" && Number.isFinite(Date.parse(sourceDate)) ? "unix-ms" : "none",
             cost: mapped.cost,
             limit: mapped.limit,
+            reasoningSupported: resolveReasoningState(group, selected).state,
         };
     })
         .sort((left, right) => left.id.localeCompare(right.id, "en"));

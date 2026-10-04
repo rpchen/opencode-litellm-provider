@@ -73,6 +73,40 @@ const STATUS_TEXT = {
     "cleared-auth": "认证失败，模型已清空",
     "cleared-notfound": "model/info 不可用，模型已清空",
 };
+/** Render the Core publication partition: states, gaps, LKG, degraded. */
+export function formatPublicationLines(summary, acceptedPending = []) {
+    if (!summary && acceptedPending.length === 0)
+        return [];
+    const published = summary?.publishable.length ?? 0;
+    const blockedList = summary?.blocked ?? [];
+    const degradedIDs = summary?.degradedIDs ?? [];
+    const lkgIDs = summary?.lkgIDs ?? [];
+    const out = [
+        `可用 ${published} · 未完成 ${blockedList.length} · 降级 ${degradedIDs.length} · LKG ${lkgIDs.length}`,
+    ];
+    if (summary?.failureKind)
+        out.push(`元数据获取失败：${summary.failureKind}`);
+    if (lkgIDs.length > 0)
+        out.push(`LKG 提供：${lkgIDs.join("、")}`);
+    if (degradedIDs.length > 0)
+        out.push(`已接受降级：${degradedIDs.join("、")}`);
+    if (acceptedPending.length > 0)
+        out.push(`已接受、待下次刷新生效：${acceptedPending.join("、")}`);
+    for (const blocked of blockedList.slice(0, 5)) {
+        out.push(`未完成：${blocked.id} · ${blocked.status} · 缺失 ${blocked.gaps.join("、")}`);
+    }
+    if (blockedList.length > 5)
+        out.push(`另有 ${blockedList.length - 5} 个未完成模型`);
+    return out;
+}
+/** Accepted-but-not-yet-applied degraded ids (visible until the next refresh applies them). */
+export function pendingAcceptanceIDs(snapshot) {
+    const accepted = snapshot.publicationState?.acceptedDegradedIDs;
+    if (!accepted || accepted.size === 0)
+        return [];
+    const applied = new Set(snapshot.diagnostics?.publication?.degradedIDs ?? []);
+    return [...accepted].filter((id) => !applied.has(id));
+}
 export function createDiagnosticsLines(snapshot, now = Date.now(), timezoneOffsetMinutes) {
     const build = runtimeBuildInfo();
     const audit = snapshot.audit ?? { status: "disconnected" };
@@ -103,6 +137,7 @@ export function createDiagnosticsLines(snapshot, now = Date.now(), timezoneOffse
     }
     if (snapshot.diagnostics?.note)
         lines.push(`说明：${snapshot.diagnostics.note}`);
+    lines.push(...formatPublicationLines(snapshot.diagnostics?.publication, pendingAcceptanceIDs(snapshot)));
     lines.push(`Core：${build.coreBranch}@${build.coreSHA}`);
     const identity = getRuntimeIdentity();
     lines.push("Runtime Identity", `Plugin Version   ${identity.pluginVersion}`, `Artifact         ${shortArtifactDigest(identity)}`, `Core Commit      ${shortCoreCommit(identity)}`);
