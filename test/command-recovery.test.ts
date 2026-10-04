@@ -58,8 +58,8 @@ test("多 endpoint diagnostics 即使 completed 事件丢失也能从 latest 恢
     expect(latest.ok).toBeTrue()
     expect(latest.lines).toEqual([
       "LiteLLM Endpoints · active 2/2",
-      "✓ default · pending · models=0",
-      "✓ company · pending · models=0",
+      "✓ default · litellm · 已启用 · 需要认证 · models=0",
+      "✓ company · litellm-company · 已启用 · 需要认证 · models=0",
     ])
   } finally {
     await registration.dispose()

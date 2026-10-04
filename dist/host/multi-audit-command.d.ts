@@ -1,6 +1,6 @@
 import type { Plugin } from "@opencode/plugin";
 import { writeAuditFile } from "./audit-file.js";
-import type { ProviderSnapshot, Registration } from "./register.js";
+import { type ProviderSnapshot, type Registration } from "./register.js";
 interface MultiAuditDependencies {
     writeFile?: typeof writeAuditFile;
     now?: () => Date;

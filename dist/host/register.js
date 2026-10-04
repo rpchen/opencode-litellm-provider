@@ -1,6 +1,7 @@
 import { Model, Provider } from "@opencode/plugin";
 import { PROTOCOL_PACKAGES } from "../core/protocol.js";
 import { endpointIdentity } from "../endpoints.js";
+import { canPublish } from "./endpoint-state.js";
 export const INTEGRATION_ID = "litellm";
 export const PROVIDER_ID = "litellm";
 const DEFAULT_IDENTITY = endpointIdentity("default", undefined, true);
@@ -87,7 +88,12 @@ export function createRegistrationView(models, apiBaseURL, endpoint = DEFAULT_ID
     });
 }
 export function applyProvider(editor, snapshot, endpoint = DEFAULT_IDENTITY) {
+    // Canonical gating: the host may only see a provider/model registration for an
+    // endpoint that is enabled + validated + credentialed + applied. This subsumes
+    // the previous `ready && connection && apiBaseURL` check with an auditable rule.
     if (!snapshot.ready || !snapshot.connection || !snapshot.apiBaseURL)
+        return;
+    if (snapshot.endpointState && !canPublish(snapshot.endpointState))
         return;
     const view = snapshot.registrationView ?? snapshot.audit?.view ?? createRegistrationView(snapshot.models, snapshot.apiBaseURL, endpoint);
     editor.add({
@@ -107,4 +113,30 @@ export function registerIntegrations(context, endpoints) {
 }
 export function registerProvider(context, snapshot, endpoint = DEFAULT_IDENTITY) {
     return context.provider.transform((editor) => applyProvider(editor, snapshot, endpoint));
+}
+/**
+ * Read the canonical state with a safe fallback. When the snapshot was produced
+ * without canonical state (older code paths or test fixtures), derive a best-effort
+ * approximation from the existing `audit.status`. Once the runtime has refreshed
+ * in this process, `endpointState` is authoritative and MUST be preferred.
+ */
+export function endpointStateOf(snapshot, endpointId) {
+    if (snapshot.endpointState)
+        return snapshot.endpointState;
+    // Backfill from the legacy audit status so older fixtures still render a truthful view.
+    const status = snapshot.audit?.status ?? "disconnected";
+    const applied = status === "ready" || status === "empty" || status === "stale"
+        ? { kind: "active", modelCount: snapshot.models.length, lastDiscoveryAt: snapshot.audit?.lastSuccessfulDiscoveryAt }
+        : status === "cleared-auth"
+            ? { kind: "error", category: "auth" }
+            : status === "cleared-notfound"
+                ? { kind: "error", category: "network" }
+                : { kind: "not-applied" };
+    return {
+        endpointId,
+        desired: "enabled",
+        validation: { kind: "ok" },
+        credential: snapshot.connection ? "stored" : "none",
+        applied,
+    };
 }

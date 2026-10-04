@@ -7,6 +7,7 @@ import type { EndpointActivation } from "../endpoints.js";
 import { type PluginOptions } from "../options.js";
 import { type ConfigTarget } from "./config-file.js";
 import type { EndpointManagement } from "./endpoint-command.js";
+import type { ProviderSnapshot } from "./register.js";
 export interface ManagerHost {
     env: Record<string, string | undefined>;
     options(): PluginOptions;
@@ -20,6 +21,13 @@ export interface ManagerHost {
     legacyBaseUrl(): Promise<string | undefined>;
     removeStorage(key: string): Promise<void>;
     sourceTarget(): Promise<string | undefined>;
+    /** Canonical per-endpoint state snapshots, keyed by endpoint id (always defined for configured ids after reconcile). */
+    snapshots(): ReadonlyMap<string, ProviderSnapshot>;
+    /** Reach into the discovery loop and force a refresh for one endpoint (Retry entry). */
+    triggerEndpoint(endpointId: string): Promise<{
+        ok: boolean;
+        message?: string;
+    }>;
     /** Test seam for the config writer. */
     write?: {
         rename?: (from: string, to: string) => void;

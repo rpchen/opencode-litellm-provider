@@ -14,7 +14,14 @@ import {
   type ConfigTarget,
   type EndpointMutation,
 } from "./config-file.js"
+import {
+  canRetry,
+  statusLabel,
+  userVisibleStatus,
+  type EndpointState,
+} from "./endpoint-state.js"
 import type { EndpointManagement, EndpointViewItem } from "./endpoint-command.js"
+import type { ProviderSnapshot } from "./register.js"
 import { discoverySnapshotKey } from "./sync.js"
 
 const QUIET = { warn() {} }
@@ -32,6 +39,10 @@ export interface ManagerHost {
   legacyBaseUrl(): Promise<string | undefined>
   removeStorage(key: string): Promise<void>
   sourceTarget(): Promise<string | undefined>
+  /** Canonical per-endpoint state snapshots, keyed by endpoint id (always defined for configured ids after reconcile). */
+  snapshots(): ReadonlyMap<string, ProviderSnapshot>
+  /** Reach into the discovery loop and force a refresh for one endpoint (Retry entry). */
+  triggerEndpoint(endpointId: string): Promise<{ ok: boolean; message?: string }>
   /** Test seam for the config writer. */
   write?: { rename?: (from: string, to: string) => void; beforeCommit?: () => void }
   /** Injected config file (tests); production locates it from env + host plugin source. */
@@ -104,18 +115,41 @@ export function createEndpointManagement(host: ManagerHost): EndpointManagement 
 
   const currentEndpoints = (): EndpointViewItem[] => {
     const options = host.options()
+    const snapshotMap = host.snapshots()
+    const canonicalFor = (id: string): EndpointState | undefined => snapshotMap.get(id)?.endpointState
     const active = new Set(activeEndpointIds(host.ids(), host.activation()))
     // Legacy default is not a config entry: its address lives in the /connect credential. With no
     // connected address there is no endpoint at all — do not show a ghost "default" row.
     if (options.endpoints === undefined) {
-      return legacyUrl ? [{ id: "default", baseUrl: legacyUrl, active: active.has("default"), legacy: true }] : []
+      if (!legacyUrl) return []
+      const canonical = canonicalFor("default")
+      return [{
+        id: "default",
+        baseUrl: legacyUrl,
+        legacy: true,
+        active: active.has("default"),
+        state: canonical,
+        status: canonical ? userVisibleStatus(canonical) : undefined,
+        statusLabel: canonical ? statusLabel(userVisibleStatus(canonical)) : undefined,
+        canRetry: canonical ? canRetry(canonical) : false,
+      }]
     }
-    return Object.entries(options.endpoints).map(([id, definition]) => ({
-      id,
-      baseUrl: definition.baseUrl,
-      active: active.has(id),
-      legacy: false,
-    }))
+    return Object.entries(options.endpoints).map(([id, definition]) => {
+      const canonical = canonicalFor(id)
+      const baseUrl = definition.validation?.kind === "invalid"
+        ? (definition.invalidBaseUrl ?? definition.baseUrl)
+        : definition.baseUrl
+      return {
+        id,
+        baseUrl,
+        legacy: false,
+        active: active.has(id),
+        state: canonical,
+        status: canonical ? userVisibleStatus(canonical) : undefined,
+        statusLabel: canonical ? statusLabel(userVisibleStatus(canonical)) : undefined,
+        canRetry: canonical ? canRetry(canonical) : false,
+      }
+    })
   }
 
   /**
@@ -268,6 +302,21 @@ export function createEndpointManagement(host: ManagerHost): EndpointManagement 
         if (error instanceof ConfigFileError) return fail(error.code, error.message)
         return fail("error", messageOf(error))
       }
+    },
+
+    async trigger(input) {
+      // Retry / 重新应用: only meaningful for enabled endpoints that are not currently active.
+      const current = currentEndpoints().find((item) => item.id === input.endpointId)
+      if (!current) return fail("not-found", `Endpoint ${input.endpointId} 不存在`)
+      const canonical = current.state
+      if (canonical) {
+        if (canonical.desired !== "enabled") return fail("invalid-state", `Endpoint ${input.endpointId} 未启用，无需重新应用`)
+        if (canonical.validation.kind === "invalid") return fail("invalid-state", `Endpoint ${input.endpointId} 配置非法，请先修改 Base URL`)
+        if (canonical.applied.kind === "active") return { ok: true, message: `Endpoint ${input.endpointId} 已是已生效状态` }
+      }
+      const result = await host.triggerEndpoint(input.endpointId)
+      if (!result.ok) return fail("error", result.message ?? `重新应用 ${input.endpointId} 失败`)
+      return { ok: true }
     },
   }
 }

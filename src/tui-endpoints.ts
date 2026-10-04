@@ -2,10 +2,32 @@
  * TUI side of `/litellm-endpoints`: the management center built on the host's native dialogs
  * (`dialog.select / prompt / confirm`). Endpoint CRUD goes through the plugin's RPC; credentials go
  * through the host's own client API so API keys never pass through the plugin. See design.md.
+ *
+ * User-visible status labels come from the canonical endpoint state shared with the
+ * server side; TUI never derives its own truth.
  */
 import { validateApiKey, validateBaseUrl, validateEndpointId } from "./endpoint-input.js"
 
-export interface EndpointViewItem { id: string; baseUrl: string; active: boolean; legacy: boolean }
+export interface EndpointStateCompact {
+  desired: "enabled" | "disabled"
+  validationKind: "ok" | "invalid"
+  credentialKind: "stored" | "environment" | "none" | "unknown"
+  appliedKind: "active" | "not-applied" | "error"
+  applyErrorCategory?: string
+}
+
+export interface EndpointViewItem {
+  id: string
+  baseUrl: string
+  /** @deprecated backward-compat with older servers; new servers always send `state`-derived fields. */
+  active: boolean
+  legacy: boolean
+  /** Canonical state echo from the server. */
+  state?: EndpointStateCompact
+  status?: string
+  statusLabel?: string
+  canRetry?: boolean
+}
 
 export interface EndpointStateView {
   sequence: number
@@ -37,6 +59,8 @@ export interface EndpointRpcClient {
   prepareRemove(input: { endpointId: string }): Promise<unknown>
   remove(input: { endpointId: string }): Promise<unknown>
   migrate(input: Record<string, never>): Promise<unknown>
+  /** Retry / 重新应用: force a refresh for one endpoint. */
+  trigger(input: { endpointId: string }): Promise<unknown>
 }
 
 export interface ConnectionLike { type: string; id?: string; name?: string }
@@ -146,7 +170,11 @@ export async function removeKeys(client: CredentialClient, endpointId: string): 
   for (const id of credentialIds(await connectionsOf(client, endpointId))) await client.credential.remove({ credentialID: id })
 }
 
-const CRED_LABEL: Record<CredentialKind, string> = { stored: "已连接", environment: "已连接（环境变量）", none: "未连接" }
+const CRED_LABEL: Record<CredentialKind, string> = {
+  stored: "已保存 API Key",
+  environment: "API Key 来自环境变量",
+  none: "未保存 API Key",
+}
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 export interface EndpointUiDeps {
@@ -168,7 +196,10 @@ export function createEndpointUi(deps: EndpointUiDeps) {
   const itemsOf = (state: EndpointStateView): EndpointViewItem[] =>
     state.endpoints ?? state.endpointIds.map((id) => ({ id, baseUrl: "", active: state.activeEndpointIds.includes(id), legacy: id === "default" }))
 
-  const activeList = (state: EndpointStateView) => itemsOf(state).filter((item) => item.active).map((item) => item.id)
+  const activeList = (state: EndpointStateView) =>
+    itemsOf(state)
+      .filter((item) => item.state ? item.state.desired === "enabled" : item.active)
+      .map((item) => item.id)
 
   const setActive = async (id: string) => unwrap<EndpointStateView>(await rpc.set({ action: "toggle", endpointId: id }))
 
@@ -319,16 +350,19 @@ export function createEndpointUi(deps: EndpointUiDeps) {
       // options.endpoints.default (same id, integration and credential); Delete confirms first,
       // then migrates as part of the confirmed deletion.
       const canWrite = state.writable !== false
+      const enabled = item.state ? item.state.desired === "enabled" : item.active
       const options: Array<{ title: string; value: string; description?: string }> = [
-        { title: item.active ? "停用" : "启用", value: "toggle" },
+        { title: enabled ? "停用" : "启用", value: "toggle" },
         ...(canWrite ? [{ title: "修改 Base URL", value: "edit" }] : []),
         { title: kind === "stored" ? "替换 API Key" : "连接 API Key", value: "connect" },
         ...(kind === "stored" ? [{ title: "断开凭据", value: "disconnect" }] : []),
+        ...(item.canRetry ? [{ title: "重新应用", value: "retry" }] : []),
         ...(canWrite ? [{ title: "删除 endpoint", value: "delete" }] : []),
         { title: "返回", value: "back" },
       ]
+      const titleStatus = item.statusLabel ?? (enabled ? "已启用" : "未启用")
       const choice = await dialog.select<string>({
-        title: `${item.id}${item.baseUrl ? ` · ${item.baseUrl}` : ""} · ${item.active ? "已启用" : "未启用"} · ${CRED_LABEL[kind]}`,
+        title: `${item.id}${item.baseUrl ? ` · ${item.baseUrl}` : ""} · ${titleStatus} · ${CRED_LABEL[kind]}`,
         options,
       })
       if (choice === undefined || choice === "back") return
@@ -336,6 +370,11 @@ export function createEndpointUi(deps: EndpointUiDeps) {
       else if (choice === "disconnect") await disconnect(item)
       else if (choice === "edit" && (await ensureManaged(item, "修改 Base URL"))) await editUrl(item)
       else if (choice === "connect" && (await ensureManaged(item, "管理 API Key"))) await connect(item, kind)
+      else if (choice === "retry") {
+        const result = unwrap<{ ok: boolean; message?: string; state: EndpointStateView }>(await rpc.trigger({ endpointId: id }))
+        if (result.ok) info(`已重新触发 ${item.id} 的应用`)
+        else error(result.message ?? `重新应用 ${item.id} 失败`)
+      }
       else if (choice === "delete" && (await deleteEndpoint(item))) return
     }
   }
@@ -355,11 +394,15 @@ export function createEndpointUi(deps: EndpointUiDeps) {
           ...(items.length > 0
             ? [{ title: "全部启用", value: "all" }, { title: "全部停用", value: "none" }]
             : []),
-          ...items.map((item) => ({
-            title: `${item.active ? "✓" : "○"} ${item.id}`,
-            value: `endpoint:${item.id}`,
-            description: `${item.active ? "已启用" : "未启用"} · ${CRED_LABEL[kinds.get(item.id) ?? "none"]}`,
-          })),
+          ...items.map((item) => {
+            const enabled = item.state ? item.state.desired === "enabled" : item.active
+            const status = item.statusLabel ?? (enabled ? "已启用" : "未启用")
+            return {
+              title: `${enabled ? "✓" : "○"} ${item.id}`,
+              value: `endpoint:${item.id}`,
+              description: `${status} · ${CRED_LABEL[kinds.get(item.id) ?? "none"]}`,
+            }
+          }),
         ],
       })
       if (deps.isDisposed() || choice === undefined) return

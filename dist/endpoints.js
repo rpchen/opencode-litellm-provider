@@ -1,14 +1,15 @@
 export const DEFAULT_ENDPOINT_ID = "default";
 export const BASE_PLUGIN_ID = "litellm";
-export function endpointIdentity(id, fixedBaseUrl, legacy = false) {
+export function endpointIdentity(id, fixedBaseUrl, legacy = false, validation = { kind: "ok" }) {
     const providerId = id === DEFAULT_ENDPOINT_ID ? BASE_PLUGIN_ID : `${BASE_PLUGIN_ID}-${id}`;
     return {
         id,
         integrationId: providerId,
         providerId,
         displayName: id === DEFAULT_ENDPOINT_ID ? "LiteLLM" : `LiteLLM · ${id}`,
-        fixedBaseUrl,
+        fixedBaseUrl: validation.kind === "ok" ? fixedBaseUrl : undefined,
         legacy,
+        validation,
     };
 }
 export const ACTIVATION_STORAGE_KEY = "litellm.activation.v1";

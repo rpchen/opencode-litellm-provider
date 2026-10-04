@@ -9,8 +9,15 @@ import { createDiscoveryLoop } from "./host/sync.js";
 import { ACTIVATION_STORAGE_KEY, activeEndpointIds, endpointIdentity, parseActivation, } from "./endpoints.js";
 import { parseOptions } from "./options.js";
 export const PLUGIN_ID = "litellm";
-async function setupEndpoint(context, endpoint, options, dependencies, snapshots, snapshotOverride, registerEndpointIntegration = true) {
+async function setupEndpoint(context, endpoint, options, dependencies, snapshots, snapshotOverride, registerEndpointIntegration = true, desired = "enabled", triggers) {
     const snapshot = snapshotOverride ?? { ready: false, models: [], audit: { status: "disconnected" } };
+    snapshot.endpointState = {
+        endpointId: endpoint.id,
+        desired,
+        validation: endpoint.validation,
+        credential: "unknown",
+        applied: { kind: "not-applied" },
+    };
     snapshots?.set(endpoint.id, snapshot);
     const endpointOptions = {
         ...options,
@@ -23,9 +30,17 @@ async function setupEndpoint(context, endpoint, options, dependencies, snapshots
     const providerRegistration = await registerProvider(context, snapshot, endpoint);
     const loop = createDiscoveryLoop(context, snapshot, endpointOptions, dependencies, endpoint);
     const startup = loop.start();
+    triggers?.set(endpoint.id, async () => { await loop.trigger(true); });
     return async () => {
         await loop.dispose();
         await startup;
+        triggers?.delete(endpoint.id);
+        // Canonical: leaving the active set means the endpoint is no longer applied,
+        // regardless of why (deactivate, reconcile, dispose). Persisted activation is
+        // owned by the management layer; we never rewrite it here.
+        snapshot.endpointState = snapshot.endpointState
+            ? { ...snapshot.endpointState, applied: { kind: "not-applied" } }
+            : snapshot.endpointState;
         snapshots?.delete(endpoint.id);
         await providerRegistration.dispose();
         await integrationRegistration?.dispose();
@@ -52,6 +67,15 @@ async function buildLegacy(context, options, dependencies, activation) {
     // new global activation state defaults to "all" so existing users migrate with no action.
     const endpoint = endpointIdentity("default", undefined, true);
     const snapshot = { ready: false, models: [], audit: { status: "disconnected" } };
+    snapshot.endpointState = {
+        endpointId: "default",
+        desired: "disabled",
+        validation: endpoint.validation,
+        credential: "unknown",
+        applied: { kind: "not-applied" },
+    };
+    const snapshots = new Map([["default", snapshot]]);
+    const triggers = new Map();
     let endpointDispose;
     // The integration is registered regardless of activation: an inactive endpoint must still accept
     // Connect / Replace / Disconnect (and /connect must stay reachable) — activation gates only the
@@ -60,7 +84,10 @@ async function buildLegacy(context, options, dependencies, activation) {
     const reconcile = async () => {
         const active = activeEndpointIds(["default"], activation()).includes("default");
         if (active && !endpointDispose) {
-            endpointDispose = await setupEndpoint(context, endpoint, options, dependencies, undefined, snapshot, false);
+            snapshot.endpointState = snapshot.endpointState
+                ? { ...snapshot.endpointState, desired: "enabled" }
+                : snapshot.endpointState;
+            endpointDispose = await setupEndpoint(context, endpoint, options, dependencies, snapshots, snapshot, false, "enabled", triggers);
         }
         else if (!active && endpointDispose) {
             const dispose = endpointDispose;
@@ -72,6 +99,13 @@ async function buildLegacy(context, options, dependencies, activation) {
             snapshot.models = [];
             snapshot.registrationView = undefined;
             snapshot.audit = { status: "disconnected" };
+            snapshot.endpointState = {
+                endpointId: "default",
+                desired: "disabled",
+                validation: endpoint.validation,
+                credential: snapshot.endpointState?.credential ?? "unknown",
+                applied: { kind: "not-applied" },
+            };
         }
     };
     await reconcile();
@@ -81,6 +115,21 @@ async function buildLegacy(context, options, dependencies, activation) {
     return {
         ids: ["default"],
         reconcile,
+        snapshots,
+        async triggerEndpoint(endpointId) {
+            if (endpointId !== "default")
+                return { ok: false, message: `未知 endpoint：${endpointId}` };
+            const trigger = triggers.get(endpointId);
+            if (!trigger)
+                return { ok: false, message: "endpoint 未激活或不可用" };
+            try {
+                await trigger();
+                return { ok: true };
+            }
+            catch (error) {
+                return { ok: false, message: error instanceof Error ? error.message : String(error) };
+            }
+        },
         async dispose() {
             await auditRegistration.dispose();
             await endpointDispose?.();
@@ -92,14 +141,17 @@ async function buildExplicit(context, options, dependencies, activation) {
     const endpointIds = Object.keys(options.endpoints ?? {});
     const identities = new Map(endpointIds.map((id) => {
         const definition = options.endpoints?.[id];
-        return [id, endpointIdentity(id, definition?.baseUrl, false)];
+        return [id, endpointIdentity(id, definition?.baseUrl, false, definition?.validation ?? { kind: "ok" })];
     }));
     const snapshots = new Map();
     const disposers = new Map();
+    const triggers = new Map();
     // OpenCode V2 does not support runtime child-plugin mutation. Keep every
     // configured integration registered in this plugin instance so /connect can
     // manage an independent credential for each endpoint, while activation only
-    // starts/stops provider discovery and publication.
+    // starts/stops provider discovery and publication. Invalid endpoints are
+    // included so /litellm-endpoints and /litellm-diagnostics can show them;
+    // they never reach the discovery loop (activateOne places a placeholder instead).
     const integrationRegistration = await registerIntegrations(context, [...identities.values()]);
     const activateOne = async (id) => {
         if (disposers.has(id))
@@ -107,17 +159,84 @@ async function buildExplicit(context, options, dependencies, activation) {
         const endpoint = identities.get(id);
         if (!endpoint)
             return;
-        disposers.set(id, await setupEndpoint(context, endpoint, options, dependencies, snapshots, undefined, false));
+        const definition = options.endpoints?.[id];
+        const validation = definition?.validation ?? { kind: "ok" };
+        // Invalid endpoint: keep a canonical snapshot so management/diagnostics can
+        // show "Invalid configuration"; never register it with the host runtime.
+        if (validation.kind === "invalid") {
+            const snapshot = { ready: false, models: [], audit: { status: "disconnected" } };
+            snapshot.endpointState = {
+                endpointId: id,
+                desired: "enabled",
+                validation,
+                credential: "unknown",
+                applied: { kind: "error", category: "config-invalid", message: validation.reason },
+            };
+            snapshots.set(id, snapshot);
+            return;
+        }
+        const snapshot = snapshots.get(id) ?? { ready: false, models: [], audit: { status: "disconnected" } };
+        snapshot.endpointState = {
+            endpointId: id,
+            desired: "enabled",
+            validation: { kind: "ok" },
+            credential: snapshot.endpointState?.credential ?? "unknown",
+            applied: snapshot.endpointState?.applied ?? { kind: "not-applied" },
+        };
+        snapshots.set(id, snapshot);
+        disposers.set(id, await setupEndpoint(context, endpoint, options, dependencies, snapshots, snapshot, false, "enabled", triggers));
     };
     const deactivateOne = async (id) => {
         const dispose = disposers.get(id);
-        if (!dispose)
-            return;
-        disposers.delete(id);
-        await dispose();
+        if (dispose) {
+            disposers.delete(id);
+            await dispose();
+        }
+        // Keep the canonical snapshot around with desired=disabled so management and
+        // diagnostics still see the endpoint even when it is no longer registered.
+        const existing = snapshots.get(id);
+        if (existing) {
+            existing.endpointState = {
+                ...(existing.endpointState ?? {
+                    endpointId: id,
+                    validation: options.endpoints?.[id]?.validation ?? { kind: "ok" },
+                    credential: "unknown",
+                    applied: { kind: "not-applied" },
+                }),
+                desired: "disabled",
+                applied: { kind: "not-applied" },
+            };
+        }
+        else {
+            const snapshot = { ready: false, models: [], audit: { status: "disconnected" } };
+            snapshot.endpointState = {
+                endpointId: id,
+                desired: "disabled",
+                validation: options.endpoints?.[id]?.validation ?? { kind: "ok" },
+                credential: "unknown",
+                applied: { kind: "not-applied" },
+            };
+            snapshots.set(id, snapshot);
+        }
     };
     const reconcile = async () => {
         const active = new Set(activeEndpointIds(endpointIds, activation()));
+        // Ensure every configured endpoint has a snapshot — including ones that are
+        // currently inactive: diagnostics and management must be able to show them.
+        for (const id of endpointIds) {
+            if (snapshots.has(id) || active.has(id))
+                continue;
+            const definition = options.endpoints?.[id];
+            const snapshot = { ready: false, models: [], audit: { status: "disconnected" } };
+            snapshot.endpointState = {
+                endpointId: id,
+                desired: "disabled",
+                validation: definition?.validation ?? { kind: "ok" },
+                credential: "unknown",
+                applied: { kind: "not-applied" },
+            };
+            snapshots.set(id, snapshot);
+        }
         for (const id of [...disposers.keys()])
             if (!active.has(id))
                 await deactivateOne(id);
@@ -138,6 +257,21 @@ async function buildExplicit(context, options, dependencies, activation) {
     return {
         ids: endpointIds,
         reconcile,
+        snapshots,
+        async triggerEndpoint(endpointId) {
+            if (!endpointIds.includes(endpointId))
+                return { ok: false, message: `未知 endpoint：${endpointId}` };
+            const trigger = triggers.get(endpointId);
+            if (!trigger)
+                return { ok: false, message: "endpoint 未激活或不可用" };
+            try {
+                await trigger();
+                return { ok: true };
+            }
+            catch (error) {
+                return { ok: false, message: error instanceof Error ? error.message : String(error) };
+            }
+        },
         async dispose() {
             await auditRegistration.dispose();
             for (const id of [...disposers.keys()])
@@ -223,6 +357,8 @@ export async function setupLiteLLM(rawContext, dependencies = {}, internals = {}
                 await storage.set(key, "null");
         },
         sourceTarget: () => pluginSourceTarget(context),
+        snapshots: () => runtime.snapshots,
+        triggerEndpoint: (id) => runtime.triggerEndpoint(id),
         ...internals.management,
     });
     const activationRegistration = await registerEndpointActivation(context, () => runtime.ids, () => activation, async (next) => {

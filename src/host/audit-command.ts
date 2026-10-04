@@ -4,6 +4,12 @@ import { writeAuditFile } from "./audit-file.js"
 import { auditRpc } from "./audit-rpc.js"
 import { createDiagnosticsLines } from "./diagnostics.js"
 import {
+  applyErrorLabel,
+  credentialLabel,
+  statusLabel,
+  userVisibleStatus,
+} from "./endpoint-state.js"
+import {
   acceptDegradedForSnapshot,
   splitAcceptArgs,
 } from "./publication.js"
@@ -13,7 +19,7 @@ import {
   type AuditExportOutcome,
   type FeedbackSubmitter,
 } from "./audit-feedback.js"
-import type { ProviderSnapshot, Registration } from "./register.js"
+import { endpointStateOf, type ProviderSnapshot, type Registration } from "./register.js"
 
 export interface AuditDependencies {
   writeFile?: typeof writeAuditFile
@@ -144,15 +150,24 @@ export async function registerAudit(
     const command = await context.command.transform((editor) => {
       editor.add({
         name: "litellm-diagnostics",
-        description: "显示 LiteLLM 发现、协议、元数据来源、缓存与构建诊断",
+        description: "显示 LiteLLM 发现、协议、元数据来源、缓存与构建诊断（含期望/配置/凭据/Runtime 状态）",
         async execute({ sessionID }) {
+          const state = endpointStateOf(snapshot, "default")
+          const appliedSummary = state.applied.kind === "active"
+            ? `已生效（${state.applied.modelCount} 个模型）`
+            : state.applied.kind === "not-applied"
+              ? "未生效"
+              : `出错（${applyErrorLabel(state.applied.category)}）`
           latest = {
             sequence: ++diagnosticSequence,
             sessionID,
             ok: true,
             path: "",
             error: "",
-            lines: createDiagnosticsLines(snapshot),
+            lines: [
+              `Endpoint：default · 状态：${statusLabel(userVisibleStatus(state))} · 期望：${state.desired === "enabled" ? "已启用" : "未启用"} · 凭据：${credentialLabel(state.credential)} · Runtime：${appliedSummary}${state.validation.kind === "invalid" ? ` · 配置：非法（${state.validation.reason}）` : ""}`,
+              ...createDiagnosticsLines(snapshot),
+            ],
           }
           await rpc.events.emit("completed", latest)
         },

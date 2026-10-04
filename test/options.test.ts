@@ -98,7 +98,7 @@ describe("PR9 endpoint options", () => {
     expect(log.warnings.some((message) => message.includes("不能同时"))).toBeTrue()
   })
 
-  test("非法 endpoint id/baseUrl 不污染合法 sibling", () => {
+  test("[VALIDATION-INVALID-PRESERVED] 非法 endpoint id 仍被丢弃；非法 baseUrl 保留为 invalid", () => {
     const options = parseOptions({
       endpoints: {
         "team-a": { baseUrl: "https://a.example" },
@@ -107,6 +107,11 @@ describe("PR9 endpoint options", () => {
         broken: { baseUrl: "ftp://bad.example" },
       },
     }, { warn: () => {} })
-    expect(Object.keys(options.endpoints ?? {})).toEqual(["team-a", "team_2"])
+    expect(Object.keys(options.endpoints ?? {}).sort()).toEqual(["broken", "team-a", "team_2"])
+    expect(options.endpoints?.["team-a"]?.validation?.kind ?? "ok").toBe("ok")
+    expect(options.endpoints?.broken?.validation?.kind).toBe("invalid")
+    // Runtime never receives the raw invalid URL.
+    expect(options.endpoints?.broken?.baseUrl).toBe("")
+    expect(options.endpoints?.broken?.invalidBaseUrl).toBe("ftp://bad.example")
   })
 })

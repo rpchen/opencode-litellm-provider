@@ -1,3 +1,5 @@
+import type { ValidationState } from "./host/endpoint-state.js"
+
 export const DEFAULT_ENDPOINT_ID = "default"
 export const BASE_PLUGIN_ID = "litellm"
 
@@ -6,14 +8,18 @@ export interface EndpointIdentity {
   readonly integrationId: string
   readonly providerId: string
   readonly displayName: string
+  /** Only set when validation.kind === "ok"; invalid endpoints never expose a fetchable URL. */
   readonly fixedBaseUrl?: string
   readonly legacy: boolean
+  /** Endpoint definition validation, loaded from the declaring config file. */
+  readonly validation: ValidationState
 }
 
 export function endpointIdentity(
   id: string,
   fixedBaseUrl?: string,
   legacy = false,
+  validation: ValidationState = { kind: "ok" },
 ): EndpointIdentity {
   const providerId = id === DEFAULT_ENDPOINT_ID ? BASE_PLUGIN_ID : `${BASE_PLUGIN_ID}-${id}`
   return {
@@ -21,8 +27,9 @@ export function endpointIdentity(
     integrationId: providerId,
     providerId,
     displayName: id === DEFAULT_ENDPOINT_ID ? "LiteLLM" : `LiteLLM · ${id}`,
-    fixedBaseUrl,
+    fixedBaseUrl: validation.kind === "ok" ? fixedBaseUrl : undefined,
     legacy,
+    validation,
   }
 }
 

@@ -2,6 +2,9 @@
  * TUI side of `/litellm-endpoints`: the management center built on the host's native dialogs
  * (`dialog.select / prompt / confirm`). Endpoint CRUD goes through the plugin's RPC; credentials go
  * through the host's own client API so API keys never pass through the plugin. See design.md.
+ *
+ * User-visible status labels come from the canonical endpoint state shared with the
+ * server side; TUI never derives its own truth.
  */
 import { validateApiKey, validateBaseUrl, validateEndpointId } from "./endpoint-input.js";
 export const integrationIdFor = (endpointId) => (endpointId === "default" ? "litellm" : `litellm-${endpointId}`);
@@ -65,7 +68,11 @@ export async function removeKeys(client, endpointId) {
     for (const id of credentialIds(await connectionsOf(client, endpointId)))
         await client.credential.remove({ credentialID: id });
 }
-const CRED_LABEL = { stored: "已连接", environment: "已连接（环境变量）", none: "未连接" };
+const CRED_LABEL = {
+    stored: "已保存 API Key",
+    environment: "API Key 来自环境变量",
+    none: "未保存 API Key",
+};
 const messageOf = (error) => (error instanceof Error ? error.message : String(error));
 export function createEndpointUi(deps) {
     const { dialog, toast, rpc, client } = deps;
@@ -74,7 +81,9 @@ export function createEndpointUi(deps) {
     const error = (message) => toast.show({ variant: "error", message });
     const loadState = async () => unwrap(await rpc.state({}));
     const itemsOf = (state) => state.endpoints ?? state.endpointIds.map((id) => ({ id, baseUrl: "", active: state.activeEndpointIds.includes(id), legacy: id === "default" }));
-    const activeList = (state) => itemsOf(state).filter((item) => item.active).map((item) => item.id);
+    const activeList = (state) => itemsOf(state)
+        .filter((item) => item.state ? item.state.desired === "enabled" : item.active)
+        .map((item) => item.id);
     const setActive = async (id) => unwrap(await rpc.set({ action: "toggle", endpointId: id }));
     const promptBaseUrl = async (title, placeholder, value) => {
         let heading = title;
@@ -247,16 +256,19 @@ export function createEndpointUi(deps) {
             // options.endpoints.default (same id, integration and credential); Delete confirms first,
             // then migrates as part of the confirmed deletion.
             const canWrite = state.writable !== false;
+            const enabled = item.state ? item.state.desired === "enabled" : item.active;
             const options = [
-                { title: item.active ? "停用" : "启用", value: "toggle" },
+                { title: enabled ? "停用" : "启用", value: "toggle" },
                 ...(canWrite ? [{ title: "修改 Base URL", value: "edit" }] : []),
                 { title: kind === "stored" ? "替换 API Key" : "连接 API Key", value: "connect" },
                 ...(kind === "stored" ? [{ title: "断开凭据", value: "disconnect" }] : []),
+                ...(item.canRetry ? [{ title: "重新应用", value: "retry" }] : []),
                 ...(canWrite ? [{ title: "删除 endpoint", value: "delete" }] : []),
                 { title: "返回", value: "back" },
             ];
+            const titleStatus = item.statusLabel ?? (enabled ? "已启用" : "未启用");
             const choice = await dialog.select({
-                title: `${item.id}${item.baseUrl ? ` · ${item.baseUrl}` : ""} · ${item.active ? "已启用" : "未启用"} · ${CRED_LABEL[kind]}`,
+                title: `${item.id}${item.baseUrl ? ` · ${item.baseUrl}` : ""} · ${titleStatus} · ${CRED_LABEL[kind]}`,
                 options,
             });
             if (choice === undefined || choice === "back")
@@ -269,6 +281,13 @@ export function createEndpointUi(deps) {
                 await editUrl(item);
             else if (choice === "connect" && (await ensureManaged(item, "管理 API Key")))
                 await connect(item, kind);
+            else if (choice === "retry") {
+                const result = unwrap(await rpc.trigger({ endpointId: id }));
+                if (result.ok)
+                    info(`已重新触发 ${item.id} 的应用`);
+                else
+                    error(result.message ?? `重新应用 ${item.id} 失败`);
+            }
             else if (choice === "delete" && (await deleteEndpoint(item)))
                 return;
         }
@@ -289,11 +308,15 @@ export function createEndpointUi(deps) {
                     ...(items.length > 0
                         ? [{ title: "全部启用", value: "all" }, { title: "全部停用", value: "none" }]
                         : []),
-                    ...items.map((item) => ({
-                        title: `${item.active ? "✓" : "○"} ${item.id}`,
-                        value: `endpoint:${item.id}`,
-                        description: `${item.active ? "已启用" : "未启用"} · ${CRED_LABEL[kinds.get(item.id) ?? "none"]}`,
-                    })),
+                    ...items.map((item) => {
+                        const enabled = item.state ? item.state.desired === "enabled" : item.active;
+                        const status = item.statusLabel ?? (enabled ? "已启用" : "未启用");
+                        return {
+                            title: `${enabled ? "✓" : "○"} ${item.id}`,
+                            value: `endpoint:${item.id}`,
+                            description: `${status} · ${CRED_LABEL[kinds.get(item.id) ?? "none"]}`,
+                        };
+                    }),
                 ],
             });
             if (deps.isDisposed() || choice === undefined)

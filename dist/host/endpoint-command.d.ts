@@ -1,11 +1,23 @@
 import type { Plugin } from "@opencode/plugin";
 import type { EndpointActivation } from "../endpoints.js";
+import type { EndpointState, UserVisibleStatus } from "./endpoint-state.js";
 import type { Registration } from "./register.js";
+/**
+ * One row of the /litellm-endpoints list. New-style servers populate `state` /
+ * `status` / `statusLabel` / `canRetry`; older servers only fill `active` and
+ * `legacy`. The TUI consumes `state` when present, otherwise falls back to the
+ * legacy summary.
+ */
 export type EndpointViewItem = {
     id: string;
     baseUrl: string;
+    /** @deprecated Use `state.desired === "enabled"`. Kept for backward compatibility. */
     active: boolean;
     legacy: boolean;
+    state?: EndpointState;
+    status?: UserVisibleStatus;
+    statusLabel?: string;
+    canRetry?: boolean;
 };
 export type EndpointActivationView = {
     sequence: number;
@@ -52,6 +64,10 @@ export interface EndpointManagement {
     }): Promise<Omit<MutationView, "state">>;
     /** Migrate the legacy single-endpoint configuration to explicit `endpoints.default` (no identity change). */
     migrate(): Promise<Omit<MutationView, "state">>;
+    /** Retry / 重新应用: force a forced refresh of one endpoint. Refuses invalid state with code=invalid-state. */
+    trigger(input: {
+        endpointId: string;
+    }): Promise<Omit<MutationView, "state">>;
     /** Re-read the canonical config before each view so hand edits are visible. */
     refresh?(): Promise<void>;
 }

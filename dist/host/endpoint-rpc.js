@@ -5,6 +5,38 @@ const endpointView = {
         baseUrl: { type: "string" },
         active: { type: "boolean" },
         legacy: { type: "boolean" },
+        state: {
+            type: "object",
+            properties: {
+                endpointId: { type: "string" },
+                desired: { type: "string", enum: ["enabled", "disabled"] },
+                validation: {
+                    type: "object",
+                    properties: { kind: { type: "string", enum: ["ok", "invalid"] }, reason: { type: "string" } },
+                    required: ["kind"],
+                    additionalProperties: false,
+                },
+                credential: { type: "string", enum: ["stored", "environment", "none", "unknown"] },
+                applied: {
+                    type: "object",
+                    properties: {
+                        kind: { type: "string", enum: ["active", "not-applied", "error"] },
+                        lastDiscoveryAt: { type: "string" },
+                        modelCount: { type: "number" },
+                        category: { type: "string" },
+                        message: { type: "string" },
+                        at: { type: "string" },
+                    },
+                    required: ["kind"],
+                    additionalProperties: false,
+                },
+            },
+            required: ["endpointId", "desired", "validation", "credential", "applied"],
+            additionalProperties: false,
+        },
+        status: { type: "string" },
+        statusLabel: { type: "string" },
+        canRetry: { type: "boolean" },
     },
     required: ["id", "baseUrl", "active", "legacy"],
     additionalProperties: false,
@@ -86,6 +118,8 @@ export const endpointRpc = {
         remove: { input: idInput, output: result },
         /** Legacy single-endpoint → explicit `options.endpoints.default`; identity and credential stay unchanged. */
         migrate: { input: noInput, output: result },
+        /** Retry / 重新应用: force a forced refresh for one endpoint. */
+        trigger: { input: idInput, output: result },
     },
     events: {
         shown: { schema: state },

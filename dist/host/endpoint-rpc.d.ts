@@ -49,6 +49,73 @@ export declare const endpointRpc: {
                                 readonly legacy: {
                                     readonly type: "boolean";
                                 };
+                                readonly state: {
+                                    readonly type: "object";
+                                    readonly properties: {
+                                        readonly endpointId: {
+                                            readonly type: "string";
+                                        };
+                                        readonly desired: {
+                                            readonly type: "string";
+                                            readonly enum: readonly ["enabled", "disabled"];
+                                        };
+                                        readonly validation: {
+                                            readonly type: "object";
+                                            readonly properties: {
+                                                readonly kind: {
+                                                    readonly type: "string";
+                                                    readonly enum: readonly ["ok", "invalid"];
+                                                };
+                                                readonly reason: {
+                                                    readonly type: "string";
+                                                };
+                                            };
+                                            readonly required: readonly ["kind"];
+                                            readonly additionalProperties: false;
+                                        };
+                                        readonly credential: {
+                                            readonly type: "string";
+                                            readonly enum: readonly ["stored", "environment", "none", "unknown"];
+                                        };
+                                        readonly applied: {
+                                            readonly type: "object";
+                                            readonly properties: {
+                                                readonly kind: {
+                                                    readonly type: "string";
+                                                    readonly enum: readonly ["active", "not-applied", "error"];
+                                                };
+                                                readonly lastDiscoveryAt: {
+                                                    readonly type: "string";
+                                                };
+                                                readonly modelCount: {
+                                                    readonly type: "number";
+                                                };
+                                                readonly category: {
+                                                    readonly type: "string";
+                                                };
+                                                readonly message: {
+                                                    readonly type: "string";
+                                                };
+                                                readonly at: {
+                                                    readonly type: "string";
+                                                };
+                                            };
+                                            readonly required: readonly ["kind"];
+                                            readonly additionalProperties: false;
+                                        };
+                                    };
+                                    readonly required: readonly ["endpointId", "desired", "validation", "credential", "applied"];
+                                    readonly additionalProperties: false;
+                                };
+                                readonly status: {
+                                    readonly type: "string";
+                                };
+                                readonly statusLabel: {
+                                    readonly type: "string";
+                                };
+                                readonly canRetry: {
+                                    readonly type: "boolean";
+                                };
                             };
                             readonly required: readonly ["id", "baseUrl", "active", "legacy"];
                             readonly additionalProperties: false;
@@ -125,6 +192,73 @@ export declare const endpointRpc: {
                                     readonly type: "boolean";
                                 };
                                 readonly legacy: {
+                                    readonly type: "boolean";
+                                };
+                                readonly state: {
+                                    readonly type: "object";
+                                    readonly properties: {
+                                        readonly endpointId: {
+                                            readonly type: "string";
+                                        };
+                                        readonly desired: {
+                                            readonly type: "string";
+                                            readonly enum: readonly ["enabled", "disabled"];
+                                        };
+                                        readonly validation: {
+                                            readonly type: "object";
+                                            readonly properties: {
+                                                readonly kind: {
+                                                    readonly type: "string";
+                                                    readonly enum: readonly ["ok", "invalid"];
+                                                };
+                                                readonly reason: {
+                                                    readonly type: "string";
+                                                };
+                                            };
+                                            readonly required: readonly ["kind"];
+                                            readonly additionalProperties: false;
+                                        };
+                                        readonly credential: {
+                                            readonly type: "string";
+                                            readonly enum: readonly ["stored", "environment", "none", "unknown"];
+                                        };
+                                        readonly applied: {
+                                            readonly type: "object";
+                                            readonly properties: {
+                                                readonly kind: {
+                                                    readonly type: "string";
+                                                    readonly enum: readonly ["active", "not-applied", "error"];
+                                                };
+                                                readonly lastDiscoveryAt: {
+                                                    readonly type: "string";
+                                                };
+                                                readonly modelCount: {
+                                                    readonly type: "number";
+                                                };
+                                                readonly category: {
+                                                    readonly type: "string";
+                                                };
+                                                readonly message: {
+                                                    readonly type: "string";
+                                                };
+                                                readonly at: {
+                                                    readonly type: "string";
+                                                };
+                                            };
+                                            readonly required: readonly ["kind"];
+                                            readonly additionalProperties: false;
+                                        };
+                                    };
+                                    readonly required: readonly ["endpointId", "desired", "validation", "credential", "applied"];
+                                    readonly additionalProperties: false;
+                                };
+                                readonly status: {
+                                    readonly type: "string";
+                                };
+                                readonly statusLabel: {
+                                    readonly type: "string";
+                                };
+                                readonly canRetry: {
                                     readonly type: "boolean";
                                 };
                             };
@@ -225,6 +359,73 @@ export declare const endpointRpc: {
                                             readonly type: "boolean";
                                         };
                                         readonly legacy: {
+                                            readonly type: "boolean";
+                                        };
+                                        readonly state: {
+                                            readonly type: "object";
+                                            readonly properties: {
+                                                readonly endpointId: {
+                                                    readonly type: "string";
+                                                };
+                                                readonly desired: {
+                                                    readonly type: "string";
+                                                    readonly enum: readonly ["enabled", "disabled"];
+                                                };
+                                                readonly validation: {
+                                                    readonly type: "object";
+                                                    readonly properties: {
+                                                        readonly kind: {
+                                                            readonly type: "string";
+                                                            readonly enum: readonly ["ok", "invalid"];
+                                                        };
+                                                        readonly reason: {
+                                                            readonly type: "string";
+                                                        };
+                                                    };
+                                                    readonly required: readonly ["kind"];
+                                                    readonly additionalProperties: false;
+                                                };
+                                                readonly credential: {
+                                                    readonly type: "string";
+                                                    readonly enum: readonly ["stored", "environment", "none", "unknown"];
+                                                };
+                                                readonly applied: {
+                                                    readonly type: "object";
+                                                    readonly properties: {
+                                                        readonly kind: {
+                                                            readonly type: "string";
+                                                            readonly enum: readonly ["active", "not-applied", "error"];
+                                                        };
+                                                        readonly lastDiscoveryAt: {
+                                                            readonly type: "string";
+                                                        };
+                                                        readonly modelCount: {
+                                                            readonly type: "number";
+                                                        };
+                                                        readonly category: {
+                                                            readonly type: "string";
+                                                        };
+                                                        readonly message: {
+                                                            readonly type: "string";
+                                                        };
+                                                        readonly at: {
+                                                            readonly type: "string";
+                                                        };
+                                                    };
+                                                    readonly required: readonly ["kind"];
+                                                    readonly additionalProperties: false;
+                                                };
+                                            };
+                                            readonly required: readonly ["endpointId", "desired", "validation", "credential", "applied"];
+                                            readonly additionalProperties: false;
+                                        };
+                                        readonly status: {
+                                            readonly type: "string";
+                                        };
+                                        readonly statusLabel: {
+                                            readonly type: "string";
+                                        };
+                                        readonly canRetry: {
                                             readonly type: "boolean";
                                         };
                                     };
@@ -328,6 +529,73 @@ export declare const endpointRpc: {
                                         readonly legacy: {
                                             readonly type: "boolean";
                                         };
+                                        readonly state: {
+                                            readonly type: "object";
+                                            readonly properties: {
+                                                readonly endpointId: {
+                                                    readonly type: "string";
+                                                };
+                                                readonly desired: {
+                                                    readonly type: "string";
+                                                    readonly enum: readonly ["enabled", "disabled"];
+                                                };
+                                                readonly validation: {
+                                                    readonly type: "object";
+                                                    readonly properties: {
+                                                        readonly kind: {
+                                                            readonly type: "string";
+                                                            readonly enum: readonly ["ok", "invalid"];
+                                                        };
+                                                        readonly reason: {
+                                                            readonly type: "string";
+                                                        };
+                                                    };
+                                                    readonly required: readonly ["kind"];
+                                                    readonly additionalProperties: false;
+                                                };
+                                                readonly credential: {
+                                                    readonly type: "string";
+                                                    readonly enum: readonly ["stored", "environment", "none", "unknown"];
+                                                };
+                                                readonly applied: {
+                                                    readonly type: "object";
+                                                    readonly properties: {
+                                                        readonly kind: {
+                                                            readonly type: "string";
+                                                            readonly enum: readonly ["active", "not-applied", "error"];
+                                                        };
+                                                        readonly lastDiscoveryAt: {
+                                                            readonly type: "string";
+                                                        };
+                                                        readonly modelCount: {
+                                                            readonly type: "number";
+                                                        };
+                                                        readonly category: {
+                                                            readonly type: "string";
+                                                        };
+                                                        readonly message: {
+                                                            readonly type: "string";
+                                                        };
+                                                        readonly at: {
+                                                            readonly type: "string";
+                                                        };
+                                                    };
+                                                    readonly required: readonly ["kind"];
+                                                    readonly additionalProperties: false;
+                                                };
+                                            };
+                                            readonly required: readonly ["endpointId", "desired", "validation", "credential", "applied"];
+                                            readonly additionalProperties: false;
+                                        };
+                                        readonly status: {
+                                            readonly type: "string";
+                                        };
+                                        readonly statusLabel: {
+                                            readonly type: "string";
+                                        };
+                                        readonly canRetry: {
+                                            readonly type: "boolean";
+                                        };
                                     };
                                     readonly required: readonly ["id", "baseUrl", "active", "legacy"];
                                     readonly additionalProperties: false;
@@ -425,6 +693,73 @@ export declare const endpointRpc: {
                                             readonly type: "boolean";
                                         };
                                         readonly legacy: {
+                                            readonly type: "boolean";
+                                        };
+                                        readonly state: {
+                                            readonly type: "object";
+                                            readonly properties: {
+                                                readonly endpointId: {
+                                                    readonly type: "string";
+                                                };
+                                                readonly desired: {
+                                                    readonly type: "string";
+                                                    readonly enum: readonly ["enabled", "disabled"];
+                                                };
+                                                readonly validation: {
+                                                    readonly type: "object";
+                                                    readonly properties: {
+                                                        readonly kind: {
+                                                            readonly type: "string";
+                                                            readonly enum: readonly ["ok", "invalid"];
+                                                        };
+                                                        readonly reason: {
+                                                            readonly type: "string";
+                                                        };
+                                                    };
+                                                    readonly required: readonly ["kind"];
+                                                    readonly additionalProperties: false;
+                                                };
+                                                readonly credential: {
+                                                    readonly type: "string";
+                                                    readonly enum: readonly ["stored", "environment", "none", "unknown"];
+                                                };
+                                                readonly applied: {
+                                                    readonly type: "object";
+                                                    readonly properties: {
+                                                        readonly kind: {
+                                                            readonly type: "string";
+                                                            readonly enum: readonly ["active", "not-applied", "error"];
+                                                        };
+                                                        readonly lastDiscoveryAt: {
+                                                            readonly type: "string";
+                                                        };
+                                                        readonly modelCount: {
+                                                            readonly type: "number";
+                                                        };
+                                                        readonly category: {
+                                                            readonly type: "string";
+                                                        };
+                                                        readonly message: {
+                                                            readonly type: "string";
+                                                        };
+                                                        readonly at: {
+                                                            readonly type: "string";
+                                                        };
+                                                    };
+                                                    readonly required: readonly ["kind"];
+                                                    readonly additionalProperties: false;
+                                                };
+                                            };
+                                            readonly required: readonly ["endpointId", "desired", "validation", "credential", "applied"];
+                                            readonly additionalProperties: false;
+                                        };
+                                        readonly status: {
+                                            readonly type: "string";
+                                        };
+                                        readonly statusLabel: {
+                                            readonly type: "string";
+                                        };
+                                        readonly canRetry: {
                                             readonly type: "boolean";
                                         };
                                     };
@@ -526,6 +861,73 @@ export declare const endpointRpc: {
                                         readonly legacy: {
                                             readonly type: "boolean";
                                         };
+                                        readonly state: {
+                                            readonly type: "object";
+                                            readonly properties: {
+                                                readonly endpointId: {
+                                                    readonly type: "string";
+                                                };
+                                                readonly desired: {
+                                                    readonly type: "string";
+                                                    readonly enum: readonly ["enabled", "disabled"];
+                                                };
+                                                readonly validation: {
+                                                    readonly type: "object";
+                                                    readonly properties: {
+                                                        readonly kind: {
+                                                            readonly type: "string";
+                                                            readonly enum: readonly ["ok", "invalid"];
+                                                        };
+                                                        readonly reason: {
+                                                            readonly type: "string";
+                                                        };
+                                                    };
+                                                    readonly required: readonly ["kind"];
+                                                    readonly additionalProperties: false;
+                                                };
+                                                readonly credential: {
+                                                    readonly type: "string";
+                                                    readonly enum: readonly ["stored", "environment", "none", "unknown"];
+                                                };
+                                                readonly applied: {
+                                                    readonly type: "object";
+                                                    readonly properties: {
+                                                        readonly kind: {
+                                                            readonly type: "string";
+                                                            readonly enum: readonly ["active", "not-applied", "error"];
+                                                        };
+                                                        readonly lastDiscoveryAt: {
+                                                            readonly type: "string";
+                                                        };
+                                                        readonly modelCount: {
+                                                            readonly type: "number";
+                                                        };
+                                                        readonly category: {
+                                                            readonly type: "string";
+                                                        };
+                                                        readonly message: {
+                                                            readonly type: "string";
+                                                        };
+                                                        readonly at: {
+                                                            readonly type: "string";
+                                                        };
+                                                    };
+                                                    readonly required: readonly ["kind"];
+                                                    readonly additionalProperties: false;
+                                                };
+                                            };
+                                            readonly required: readonly ["endpointId", "desired", "validation", "credential", "applied"];
+                                            readonly additionalProperties: false;
+                                        };
+                                        readonly status: {
+                                            readonly type: "string";
+                                        };
+                                        readonly statusLabel: {
+                                            readonly type: "string";
+                                        };
+                                        readonly canRetry: {
+                                            readonly type: "boolean";
+                                        };
                                     };
                                     readonly required: readonly ["id", "baseUrl", "active", "legacy"];
                                     readonly additionalProperties: false;
@@ -620,6 +1022,239 @@ export declare const endpointRpc: {
                                         readonly legacy: {
                                             readonly type: "boolean";
                                         };
+                                        readonly state: {
+                                            readonly type: "object";
+                                            readonly properties: {
+                                                readonly endpointId: {
+                                                    readonly type: "string";
+                                                };
+                                                readonly desired: {
+                                                    readonly type: "string";
+                                                    readonly enum: readonly ["enabled", "disabled"];
+                                                };
+                                                readonly validation: {
+                                                    readonly type: "object";
+                                                    readonly properties: {
+                                                        readonly kind: {
+                                                            readonly type: "string";
+                                                            readonly enum: readonly ["ok", "invalid"];
+                                                        };
+                                                        readonly reason: {
+                                                            readonly type: "string";
+                                                        };
+                                                    };
+                                                    readonly required: readonly ["kind"];
+                                                    readonly additionalProperties: false;
+                                                };
+                                                readonly credential: {
+                                                    readonly type: "string";
+                                                    readonly enum: readonly ["stored", "environment", "none", "unknown"];
+                                                };
+                                                readonly applied: {
+                                                    readonly type: "object";
+                                                    readonly properties: {
+                                                        readonly kind: {
+                                                            readonly type: "string";
+                                                            readonly enum: readonly ["active", "not-applied", "error"];
+                                                        };
+                                                        readonly lastDiscoveryAt: {
+                                                            readonly type: "string";
+                                                        };
+                                                        readonly modelCount: {
+                                                            readonly type: "number";
+                                                        };
+                                                        readonly category: {
+                                                            readonly type: "string";
+                                                        };
+                                                        readonly message: {
+                                                            readonly type: "string";
+                                                        };
+                                                        readonly at: {
+                                                            readonly type: "string";
+                                                        };
+                                                    };
+                                                    readonly required: readonly ["kind"];
+                                                    readonly additionalProperties: false;
+                                                };
+                                            };
+                                            readonly required: readonly ["endpointId", "desired", "validation", "credential", "applied"];
+                                            readonly additionalProperties: false;
+                                        };
+                                        readonly status: {
+                                            readonly type: "string";
+                                        };
+                                        readonly statusLabel: {
+                                            readonly type: "string";
+                                        };
+                                        readonly canRetry: {
+                                            readonly type: "boolean";
+                                        };
+                                    };
+                                    readonly required: readonly ["id", "baseUrl", "active", "legacy"];
+                                    readonly additionalProperties: false;
+                                };
+                            };
+                            /** Whether Add / Edit / Delete can write the config file that declares this plugin. */
+                            readonly writable: {
+                                readonly type: "boolean";
+                            };
+                            /** Human-readable reason when `writable` is false. */
+                            readonly configProblem: {
+                                readonly type: "string";
+                            };
+                            /** Legacy single-endpoint mode: Add needs a migration confirmation first. */
+                            readonly legacyMigration: {
+                                readonly type: "boolean";
+                            };
+                        };
+                        readonly required: readonly ["sequence", "sessionID", "mode", "endpointIds", "activeEndpointIds"];
+                        readonly additionalProperties: false;
+                    };
+                };
+                readonly required: readonly ["ok", "state"];
+                readonly additionalProperties: false;
+            };
+        };
+        /** Retry / 重新应用: force a forced refresh for one endpoint. */
+        readonly trigger: {
+            readonly input: {
+                readonly type: "object";
+                readonly properties: {
+                    readonly endpointId: {
+                        readonly type: "string";
+                    };
+                };
+                readonly required: readonly ["endpointId"];
+                readonly additionalProperties: false;
+            };
+            readonly output: {
+                readonly type: "object";
+                readonly properties: {
+                    readonly ok: {
+                        readonly type: "boolean";
+                    };
+                    readonly code: {
+                        readonly type: "string";
+                    };
+                    readonly message: {
+                        readonly type: "string";
+                    };
+                    readonly migrated: {
+                        readonly type: "boolean";
+                    };
+                    /** The config mutation is persisted even though the operation failed (post-commit reload failure). */
+                    readonly saved: {
+                        readonly type: "boolean";
+                    };
+                    readonly state: {
+                        readonly type: "object";
+                        readonly properties: {
+                            readonly sequence: {
+                                readonly type: "number";
+                            };
+                            readonly sessionID: {
+                                readonly type: "string";
+                            };
+                            readonly mode: {
+                                readonly type: "string";
+                                readonly enum: readonly ["all", "selected"];
+                            };
+                            readonly endpointIds: {
+                                readonly type: "array";
+                                readonly items: {
+                                    readonly type: "string";
+                                };
+                            };
+                            readonly activeEndpointIds: {
+                                readonly type: "array";
+                                readonly items: {
+                                    readonly type: "string";
+                                };
+                            };
+                            readonly endpoints: {
+                                readonly type: "array";
+                                readonly items: {
+                                    readonly type: "object";
+                                    readonly properties: {
+                                        readonly id: {
+                                            readonly type: "string";
+                                        };
+                                        readonly baseUrl: {
+                                            readonly type: "string";
+                                        };
+                                        readonly active: {
+                                            readonly type: "boolean";
+                                        };
+                                        readonly legacy: {
+                                            readonly type: "boolean";
+                                        };
+                                        readonly state: {
+                                            readonly type: "object";
+                                            readonly properties: {
+                                                readonly endpointId: {
+                                                    readonly type: "string";
+                                                };
+                                                readonly desired: {
+                                                    readonly type: "string";
+                                                    readonly enum: readonly ["enabled", "disabled"];
+                                                };
+                                                readonly validation: {
+                                                    readonly type: "object";
+                                                    readonly properties: {
+                                                        readonly kind: {
+                                                            readonly type: "string";
+                                                            readonly enum: readonly ["ok", "invalid"];
+                                                        };
+                                                        readonly reason: {
+                                                            readonly type: "string";
+                                                        };
+                                                    };
+                                                    readonly required: readonly ["kind"];
+                                                    readonly additionalProperties: false;
+                                                };
+                                                readonly credential: {
+                                                    readonly type: "string";
+                                                    readonly enum: readonly ["stored", "environment", "none", "unknown"];
+                                                };
+                                                readonly applied: {
+                                                    readonly type: "object";
+                                                    readonly properties: {
+                                                        readonly kind: {
+                                                            readonly type: "string";
+                                                            readonly enum: readonly ["active", "not-applied", "error"];
+                                                        };
+                                                        readonly lastDiscoveryAt: {
+                                                            readonly type: "string";
+                                                        };
+                                                        readonly modelCount: {
+                                                            readonly type: "number";
+                                                        };
+                                                        readonly category: {
+                                                            readonly type: "string";
+                                                        };
+                                                        readonly message: {
+                                                            readonly type: "string";
+                                                        };
+                                                        readonly at: {
+                                                            readonly type: "string";
+                                                        };
+                                                    };
+                                                    readonly required: readonly ["kind"];
+                                                    readonly additionalProperties: false;
+                                                };
+                                            };
+                                            readonly required: readonly ["endpointId", "desired", "validation", "credential", "applied"];
+                                            readonly additionalProperties: false;
+                                        };
+                                        readonly status: {
+                                            readonly type: "string";
+                                        };
+                                        readonly statusLabel: {
+                                            readonly type: "string";
+                                        };
+                                        readonly canRetry: {
+                                            readonly type: "boolean";
+                                        };
                                     };
                                     readonly required: readonly ["id", "baseUrl", "active", "legacy"];
                                     readonly additionalProperties: false;
@@ -689,6 +1324,73 @@ export declare const endpointRpc: {
                                     readonly type: "boolean";
                                 };
                                 readonly legacy: {
+                                    readonly type: "boolean";
+                                };
+                                readonly state: {
+                                    readonly type: "object";
+                                    readonly properties: {
+                                        readonly endpointId: {
+                                            readonly type: "string";
+                                        };
+                                        readonly desired: {
+                                            readonly type: "string";
+                                            readonly enum: readonly ["enabled", "disabled"];
+                                        };
+                                        readonly validation: {
+                                            readonly type: "object";
+                                            readonly properties: {
+                                                readonly kind: {
+                                                    readonly type: "string";
+                                                    readonly enum: readonly ["ok", "invalid"];
+                                                };
+                                                readonly reason: {
+                                                    readonly type: "string";
+                                                };
+                                            };
+                                            readonly required: readonly ["kind"];
+                                            readonly additionalProperties: false;
+                                        };
+                                        readonly credential: {
+                                            readonly type: "string";
+                                            readonly enum: readonly ["stored", "environment", "none", "unknown"];
+                                        };
+                                        readonly applied: {
+                                            readonly type: "object";
+                                            readonly properties: {
+                                                readonly kind: {
+                                                    readonly type: "string";
+                                                    readonly enum: readonly ["active", "not-applied", "error"];
+                                                };
+                                                readonly lastDiscoveryAt: {
+                                                    readonly type: "string";
+                                                };
+                                                readonly modelCount: {
+                                                    readonly type: "number";
+                                                };
+                                                readonly category: {
+                                                    readonly type: "string";
+                                                };
+                                                readonly message: {
+                                                    readonly type: "string";
+                                                };
+                                                readonly at: {
+                                                    readonly type: "string";
+                                                };
+                                            };
+                                            readonly required: readonly ["kind"];
+                                            readonly additionalProperties: false;
+                                        };
+                                    };
+                                    readonly required: readonly ["endpointId", "desired", "validation", "credential", "applied"];
+                                    readonly additionalProperties: false;
+                                };
+                                readonly status: {
+                                    readonly type: "string";
+                                };
+                                readonly statusLabel: {
+                                    readonly type: "string";
+                                };
+                                readonly canRetry: {
                                     readonly type: "boolean";
                                 };
                             };
