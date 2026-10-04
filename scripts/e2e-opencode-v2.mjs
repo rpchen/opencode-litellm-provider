@@ -114,9 +114,14 @@ const env = {
   XDG_STATE_HOME: state,
   OPENCODE_DISABLE_AUTOUPDATE: "1",
   NO_COLOR: "1",
-  // [REAL-HOST-E2E] The trusted-publication gate must not depend on an external
-  // catalog. The host runtime honours these proxy variables, so models.dev stays
-  // unreachable while the local fake LiteLLM endpoints keep working through NO_PROXY.
+}
+// [REAL-HOST-E2E] The trusted-publication gate must not depend on an external
+// catalog. The host runtime honours these proxy variables, so models.dev stays
+// unreachable inside the host processes while the local fake LiteLLM endpoints
+// keep working through NO_PROXY. Commands that genuinely need the network
+// (`plugin add` downloading the candidate) run with the clean env instead.
+const offlineEnv = {
+  ...env,
   HTTP_PROXY: "http://127.0.0.1:1",
   HTTPS_PROXY: "http://127.0.0.1:1",
   NO_PROXY: "127.0.0.1,localhost",
@@ -127,7 +132,7 @@ env.OPENCODE_CONFIG = opencodeConfigFile
 function command(args, options = {}) {
   const result = spawnSync("opencode", args, {
     cwd: project,
-    env,
+    env: options.offline === false ? env : offlineEnv,
     encoding: "utf8",
     timeout: options.timeout ?? 120_000,
     maxBuffer: 32 * 1024 * 1024,
@@ -158,7 +163,7 @@ function startOpenCodeServer() {
   return new Promise((resolve, reject) => {
     const child = spawn("opencode", ["serve", "--hostname", "127.0.0.1", "--port", "0"], {
       cwd: project,
-      env,
+      env: offlineEnv,
       stdio: ["ignore", "pipe", "pipe"],
     })
     let stdout = ""
@@ -230,7 +235,7 @@ function startAttachedTui(sessionID) {
   const commandLine = `stty cols 120 rows 40; exec opencode --server ${openCodeServer.url} --session ${sessionID}`
   const child = spawn("script", ["-qefc", commandLine, "/dev/null"], {
     cwd: project,
-    env,
+    env: offlineEnv,
     stdio: ["pipe", "pipe", "pipe"],
   })
   let stdout = ""
@@ -406,7 +411,7 @@ try {
   // Match the user's real installation path. plugin add performs OpenCode's own
   // Git package install/cache and validates the server entrypoint. Because the
   // same package is already present in our config object, it preserves endpoint options.
-  command(["plugin", "add", packageSpec], { timeout: 240_000 })
+  command(["plugin", "add", packageSpec], { timeout: 240_000, offline: false })
 
   openCodeServer = await startOpenCodeServer()
   env.OPENCODE_PASSWORD = openCodeServer.password
