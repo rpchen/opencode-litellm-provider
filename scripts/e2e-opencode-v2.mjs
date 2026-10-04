@@ -670,7 +670,10 @@ try {
     throw new Error(`default endpoint never reached audit status ${expected} (${label})`)
   }
 
+  // PTY text normalization may collapse the full-width colon, so publication
+  // needles are matched as regexes on semantic spacing.
   const diagnosticsThroughTui = async (needle, label) => {
+    const matches = (text) => (typeof needle === "string" ? text.includes(needle) : needle.test(text))
     let last = ""
     for (let attempt = 0; attempt < 6; attempt++) {
       runSessionCommand("litellm-diagnostics", "default")
@@ -678,7 +681,7 @@ try {
       try {
         await waitForTui(diagTui, /Endpoint\s+default/u, { timeout: 20_000 })
         last = diagTui.output()
-        if (last.includes(needle)) return last
+        if (matches(last)) return last
       } catch (error) {
         last = String(error)
       } finally {
@@ -703,8 +706,8 @@ try {
   }
 
   // 2) Ineligible accept attempts never claim success (invalid / ambiguous groups).
-  runSessionCommand("litellm-accept-degraded", "litellm gpt-5.5")
-  runSessionCommand("litellm-accept-degraded", "litellm shared-route")
+  runSessionCommand("litellm-accept-degraded", "default gpt-5.5")
+  runSessionCommand("litellm-accept-degraded", "default shared-route")
   const afterRejections = defaultAuditReport(await exportAudit())
   for (const rejected of ["gpt-5.5", "shared-route"]) {
     assert(
@@ -712,6 +715,10 @@ try {
       `ineligible ${rejected} must not register through accept-degraded`,
     )
   }
+  // The rejected models stay visible as blocked states in diagnostics.
+  const rejectionDiagnostics = await diagnosticsThroughTui(/未完成\s+gpt-5\.5/u, "the rejected accepts")
+  assert(/未完成\s+shared-route/u.test(rejectionDiagnostics), `ambiguous group must stay blocked: ${rejectionDiagnostics}`)
+  assert(/未完成\s+invalid-fields/u.test(rejectionDiagnostics), `invalid metadata must stay blocked: ${rejectionDiagnostics}`)
 
   // 3) A previously configured LiteLLM-only model loses its capability evidence:
   // only a provably belonging LKG snapshot keeps it registered.
@@ -734,12 +741,12 @@ try {
     `LKG must keep the previously configured model registered: ${JSON.stringify(lkgReport.models.map((m) => m.id))}`,
   )
   assert(hostModels().includes("litellm/multi-endpoint-model"), "the LKG-backed model must stay visible in CLI models")
-  await diagnosticsThroughTui("LKG 提供：multi-endpoint-model", "the valid LKG substitution")
+  await diagnosticsThroughTui(/LKG 提供\s+multi-endpoint-model/u, "the valid LKG substitution")
 
   // 4) An eligible blocked model registers only through the degraded path and
   //    keeps the degraded label with its gaps.
   const acceptStartedAt = Date.now()
-  runSessionCommand("litellm-accept-degraded", "litellm minimax-m3")
+  runSessionCommand("litellm-accept-degraded", "default minimax-m3")
   const degradedReport = await waitForRefreshAfter(acceptStartedAt, "the degraded acceptance")
   assert(
     degradedReport.models.some((model) => model.id === "minimax-m3"),
@@ -749,12 +756,12 @@ try {
     "已接受降级：minimax-m3",
     "the degraded acceptance",
   )
-  assert(!degradedDiagnostics.includes("LKG 提供：minimax-m3"), "a degraded model must never be reported as LKG")
+  assert(!/LKG 提供\s+minimax-m3/u.test(degradedDiagnostics), "a degraded model must never be reported as LKG")
 
   // 5) A real metadata outage is reported, never hidden.
   mockFailStatus = 500
   await waitForAuditStatus("stale", "the metadata failure")
-  const failureDiagnostics = await diagnosticsThroughTui("状态：使用 last-known-good", "the metadata failure")
+  const failureDiagnostics = await diagnosticsThroughTui(/状态\s+使用 last-known-good/u, "the metadata failure")
   assert(/failures=[1-9]\d*/u.test(failureDiagnostics), `failure counter must be visible: ${failureDiagnostics}`)
   assert(
     /下次允许重试/u.test(failureDiagnostics) || /刷新失败/u.test(failureDiagnostics),
@@ -766,7 +773,7 @@ try {
   mockFailStatus = 0
   const recoveredReport = await waitForAuditStatus("ready", "the retry recovery")
   assert(recoveredReport.models.length > 0, "recovery must republish models")
-  await diagnosticsThroughTui("状态：正常", "the retry recovery")
+  await diagnosticsThroughTui(/状态\s+正常/u, "the retry recovery")
 
   servedModels = servedFixture.data
   mockFailStatus = 0
