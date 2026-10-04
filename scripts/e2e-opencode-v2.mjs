@@ -344,13 +344,14 @@ async function choose(tui, labelsInOrder, target, { anchor, since } = {}) {
   await waitForTui(tui, anchor ?? target, { from: since ?? 0 })
   await sleep(400)
   const screen = tui.output()
-  // Compute the index of `target` inside the menu currently painted on screen. We use
-  // `labelsInOrder` filtered by what the screen actually shows — this drops "重新应用"
-  // from navigation when canRetry is false (menu has no such entry), and keeps it when
-  // canRetry is true (menu does have it).
-  const onScreen = labelsInOrder.filter((label) => screen.includes(label))
-  const index = onScreen.indexOf(target)
-  if (index < 0) throw new Error(`option ${target} not visible on screen; labels=${JSON.stringify(labelsInOrder)} onScreen=${JSON.stringify(onScreen)}`)
+  // The canonical DETAIL menu inserts "重新应用" before "删除 endpoint" only when canRetry.
+  // Detect that case from the rendered screen and treat it as if it were present in
+  // `labelsInOrder` for index arithmetic.
+  const effective = screen.includes("重新应用") && !labelsInOrder.includes("重新应用")
+    ? [...labelsInOrder.slice(0, -2), "重新应用", ...labelsInOrder.slice(-2)]
+    : labelsInOrder
+  const index = effective.indexOf(target)
+  if (index < 0) throw new Error(`option ${target} not in effective menu ${JSON.stringify(effective)}`)
   for (let i = 0; i < index; i++) {
     tui.write("\x1b[B")
     await sleep(150)
