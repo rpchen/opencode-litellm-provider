@@ -116,10 +116,11 @@ const env = {
   NO_COLOR: "1",
 }
 // [REAL-HOST-E2E] The trusted-publication gate must not depend on an external
-// catalog. The host runtime honours these proxy variables, so models.dev stays
-// unreachable inside the host processes while the local fake LiteLLM endpoints
-// keep working through NO_PROXY. Commands that genuinely need the network
-// (`plugin add` downloading the candidate) run with the clean env instead.
+// catalog. The server process runs the plugin, and its runtime honours these proxy
+// variables, so models.dev stays unreachable there while the local fake LiteLLM
+// endpoints keep working through NO_PROXY. CLI/TUI processes keep the clean env:
+// they only talk to the local server (and `plugin add` must still download the
+// candidate from GitHub).
 const offlineEnv = {
   ...env,
   HTTP_PROXY: "http://127.0.0.1:1",
@@ -132,7 +133,7 @@ env.OPENCODE_CONFIG = opencodeConfigFile
 function command(args, options = {}) {
   const result = spawnSync("opencode", args, {
     cwd: project,
-    env: options.offline === false ? env : offlineEnv,
+    env,
     encoding: "utf8",
     timeout: options.timeout ?? 120_000,
     maxBuffer: 32 * 1024 * 1024,
@@ -235,7 +236,7 @@ function startAttachedTui(sessionID) {
   const commandLine = `stty cols 120 rows 40; exec opencode --server ${openCodeServer.url} --session ${sessionID}`
   const child = spawn("script", ["-qefc", commandLine, "/dev/null"], {
     cwd: project,
-    env: offlineEnv,
+    env,
     stdio: ["pipe", "pipe", "pipe"],
   })
   let stdout = ""
@@ -411,7 +412,7 @@ try {
   // Match the user's real installation path. plugin add performs OpenCode's own
   // Git package install/cache and validates the server entrypoint. Because the
   // same package is already present in our config object, it preserves endpoint options.
-  command(["plugin", "add", packageSpec], { timeout: 240_000, offline: false })
+  command(["plugin", "add", packageSpec], { timeout: 240_000 })
 
   openCodeServer = await startOpenCodeServer()
   env.OPENCODE_PASSWORD = openCodeServer.password
