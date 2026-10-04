@@ -1,8 +1,8 @@
 /**
  * Host-independent capability, limit, modality, and price mapping.
  */
-import { isRecord, optionalBoolean, optionalNumber, positiveInteger, stripRoutePrefix, } from "./litellm.js";
-import { canUseSelectedModelsDevPrice, candidateModelIDs, } from "./modelsdev.js";
+import { isRecord, optionalBoolean, optionalNumber, positiveInteger, } from "./litellm.js";
+import { canUseSelectedModelsDevPrice, } from "./modelsdev.js";
 const INPUT_MODALITIES = [
     ["supports_vision", "image"],
     ["supports_pdf_input", "pdf"],
@@ -45,9 +45,6 @@ function intersect(sets) {
         return ["text"];
     return [...sets[0]].filter((value) => sets.every((set) => set.has(value)));
 }
-function isModalitiesTrustFamily(group) {
-    return candidateModelIDs(group).some((candidate) => /^(?:deepseek-|kimi-|mimo-|qwen)/.test(stripRoutePrefix(candidate).toLowerCase()));
-}
 function minimum(values, fallback = 0) {
     const provided = values.filter((value) => value !== undefined);
     return provided.length > 0 ? Math.min(...provided) : fallback;
@@ -87,12 +84,7 @@ export function mapCapabilities(group, selected, contextTierCap) {
     const mdTools = optionalBoolean(selected?.record.tool_call);
     const tools = group.deployments.every((deployment) => optionalBoolean(deployment.modelInfo.supports_function_calling) ?? mdTools ?? true);
     const inputSets = group.deployments.map((deployment) => deploymentModalities(deployment, selected, "input"));
-    let input = intersect(inputSets);
-    const mdInputModalities = modelsDevModalities(selected, "input");
-    const liteLLMDeclaresExtraInput = group.deployments.some((deployment) => INPUT_MODALITIES.some(([field]) => optionalBoolean(deployment.modelInfo[field]) === true));
-    if (isModalitiesTrustFamily(group) && !liteLLMDeclaresExtraInput && mdInputModalities.length > 1) {
-        input = [...new Set(["text", ...mdInputModalities])];
-    }
+    const input = intersect(inputSets);
     const output = intersect(group.deployments.map((deployment) => deploymentModalities(deployment, selected, "output")));
     // models.dev distinguishes total context from maximum input. Preserve that
     // distinction when available; LiteLLM max_input_tokens is an input limit.

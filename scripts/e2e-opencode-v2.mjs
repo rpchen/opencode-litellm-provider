@@ -14,6 +14,30 @@ if (!packageSpec || !/^(github:rpchen\/opencode-litellm-provider|git\+file:\/\/\
   throw new Error("E2E_PACKAGE_SPEC must pin this repository to a full Git commit")
 }
 const fixture = JSON.parse(readFileSync(path.join(root, "test/fixtures/litellm-model-info.json"), "utf8"))
+// [REAL-HOST-E2E] models.dev is deliberately unreachable in this gate (see the proxy
+// env below), so every capability dimension the trusted publication policy requires
+// must be declared by the served endpoint metadata. Only the served payload changes;
+// the shared fixture file stays the unit-test baseline.
+const FULL_CAPABILITY_DECLARATIONS = {
+  supports_function_calling: true,
+  supports_reasoning: false,
+  supports_vision: false,
+  supports_pdf_input: false,
+  supports_audio_input: false,
+  supports_video_input: false,
+  supports_audio_output: false,
+}
+const servedFixture = structuredClone(fixture)
+const declare = (modelName, overrides = {}) => {
+  const row = servedFixture.data.find((entry) => entry.model_name === modelName)
+  assert(row, `fixture must contain ${modelName}`)
+  Object.assign(row.model_info, FULL_CAPABILITY_DECLARATIONS, overrides)
+}
+for (const modelName of ["claude-db", "claude-bedrock", "anthropic-direct", "multi-endpoint-model"]) declare(modelName)
+// Toggle-style reasoning: supported, but with no selectable levels.
+declare("glm-5.3", { supports_reasoning: true })
+let servedModels = servedFixture.data
+let mockFailStatus = 0
 // [REAL-HOST-E2E] Runtime Identity expectations come from the candidate checkout itself:
 // the installed package is built from this commit, so its identity must match these files.
 const candidateIdentity = JSON.parse(readFileSync(path.join(root, "dist", "runtime-identity.json"), "utf8"))
@@ -39,6 +63,7 @@ const sanitize = (value) => secrets.reduce((text, secret) => text.replaceAll(sec
 
 function startLiteLLM(initialKey) {
   let acceptedRequests = 0
+  let failedRequests = 0
   const keys = { expected: initialKey }
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1")
@@ -48,9 +73,17 @@ function startLiteLLM(initialKey) {
         res.end(JSON.stringify({ error: "unauthorized" }))
         return
       }
+      if (mockFailStatus) {
+        // [REAL-HOST-E2E] An injected outage must surface as a metadata failure
+        // instead of silently republishing pseudo-complete models.
+        failedRequests += 1
+        res.writeHead(mockFailStatus, { "content-type": "application/json" })
+        res.end(JSON.stringify({ error: "injected metadata failure" }))
+        return
+      }
       acceptedRequests += 1
       res.writeHead(200, { "content-type": "application/json" })
-      res.end(JSON.stringify(fixture))
+      res.end(JSON.stringify({ data: servedModels }))
       return
     }
     res.writeHead(404, { "content-type": "application/json" })
@@ -65,6 +98,7 @@ function startLiteLLM(initialKey) {
         server,
         baseUrl: `http://127.0.0.1:${address.port}`,
         acceptedRequests: () => acceptedRequests,
+        failedRequests: () => failedRequests,
         keys,
       })
     })
@@ -80,6 +114,18 @@ const env = {
   XDG_STATE_HOME: state,
   OPENCODE_DISABLE_AUTOUPDATE: "1",
   NO_COLOR: "1",
+}
+// [REAL-HOST-E2E] The trusted-publication gate must not depend on an external
+// catalog. The server process runs the plugin, and its runtime honours these proxy
+// variables, so models.dev stays unreachable there while the local fake LiteLLM
+// endpoints keep working through NO_PROXY. CLI/TUI processes keep the clean env:
+// they only talk to the local server (and `plugin add` must still download the
+// candidate from GitHub).
+const offlineEnv = {
+  ...env,
+  HTTP_PROXY: "http://127.0.0.1:1",
+  HTTPS_PROXY: "http://127.0.0.1:1",
+  NO_PROXY: "127.0.0.1,localhost",
 }
 delete env.OPENCODE_SERVER
 env.OPENCODE_CONFIG = opencodeConfigFile
@@ -118,7 +164,7 @@ function startOpenCodeServer() {
   return new Promise((resolve, reject) => {
     const child = spawn("opencode", ["serve", "--hostname", "127.0.0.1", "--port", "0"], {
       cwd: project,
-      env,
+      env: offlineEnv,
       stdio: ["ignore", "pipe", "pipe"],
     })
     let stdout = ""
@@ -518,6 +564,8 @@ try {
   let models = command(["models", "--server", openCodeServer.url], { timeout: 120_000 })
   assert.match(models.stdout, /litellm\//u, "CLI models must include the active default LiteLLM endpoint")
   assert.doesNotMatch(models.stdout, /litellm-company\//u, "CLI models must exclude the disabled company endpoint")
+  assert.doesNotMatch(models.stdout, /litellm\/invalid-fields/u,
+    "incomplete fixture models must never disguise as normal host models")
 
   // Re-enable company through the same real selector (main list -> detail -> enable -> back).
   runSessionCommand("litellm-endpoints")
@@ -547,7 +595,8 @@ try {
   mark = tui.mark()
   // PTY text normalization may collapse the full-width colon, so assert semantic spacing.
   await waitForTui(tui, /Endpoint\s+company/u, { from: mark })
-  await waitForTui(tui, /models\.dev\s+ok/u, { from: mark })
+  await waitForTui(tui, /models\.dev\s+degraded/u, { from: mark })
+  await waitForTui(tui, /invalid-fields/u, { from: mark })
   const scopedDiagnostics = tui.output(mark)
   assert.doesNotMatch(scopedDiagnostics, /LiteLLM Endpoints · active \d+\/\d+/u,
     "endpoint-scoped diagnostics must not fall back to the multi-endpoint overview")
@@ -573,6 +622,164 @@ try {
   assert(Array.isArray(plugins), "plugin.list payload must be an array")
   assert(plugins.some((item) => item.id === "litellm" && item.state?.status === "active"),
     `server plugin must be active: ${JSON.stringify(plugins.filter((item) => item.id === "litellm"))}`)
+
+  // ===== Publication phase: trusted verdicts through the real host =====
+  const auditDirPath = path.join(state, "opencode", "litellm-audit")
+  const auditNames = () =>
+    existsSync(auditDirPath)
+      ? readdirSync(auditDirPath).filter((name) => name.startsWith("litellm-audit-") && name.endsWith(".json"))
+      : []
+  const defaultAuditReport = (audit) => audit.endpoints?.find((entry) => entry.id === "default")?.report ?? audit
+
+  // Export a fresh audit report; the command writes a file, so no TUI is needed.
+  const exportAudit = async () => {
+    const startedAt = Date.now()
+    const before = new Set(auditNames())
+    runSessionCommand("litellm-audit-export")
+    for (let attempt = 0; attempt < 80; attempt++) {
+      await sleep(250)
+      const names = auditNames()
+      const fresh = names.filter((name) => !before.has(name))
+      const candidates = fresh.length > 0 ? fresh : names.filter(
+        (name) => statSync(path.join(auditDirPath, name)).mtimeMs >= startedAt,
+      )
+      if (candidates.length > 0) {
+        const latest = candidates.slice().sort().at(-1)
+        return JSON.parse(readFileSync(path.join(auditDirPath, latest), "utf8"))
+      }
+    }
+    throw new Error("audit export did not produce a fresh report")
+  }
+
+  const waitForRefreshAfter = async (sinceMs, label) => {
+    for (let attempt = 0; attempt < 90; attempt++) {
+      const report = defaultAuditReport(await exportAudit())
+      const stamp = Date.parse(report.lastSuccessfulDiscoveryAt ?? "")
+      if (Number.isFinite(stamp) && stamp > sinceMs) return report
+      await sleep(1000)
+    }
+    throw new Error(`no discovery refresh after ${label}`)
+  }
+
+  const waitForAuditStatus = async (expected, label) => {
+    for (let attempt = 0; attempt < 90; attempt++) {
+      const report = defaultAuditReport(await exportAudit())
+      if (report.status === expected) return report
+      await sleep(1000)
+    }
+    throw new Error(`default endpoint never reached audit status ${expected} (${label})`)
+  }
+
+  // PTY text normalization may collapse the full-width colon, so publication
+  // needles are matched as regexes on semantic spacing.
+  const diagnosticsThroughTui = async (needle, label) => {
+    const matches = (text) => (typeof needle === "string" ? text.includes(needle) : needle.test(text))
+    let last = ""
+    for (let attempt = 0; attempt < 6; attempt++) {
+      runSessionCommand("litellm-diagnostics", "default")
+      const diagTui = startAttachedTui(sessionID)
+      try {
+        await waitForTui(diagTui, /Endpoint\s+default/u, { timeout: 20_000 })
+        last = diagTui.output()
+        if (matches(last)) return last
+      } catch (error) {
+        last = String(error)
+      } finally {
+        await stopAttachedTui(diagTui)
+      }
+      await sleep(1000)
+    }
+    throw new Error(`diagnostics never reported ${label}; last:\n${last}`)
+  }
+
+  const hostModels = () => command(["models", "--server", openCodeServer.url], { timeout: 120_000 }).stdout
+
+  // 1) Complete metadata registers; toggle reasoning registers with no levels.
+  const baselineReport = defaultAuditReport(await exportAudit())
+  const baselineIds = baselineReport.models.map((model) => model.id)
+  assert(baselineIds.includes("glm-5.3"), `toggle reasoning model must register: ${JSON.stringify(baselineIds)}`)
+  const glmRecord = baselineReport.models.find((model) => model.id === "glm-5.3")
+  assert.deepEqual(glmRecord.variants, [], "toggle reasoning must register with no selectable levels")
+  assert(baselineIds.includes("multi-endpoint-model"), `LiteLLM-only complete model must register: ${JSON.stringify(baselineIds)}`)
+  for (const blocked of ["invalid-fields", "gpt-5.5", "shared-route"]) {
+    assert(!baselineIds.includes(blocked), `${blocked} must never enter the host model list: ${JSON.stringify(baselineIds)}`)
+  }
+
+  // 2) Ineligible accept attempts never claim success (invalid / ambiguous groups).
+  runSessionCommand("litellm-accept-degraded", "default gpt-5.5")
+  runSessionCommand("litellm-accept-degraded", "default shared-route")
+  const afterRejections = defaultAuditReport(await exportAudit())
+  for (const rejected of ["gpt-5.5", "shared-route"]) {
+    assert(
+      !afterRejections.models.some((model) => model.id === rejected),
+      `ineligible ${rejected} must not register through accept-degraded`,
+    )
+  }
+  // The rejected models stay visible as blocked states in diagnostics.
+  const rejectionDiagnostics = await diagnosticsThroughTui(/未完成[\s：:]*gpt-5\.5/u, "the rejected accepts")
+  assert(/未完成[\s：:]*shared-route/u.test(rejectionDiagnostics), `ambiguous group must stay blocked: ${rejectionDiagnostics}`)
+  assert(/未完成[\s：:]*invalid-fields/u.test(rejectionDiagnostics), `invalid metadata must stay blocked: ${rejectionDiagnostics}`)
+
+  // 3) A previously configured LiteLLM-only model loses its capability evidence:
+  // only a provably belonging LKG snapshot keeps it registered.
+  const stripCapabilities = (entry) => ({
+    model_name: entry.model_name,
+    litellm_params: entry.litellm_params,
+    model_info: {
+      mode: entry.model_info.mode,
+      ...(entry.model_info.supported_endpoints ? { supported_endpoints: entry.model_info.supported_endpoints } : {}),
+      ...(entry.model_info.base_model ? { base_model: entry.model_info.base_model } : {}),
+      max_input_tokens: entry.model_info.max_input_tokens,
+      max_output_tokens: entry.model_info.max_output_tokens,
+    },
+  })
+  servedModels = servedFixture.data.map((entry) =>
+    entry.model_name === "multi-endpoint-model" ? stripCapabilities(entry) : entry)
+  const lkgReport = await waitForRefreshAfter(Date.now(), "the LKG substitution")
+  assert(
+    lkgReport.models.some((model) => model.id === "multi-endpoint-model"),
+    `LKG must keep the previously configured model registered: ${JSON.stringify(lkgReport.models.map((m) => m.id))}`,
+  )
+  assert(hostModels().includes("litellm/multi-endpoint-model"), "the LKG-backed model must stay visible in CLI models")
+  await diagnosticsThroughTui(/LKG[\s：:]*提供[\s：:]*multi-endpoint-model/u, "the valid LKG substitution")
+
+  // 4) An eligible blocked model registers only through the degraded path and
+  //    keeps the degraded label with its gaps.
+  const acceptStartedAt = Date.now()
+  runSessionCommand("litellm-accept-degraded", "default minimax-m3")
+  const degradedReport = await waitForRefreshAfter(acceptStartedAt, "the degraded acceptance")
+  assert(
+    degradedReport.models.some((model) => model.id === "minimax-m3"),
+    `the accepted degraded model must register: ${JSON.stringify(degradedReport.models.map((m) => m.id))}`,
+  )
+  const degradedDiagnostics = await diagnosticsThroughTui(
+    /已接受降级[\s：:]*minimax-m3/u,
+    "the degraded acceptance",
+  )
+  assert(!/LKG[\s：:]*提供[\s：:]*minimax-m3/u.test(degradedDiagnostics), "a degraded model must never be reported as LKG")
+
+  // 5) A real metadata outage is reported, never hidden.
+  mockFailStatus = 500
+  await waitForAuditStatus("stale", "the metadata failure")
+  const failureDiagnostics = await diagnosticsThroughTui(/状态[\s：:]*使用\s*last-known-good/u, "the metadata failure")
+  assert(/failures=[1-9]\d*/u.test(failureDiagnostics), `failure counter must be visible: ${failureDiagnostics}`)
+  assert(
+    /下次允许重试/u.test(failureDiagnostics) || /刷新失败/u.test(failureDiagnostics),
+    `retry state must be visible: ${failureDiagnostics}`,
+  )
+  assert(hostModels().includes("litellm/multi-endpoint-model"), "the outage must keep the last good model list")
+
+  // 6) Retry recovery returns the endpoint to a normally configured state.
+  mockFailStatus = 0
+  const recoveredReport = await waitForAuditStatus("ready", "the retry recovery")
+  assert(recoveredReport.models.length > 0, "recovery must republish models")
+  await diagnosticsThroughTui(/状态[\s：:]*正常/u, "the retry recovery")
+
+  servedModels = servedFixture.data
+  mockFailStatus = 0
+  console.log(
+    "Real OpenCode publication E2E passed: partition, toggle reasoning, LKG substitution, degraded accept/reject and metadata-failure diagnostics are verified through the real host.",
+  )
 
   // ===== Phase 2: Endpoint Management UX over the real TUI (file-declared options, real PTY keys) =====
   await stopAttachedTui(tui).catch(() => {})

@@ -29,7 +29,7 @@ describe("能力映射", () => {
 
   test("272k 与 512k 阶梯截断，可关闭", () => {
     expect(mapped("gpt-5.5").limit.context).toBe(272000)
-    expect(mapped("minimax-m3").limit.context).toBe(512000)
+    expect(mapped("minimax-m3").limit.context).toBe(500000)
     expect(mapped("gpt-5.5", false).limit).toMatchObject({ context: 1050000, input: 900000 })
   })
 
@@ -37,8 +37,8 @@ describe("能力映射", () => {
     expect(mapped("qwen3.7-plus").limit.context).toBe(256000)
   })
 
-  test("模态信任名单允许 models.dev 补充 Qwen 输入模态", () => {
-    expect(mapped("qwen3.7-plus").capabilities.input).toEqual(["text", "image", "video"])
+  test("显式 LiteLLM 模态声明优先于 models.dev（无 family 特判）", () => {
+    expect(mapped("qwen3.7-plus").capabilities.input).toEqual(["text", "video"])
   })
 
   test("异常字段按缺失处理并回退默认值", () => {

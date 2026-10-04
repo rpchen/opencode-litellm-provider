@@ -3,7 +3,7 @@
  * This module contains no host SDK imports; protocol mapping belongs to each plugin adapter.
  */
 import { type ModelCapabilities, type ModelCost, type ModelLimits } from "./capabilities.js";
-import { type ModelVariant } from "./modelsdev.js";
+import { type CapabilityState, type ModelVariant } from "./modelsdev.js";
 import { type Protocol } from "./protocol.js";
 export interface BuildOptions {
     contextTierCap: boolean;
@@ -19,6 +19,13 @@ export interface ModelSpec {
     releaseUnit?: "unix-ms" | "unknown" | "none";
     cost: ModelCost;
     limit: ModelLimits;
+    /**
+     * Core-resolved reasoning support, independent from `variants`.
+     * `supported` with empty `variants` is legal (no selectable levels).
+     * Optional for wire compatibility with hand-built specs; adapters must
+     * treat a missing value as unknown, never derive it from variant count.
+     */
+    reasoningSupported?: CapabilityState;
 }
 /**
  * Whether a neutral model has the minimum positive token limits required by

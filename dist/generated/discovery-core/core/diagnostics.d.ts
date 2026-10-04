@@ -3,8 +3,8 @@ import { type ReasoningSupportResolution } from "./modelsdev.js";
 import { type ProtocolReason, type ProtocolSupport } from "./protocol.js";
 export declare const DISCOVERY_DIAGNOSTICS_SCHEMA_VERSION: 1;
 export type DiagnosticSeverity = "info" | "warning" | "error";
-export type DiagnosticStage = "model-info" | "models-list" | "models-dev" | "protocol" | "mapping";
-export type DiagnosticFieldSource = "override" | "litellm" | "models.dev" | "derived" | "default" | "none";
+export type DiagnosticStage = "model-info" | "models-list" | "models-dev" | "protocol" | "mapping" | "publication";
+export type DiagnosticFieldSource = "override" | "litellm" | "models.dev" | "derived" | "default" | "none" | "lkg" | "canonical-inheritance";
 export interface DiagnosticIssue {
     readonly severity: DiagnosticSeverity;
     readonly stage: DiagnosticStage;
@@ -47,6 +47,20 @@ export interface ModelDiagnostic {
         readonly deploymentProtocols: readonly ModelSpec["protocol"][];
     };
     readonly quality: ModelQualityDiagnostic;
+    readonly publication: {
+        readonly status: import("./publication.js").ModelConfigurationStatus;
+        readonly publishable: boolean;
+        readonly missingFields: readonly string[];
+        readonly unknownFields: readonly string[];
+        readonly illegalFields: readonly string[];
+        readonly conflictFields: readonly string[];
+        readonly toolState: import("./publication.js").CapabilityState;
+        readonly reasoningState: import("./publication.js").CapabilityState;
+        readonly reasoningLevelsKnown: boolean;
+        readonly reasoningLevels: readonly string[];
+        readonly inheritedFields: readonly string[];
+        readonly inheritanceChain: readonly string[];
+    };
     readonly provenance: {
         readonly protocol: FieldProvenance;
         readonly reasoning: FieldProvenance;

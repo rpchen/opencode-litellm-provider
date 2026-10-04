@@ -25,11 +25,23 @@ function snapshot(id: string): ProviderSnapshot {
 function harness() {
   const commands = new Map<string, { execute(input: Record<string, unknown>): Promise<void> }>()
   let handlers: { export(input: { sessionID: string }): Promise<unknown>; latest(): Promise<unknown> } | undefined
+  let publicationHandlers: { state(input: unknown): Promise<unknown>; accept(input: unknown): Promise<unknown> } | undefined
   const events: Array<{ name: string; value: unknown }> = []
+  const publicationEvents: Array<{ name: string; value: unknown }> = []
   let disposed = 0
   const context = {
     rpc: {
       register: async (_schema: unknown, input: typeof handlers) => {
+        const id = typeof _schema === "object" && _schema !== null ? (_schema as { id?: unknown }).id : undefined
+        if (id === "litellm-publication") {
+          publicationHandlers = input as unknown as typeof publicationHandlers
+          return {
+            events: {
+              emit: async (name: string, value: unknown) => { publicationEvents.push({ name, value }) },
+            },
+            dispose: async () => { disposed++ },
+          }
+        }
         handlers = input
         return {
           events: {
@@ -50,7 +62,9 @@ function harness() {
     context,
     commands,
     events,
+    publicationEvents,
     get handlers() { return handlers! },
+    get publicationHandlers() { return publicationHandlers! },
     get disposed() { return disposed },
   }
 }
@@ -85,7 +99,7 @@ describe("PR9 multi-endpoint diagnostics and audit", () => {
     expect(reports[1]).toMatchObject({ schemaVersion: 2, endpoints: [] })
 
     await registration.dispose()
-    expect(h.disposed).toBe(2)
+    expect(h.disposed).toBe(3)
   })
 
   test("diagnostics no-arg is overview and endpoint arg is scoped detail", async () => {

@@ -41,6 +41,11 @@ function isModelSpec(value) {
         return false;
     if (!Array.isArray(value.variants))
         return false;
+    if (value.reasoningSupported !== undefined &&
+        value.reasoningSupported !== "supported" &&
+        value.reasoningSupported !== "unsupported" &&
+        value.reasoningSupported !== "unknown")
+        return false;
     if (!finiteNumber(value.released))
         return false;
     if (value.releaseUnit !== undefined &&
