@@ -716,9 +716,9 @@ try {
     )
   }
   // The rejected models stay visible as blocked states in diagnostics.
-  const rejectionDiagnostics = await diagnosticsThroughTui(/未完成\s+gpt-5\.5/u, "the rejected accepts")
-  assert(/未完成\s+shared-route/u.test(rejectionDiagnostics), `ambiguous group must stay blocked: ${rejectionDiagnostics}`)
-  assert(/未完成\s+invalid-fields/u.test(rejectionDiagnostics), `invalid metadata must stay blocked: ${rejectionDiagnostics}`)
+  const rejectionDiagnostics = await diagnosticsThroughTui(/未完成[\s：:]*gpt-5\.5/u, "the rejected accepts")
+  assert(/未完成[\s：:]*shared-route/u.test(rejectionDiagnostics), `ambiguous group must stay blocked: ${rejectionDiagnostics}`)
+  assert(/未完成[\s：:]*invalid-fields/u.test(rejectionDiagnostics), `invalid metadata must stay blocked: ${rejectionDiagnostics}`)
 
   // 3) A previously configured LiteLLM-only model loses its capability evidence:
   // only a provably belonging LKG snapshot keeps it registered.
@@ -741,7 +741,7 @@ try {
     `LKG must keep the previously configured model registered: ${JSON.stringify(lkgReport.models.map((m) => m.id))}`,
   )
   assert(hostModels().includes("litellm/multi-endpoint-model"), "the LKG-backed model must stay visible in CLI models")
-  await diagnosticsThroughTui(/LKG 提供\s+multi-endpoint-model/u, "the valid LKG substitution")
+  await diagnosticsThroughTui(/LKG[\s：:]*提供[\s：:]*multi-endpoint-model/u, "the valid LKG substitution")
 
   // 4) An eligible blocked model registers only through the degraded path and
   //    keeps the degraded label with its gaps.
@@ -753,15 +753,15 @@ try {
     `the accepted degraded model must register: ${JSON.stringify(degradedReport.models.map((m) => m.id))}`,
   )
   const degradedDiagnostics = await diagnosticsThroughTui(
-    "已接受降级：minimax-m3",
+    /已接受降级[\s：:]*minimax-m3/u,
     "the degraded acceptance",
   )
-  assert(!/LKG 提供\s+minimax-m3/u.test(degradedDiagnostics), "a degraded model must never be reported as LKG")
+  assert(!/LKG[\s：:]*提供[\s：:]*minimax-m3/u.test(degradedDiagnostics), "a degraded model must never be reported as LKG")
 
   // 5) A real metadata outage is reported, never hidden.
   mockFailStatus = 500
   await waitForAuditStatus("stale", "the metadata failure")
-  const failureDiagnostics = await diagnosticsThroughTui(/状态\s+使用 last-known-good/u, "the metadata failure")
+  const failureDiagnostics = await diagnosticsThroughTui(/状态[\s：:]*使用\s*last-known-good/u, "the metadata failure")
   assert(/failures=[1-9]\d*/u.test(failureDiagnostics), `failure counter must be visible: ${failureDiagnostics}`)
   assert(
     /下次允许重试/u.test(failureDiagnostics) || /刷新失败/u.test(failureDiagnostics),
@@ -773,7 +773,7 @@ try {
   mockFailStatus = 0
   const recoveredReport = await waitForAuditStatus("ready", "the retry recovery")
   assert(recoveredReport.models.length > 0, "recovery must republish models")
-  await diagnosticsThroughTui(/状态\s+正常/u, "the retry recovery")
+  await diagnosticsThroughTui(/状态[\s：:]*正常/u, "the retry recovery")
 
   servedModels = servedFixture.data
   mockFailStatus = 0
