@@ -850,7 +850,11 @@ try {
     const t = startAttachedTui(session2)
     let m = t.mark()
     await waitForTui(t, "＋ 新增 endpoint", { from: m })
-    await waitForTui(t, "company", { from: m })
+    // Startup frame of /litellm-endpoints renders the whole main list at once;
+    // company is on the same screen as the "＋ 新增 endpoint" anchor. Use the
+    // full buffer (no `from`) so the assertion matches regardless of when
+    // company was first painted relative to our mark.
+    await waitForTui(t, "company")
 
     // 1. ADD (ID + Base URL only) -> inactive / not connected; nothing discovered yet
     const mainList = (items) => ["＋ 新增 endpoint", "全部启用", "全部停用", ...items]
