@@ -74,6 +74,9 @@ export function canRetry(state) {
         return false;
     if (state.validation.kind !== "ok")
         return false;
+    // Without a credential, retry is meaningless — the user must Connect API Key first.
+    if (state.credential === "none" || state.credential === "unknown")
+        return false;
     return state.applied.kind === "not-applied" || state.applied.kind === "error";
 }
 export const INITIAL_APPLIED = { kind: "not-applied" };
