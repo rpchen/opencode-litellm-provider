@@ -343,16 +343,13 @@ async function choose(tui, labelsInOrder, target, { anchor, since } = {}) {
   // Never send keys before the dialog is on screen: stray keys would land in the session prompt.
   await waitForTui(tui, anchor ?? target, { from: since ?? 0 })
   await sleep(400)
-  // If the target menu carries a 返回 entry the caller expects a DETAIL view; refuse to
-  // navigate from the main list because the DOWN indices would land on the wrong rows.
-  if (labelsInOrder.includes("返回") && !tui.output().includes("返回")) {
-    throw new Error(`choose(${JSON.stringify(target)}) called while the main list is on screen; open the endpoint detail first`)
-  }
-  const screen = tui.output()
+  // Capture the CURRENT screen as the slice since we anchored: the cumulative buffer
+  // keeps stale renders of the detail view alive, which would fool the presence check.
+  const screenSince = tui.output(since ?? 0)
   // The canonical DETAIL menu inserts "重新应用" before "删除 endpoint" only when canRetry.
   // Detect that case from the rendered screen and treat it as if it were present in
   // `labelsInOrder` for index arithmetic.
-  const effective = screen.includes("重新应用") && labelsInOrder.includes("删除 endpoint") && !labelsInOrder.includes("重新应用")
+  const effective = screenSince.includes("重新应用") && labelsInOrder.includes("删除 endpoint") && !labelsInOrder.includes("重新应用")
     ? [...labelsInOrder.slice(0, -2), "重新应用", ...labelsInOrder.slice(-2)]
     : labelsInOrder
   const index = effective.indexOf(target)
