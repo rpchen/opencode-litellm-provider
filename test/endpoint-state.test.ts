@@ -128,9 +128,10 @@ describe("canPublish (strict /models predicate)", () => {
 })
 
 describe("canRetry", () => {
-  test("[RETRY-SUCCESS] retry offered for enabled-not-applied or enabled-error", () => {
+  test("[RETRY-SUCCESS] retry offered for enabled-not-applied or enabled-error with a credential", () => {
     expect(canRetry(state("enabled", OK, "stored", APPLIED_NOT))).toBe(true)
     expect(canRetry(state("enabled", OK, "stored", APPLIED_ERROR))).toBe(true)
+    expect(canRetry(state("enabled", OK, "environment", APPLIED_NOT))).toBe(true)
   })
 
   test("[RETRY-NO-OP-FOR-DISABLED] retry not offered otherwise", () => {
@@ -138,6 +139,12 @@ describe("canRetry", () => {
     expect(canRetry(state("disabled", INVALID, "none", APPLIED_NOT))).toBe(false)
     expect(canRetry(state("enabled", INVALID, "stored", APPLIED_NOT))).toBe(false)
     expect(canRetry(state("enabled", OK, "stored", APPLIED_ACTIVE))).toBe(false)
+  })
+
+  test("[RETRY-NO-OP-WITHOUT-CREDENTIAL] retry requires a credential; Needs-authentication hides it", () => {
+    expect(canRetry(state("enabled", OK, "none", APPLIED_NOT))).toBe(false)
+    expect(canRetry(state("enabled", OK, "unknown", APPLIED_NOT))).toBe(false)
+    expect(canRetry(state("enabled", OK, "none", APPLIED_ERROR))).toBe(false)
   })
 })
 

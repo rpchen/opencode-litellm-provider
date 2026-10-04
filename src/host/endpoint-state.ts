@@ -113,6 +113,8 @@ export function canPublish(state: EndpointState): boolean {
 export function canRetry(state: EndpointState): boolean {
   if (state.desired !== "enabled") return false
   if (state.validation.kind !== "ok") return false
+  // Without a credential, retry is meaningless — the user must Connect API Key first.
+  if (state.credential === "none" || state.credential === "unknown") return false
   return state.applied.kind === "not-applied" || state.applied.kind === "error"
 }
 
