@@ -380,7 +380,7 @@ describe("credential helpers", () => {
       },
       credential: { remove: async (i) => { for (const k of Object.keys(store)) store[k] = store[k]!.filter((c) => c.id !== i.credentialID) }, activate: async () => undefined },
     }
-    // saved by the host's /connect (same API the native flow uses) → UI sees Connected
+    // saved by the host's /connect (same API the native flow uses) → UI sees 已保存 API Key
     await client.integration.connect.key({ integrationID: "litellm-company", key: "sk-host" })
     expect(await credentialKind(client, "company")).toBe("stored")
     // saved by the management UI → the host's own listing sees it (no second store)
