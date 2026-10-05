@@ -804,7 +804,7 @@ try {
     "the recovered model must be visible in the host CLI model list",
   )
   const recoveryDiagnostics = await diagnosticsThroughTui(
-    /模型配置：发现 \d+ · 可用 \d+ · withheld \d+/u,
+    /发现 \d+ · 可用 \d+ · withheld \d+/u,
     "the recovered publication partition",
   )
   assert(
