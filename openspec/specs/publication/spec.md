@@ -9,10 +9,12 @@ never produce pseudo-complete models; acceptance stays labeled degraded.
 ## Requirements
 
 ### Requirement: Publication partition governs registration
-The plugin SHALL register only models Core reports as `configured`,
-`configured-lkg`, or user-accepted `degraded`, and SHALL keep every
-other discovered model out of OpenCode registration with its status and
-gaps visible in diagnostics.
+The plugin SHALL register only models Core reports as `configured` or
+`configured-lkg`, and SHALL keep every other discovered model out of
+OpenCode registration with its status and complete reason list visible in
+diagnostics. No user confirmation, acceptance, or override exists: no
+command, RPC method, or stored state may move a withheld model into the
+published set.
 
 #### Scenario: Complete models register normally
 - **WHEN** discovery returns Core-configured models
@@ -26,19 +28,26 @@ gaps visible in diagnostics.
 - **WHEN** any spec with non-positive context or output reaches the host mapper
 - **THEN** it is excluded from registration regardless of publication state
 
+#### Scenario: Withheld models stay withheld without any user action
+- **WHEN** a model is withheld and the user takes no action, or executes any available command
+- **THEN** the registration view is unchanged and there is no acceptance method on the publication RPC
+
 ### Requirement: Conservative host tool mapping
-The plugin SHALL map `unknown` tool support to disabled on degraded
-entries and SHALL never enable host tool calling from unevidenced metadata.
+The plugin SHALL map `unknown` tool support to disabled and SHALL never
+enable host tool calling from unevidenced metadata.
 
 #### Scenario: Degraded entry with unknown tools
-- **WHEN** a user-accepted degraded model has unknown tool support
+- **WHEN** an entry reports unknown tool support
 - **THEN** its registered capabilities disable tools while diagnostics still reports tools unknown
 
 ### Requirement: Failures and LKG are visible and safe
 The plugin SHALL classify metadata failures with the Core taxonomy,
 SHALL substitute only valid LKG snapshots (identity/schema/conflict
-checked, never TTL-expired), and SHALL show live-vs-LKG selection,
-failure kind, and retry state in diagnostics.
+checked by Core, never TTL-expired), and SHALL show live-vs-LKG
+selection with provenance and age, failure kind, retry state, withheld
+reasons, and field-level evidence facts. A descriptive LiteLLM metadata
+difference Core resolved into a discrepancy SHALL NOT be presented as a
+failure and SHALL NOT discard a trusted snapshot.
 
 #### Scenario: Live failure with valid LKG
 - **WHEN** the metadata source fails but a provably belonging complete snapshot exists
@@ -46,38 +55,16 @@ failure kind, and retry state in diagnostics.
 
 #### Scenario: Live failure without valid LKG
 - **WHEN** no valid snapshot exists
-- **THEN** the model stays in discovered-but-incomplete state with the failure kind visible, and no default-filled model registers
+- **THEN** the model stays withheld with the failure kind and reason visible, and no default-filled model registers
 
 #### Scenario: Retry recovery
 - **WHEN** a retry fetch returns complete trustworthy metadata
 - **THEN** the model returns to normally configured state
 
 #### Scenario: Snapshot persists only normally publishable specs
-- **WHEN** a discovery round completes with degraded entries present
-- **THEN** the persisted snapshot holds publishable non-degraded specs only
+- **WHEN** a discovery round completes with withheld entries present
+- **THEN** the persisted snapshot holds publishable specs only, and no withheld or previously accepted model survives into it
 
-### Requirement: Explicit degraded acceptance over RPC
-The plugin SHALL expose explicit user acceptance over RPC that keeps
-the degraded label with remaining gaps and SHALL never re-label such
-models as fully configured.
-
-#### Scenario: Accept degraded model
-- **WHEN** the user accepts a Core-eligible blocked model through the publication RPC
-- **THEN** the model registers on the degraded path on the next refresh and diagnostics still lists it as degraded with its gaps
-
-#### Scenario: Ineligible model is rejected
-- **WHEN** the user accepts an invalid, ambiguous, or unmatched model
-- **THEN** the RPC reports Core's rejection and does not claim success
-
-### Requirement: Group-wide evidence flows through the adapter unchanged
-The plugin SHALL consume Core's group-wide completeness verdicts
-(consistency of limits, modalities, identity) verbatim and SHALL NOT
-re-derive any completeness, conflict, or eligibility judgment locally.
-
-#### Scenario: Conflict-blocked groups stay blocked
-- **WHEN** Core reports a group blocked for conflicting deployment evidence (limits disagree or identities cannot be proven equal)
-- **THEN** the model stays unregistered with status and conflict fields visible in diagnostics
-
-#### Scenario: Degraded model is distinguishable
-- **WHEN** diagnostics lines are displayed (command output and TUI)
-- **THEN** degraded models are listed separately from fully configured models
+#### Scenario: Descriptive discrepancy keeps the trusted snapshot
+- **WHEN** Core reports a resolved discrepancy for a model otherwise served from LKG
+- **THEN** the model stays registered from the trusted snapshot and diagnostics shows both the discrepancy and the LKG provenance
