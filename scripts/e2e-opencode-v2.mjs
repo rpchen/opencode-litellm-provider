@@ -816,6 +816,50 @@ try {
     `the degraded vocabulary must be gone from diagnostics: ${recoveryDiagnostics}`,
   )
 
+  // 4b) Acknowledgement persistence across a real host restart. Suppression is
+  //     observable through diagnostics; the problem set itself stays visible.
+  const unusableModels = () => ({
+    data: ["gap-a", "gap-b"].map((model_name) => ({
+      model_name,
+      litellm_params: { model: `custom/${model_name}` },
+      model_info: { mode: "chat" },
+    })),
+  })
+
+  servedModels = unusableModels()
+  await waitForRefreshAfter(Date.now(), "the unusable catalog state")
+  await diagnosticsThroughTui(/catalog 当前不可用/u, "the unusable catalog state")
+
+  // Restart the real host: a new plugin process restores the persisted memory.
+  openCodeServer.child.kill()
+  await sleep(1500)
+  openCodeServer = await startOpenCodeServer()
+  env.OPENCODE_PASSWORD = openCodeServer.password
+  await waitForRefreshAfter(Date.now(), "the post-restart discovery round")
+  const restoredDiagnostics = await diagnosticsThroughTui(
+    /提醒状态：该问题集合已确认（跨重启保留），不重复提醒/u,
+    "the restored acknowledgement after restart",
+  )
+  assert(/withheld[s：:]*gap-a/u.test(restoredDiagnostics), `the withheld reasons must survive the restart: ${restoredDiagnostics}`)
+  assert(/withheld[s：:]*gap-b/u.test(restoredDiagnostics), `the withheld reasons must survive the restart: ${restoredDiagnostics}`)
+
+  // Material change after the restart is surfaced again (no suppression line).
+  servedModels = { data: [...unusableModels().data, {
+    model_name: "gap-c",
+    litellm_params: { model: "custom/gap-c" },
+    model_info: { mode: "chat" },
+  }] }
+  await waitForRefreshAfter(Date.now(), "the grown problem set")
+  const grownDiagnostics = await diagnosticsThroughTui(/withheld[s：:]*gap-c/u, "the grown problem set")
+  assert(
+    !/提醒状态：该问题集合已确认/u.test(grownDiagnostics),
+    `a materially bigger problem set must not stay suppressed: ${grownDiagnostics}`,
+  )
+  console.log("[ack persistence] surfaced -> restarted suppressed -> material change re-surfaced")
+
+  servedModels = servedFixture.data
+  await waitForRefreshAfter(Date.now(), "the restored fixture catalog")
+
   // 5) A real metadata outage is reported, never hidden.
   mockFailStatus = 500
   await waitForAuditStatus("stale", "the metadata failure")

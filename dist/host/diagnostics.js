@@ -88,6 +88,14 @@ export function formatPublicationLines(summary) {
     }
     if (summary.failureKind)
         out.push(`元数据获取失败：${summary.failureKind}（未用默认值伪装完整配置）`);
+    // Notification state, not publication state: tells the user why the same
+    // problem set stays quiet across restarts.
+    if (summary.acknowledgement.reason === "unchanged") {
+        out.push("提醒状态：该问题集合已确认（跨重启保留），不重复提醒");
+    }
+    else if (summary.acknowledgement.reason === "improved") {
+        out.push("提醒状态：问题集合较已确认状态减少，基线已更新");
+    }
     if (summary.regressions.length > 0) {
         out.push(`此前可用、现已撤下：${summary.regressions.join("、")}（这些模型当前不可安全使用；插件不会自动切换到其他模型）`);
     }
