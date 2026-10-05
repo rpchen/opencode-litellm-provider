@@ -82,6 +82,7 @@ export async function registerMultiEndpointAudit(context, endpointIds, activeEnd
                 regressions: [],
                 discrepancies: [],
                 conflicts: [],
+                acknowledgement: { notify: false, reason: "unchanged", fingerprint: "sha256:none" },
             };
         },
     });

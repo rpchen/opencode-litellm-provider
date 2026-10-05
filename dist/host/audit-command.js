@@ -87,6 +87,7 @@ export async function registerAudit(context, snapshot, dependencies = {}) {
                 regressions: [],
                 discrepancies: [],
                 conflicts: [],
+                acknowledgement: { notify: false, reason: "unchanged", fingerprint: "sha256:none" },
             };
         },
     });

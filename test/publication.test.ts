@@ -5,7 +5,7 @@ import { createDiagnosticsLines } from "../src/host/diagnostics.js"
 import { buildPublicationModels, toOpenCodeModelSpecWithPublication } from "../src/host/models.js"
 import { catalogNotice, summarizePublication } from "../src/host/publication.js"
 import type { ProviderSnapshot } from "../src/host/register.js"
-import { createDiscoveryLoop, type SyncContext } from "../src/host/sync.js"
+import { createDiscoveryLoop, publicationMemoryKey, type SyncContext } from "../src/host/sync.js"
 import { createDiagnosticsResultStore } from "../src/tui-card.js"
 import { endpointIdentity } from "../src/endpoints.js"
 import type { PluginOptions } from "../src/options.js"
@@ -59,7 +59,19 @@ const OPTIONS: PluginOptions = {
   conversationFeedback: false,
 }
 
-function loopHarness(catalog: () => Promise<unknown>, fetch = async () => COMPLETE_RESPONSE) {
+function loopHarnessFactory(
+  catalog: () => Promise<unknown>,
+  fetch: (() => Promise<unknown>) | undefined = undefined,
+  injectedStorage: unknown = undefined,
+) {
+  return loopHarness(catalog, fetch ?? (async () => COMPLETE_RESPONSE), injectedStorage)
+}
+
+function loopHarness(
+  catalog: () => Promise<unknown>,
+  fetch: () => Promise<unknown> = async () => COMPLETE_RESPONSE,
+  injectedStorage: unknown = undefined,
+) {
   let reloads = 0
   const context: SyncContext = {
     integration: {
@@ -78,19 +90,26 @@ function loopHarness(catalog: () => Promise<unknown>, fetch = async () => COMPLE
     event: {
       subscribe: () => ({ [Symbol.asyncIterator]: async function* () {} }) as AsyncIterable<{ type: string }>,
     },
-    storage: {
+    storage: (injectedStorage ?? {
       stored: undefined as unknown,
-      async get(this: { stored: unknown }) { return this.stored },
-      async set(this: { stored: unknown }, _key: string, value: unknown) { this.stored = value },
-    } as SyncContext["storage"],
+      values: new Map<string, unknown>(),
+      async get(this: { stored: unknown; values: Map<string, unknown> }, key: string) {
+        return this.values.has(key) ? this.values.get(key) : this.stored
+      },
+      async set(this: { stored: unknown; values: Map<string, unknown> }, key: string, value: unknown) {
+        if (key.startsWith("litellm.publication.memory")) this.values.set(key, value)
+        else this.stored = value
+      },
+    }) as SyncContext["storage"],
   }
   const snapshot: ProviderSnapshot = { ready: false, models: [] }
+  const storage = context.storage as unknown as { stored: unknown; values: Map<string, unknown> }
   const loop = createDiscoveryLoop(context, snapshot, OPTIONS, {
     logger: { warn: () => {}, error: () => {} },
     fetchLiteLLM: fetch as never,
     getModelsDev: catalog as never,
   }, endpointIdentity("default", undefined, true))
-  return { loop, snapshot, get reloads() { return reloads } }
+  return { loop, snapshot, storage, get reloads() { return reloads } }
 }
 
 describe("publication mapping", () => {
@@ -209,6 +228,94 @@ describe("publication sync partition", () => {
     }
   })
 
+  test("acknowledgement survives a restart: the same problem set stays quiet, material change re-notifies", async () => {
+    // Unusable endpoint: every discovered model is withheld.
+    const unusable = async () => ({
+      data: ["gap-a", "gap-b"].map((model_name) => ({
+        model_name,
+        litellm_params: { model: `custom/${model_name}` },
+        model_info: { mode: "chat" },
+      })),
+    })
+    const identity = endpointIdentity("default", undefined, true)
+
+    const first = loopHarnessFactory(async () => ({}), unusable)
+    await first.loop.start()
+    try {
+      const publication = first.snapshot.diagnostics?.publication
+      expect(publication?.unusable).toBeTrue()
+      expect(publication?.acknowledgement.notify).toBeTrue()
+      const serialized = first.snapshot.publicationState?.acknowledgement
+      expect(serialized).toBeDefined()
+      // The adapter persisted the publication memory under its own endpoint key,
+      // next to the snapshot, and never inside the publication verdict itself.
+      const memory = JSON.parse(String(first.storage.values.get(publicationMemoryKey("default", true))))
+      expect(memory.schemaVersion).toBe(1)
+      expect(memory.acknowledgement.models["gap-a"]).toBeDefined()
+      expect(memory.published).toEqual([])
+    } finally {
+      await first.loop.dispose()
+    }
+
+    // Restart: a brand new loop, controller and options, same host storage.
+    const second = loopHarnessFactory(async () => ({}), unusable, first.storage)
+    await second.loop.start()
+    try {
+      const publication = second.snapshot.diagnostics?.publication
+      expect(publication?.unusable).toBeTrue()
+      // Same fingerprint -> suppressed, and diagnostics still describes it.
+      expect(publication?.acknowledgement.notify).toBeFalse()
+      expect(publication?.acknowledgement.reason).toBe("unchanged")
+      expect(publication?.withheld.map((entry) => entry.id).sort()).toEqual(["gap-a", "gap-b"])
+      expect(second.snapshot.publicationState?.pendingNotice).toBeUndefined()
+    } finally {
+      await second.loop.dispose()
+    }
+
+    // Material change after the restart: a third withheld model is reported again.
+    const grown = async () => ({
+      data: ["gap-a", "gap-b", "gap-c"].map((model_name) => ({
+        model_name,
+        litellm_params: { model: `custom/${model_name}` },
+        model_info: { mode: "chat" },
+      })),
+    })
+    const third = loopHarnessFactory(async () => ({}), grown, first.storage)
+    await third.loop.start()
+    try {
+      const publication = third.snapshot.diagnostics?.publication
+      expect(publication?.acknowledgement.notify).toBeTrue()
+      expect(publication?.acknowledgement.reason).toBe("catalog-unusable")
+      expect(third.snapshot.publicationState?.pendingNotice?.reason).toBe("catalog-unusable")
+    } finally {
+      await third.loop.dispose()
+    }
+  })
+
+  test("corrupt persisted memory changes nothing about publication", async () => {
+    const storage = {
+      stored: undefined as unknown,
+      values: new Map<string, unknown>([
+        [publicationMemoryKey("default", true), JSON.stringify({ schemaVersion: 99, acknowledgement: { bogus: true } })],
+      ]),
+      async get(this: { stored: unknown; values: Map<string, unknown> }, key: string) {
+        return this.values.has(key) ? this.values.get(key) : this.stored
+      },
+      async set(this: { stored: unknown; values: Map<string, unknown> }, key: string, value: unknown) {
+        if (key.startsWith("litellm.publication.memory")) this.values.set(key, value)
+        else this.stored = value
+      },
+    }
+    const h = loopHarnessFactory(async () => COMPLETE_CATALOG, undefined, storage)
+    await h.loop.start()
+    try {
+      expect(h.snapshot.models.map((model) => model.id)).toEqual(["pub-complete"])
+      expect(h.snapshot.diagnostics?.publication?.publishable.map((entry) => entry.id)).toEqual(["pub-complete"])
+    } finally {
+      await h.loop.dispose()
+    }
+  })
+
   test("a withheld model recovering is published automatically without user approval", async () => {
     let complete = false
     const h = loopHarness(async () => COMPLETE_CATALOG, async () => ({
@@ -263,10 +370,15 @@ describe("publication sync partition", () => {
       expect(lines).toContain("此前可用、现已撤下：pub-complete")
       expect(lines).toContain("catalog 当前不可用")
       // The notice is a warning and is consumed through the acknowledgement
-      // state, never through publication.
+      // state, never through publication. A withdrawal is reported as the
+      // specific regression message (it names the model and points at retry),
+      // not as a generic unusable-catalog notice.
       expect(publication?.acknowledgement.notify).toBeTrue()
+      expect(publication?.acknowledgement.reason).toBe("regression")
       expect(catalogNotice(publication)?.level).toBe("warning")
-      expect(catalogNotice(publication)?.message).toContain("没有任何模型可以安全发布")
+      expect(catalogNotice(publication)?.message).toContain("此前可用的模型已被撤下：pub-complete")
+      expect(catalogNotice(publication)?.message).toContain("不会自动切换")
+      expect(catalogNotice(publication)?.message).toContain("Retry")
     } finally {
       await h.loop.dispose()
     }

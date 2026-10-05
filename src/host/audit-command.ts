@@ -122,6 +122,7 @@ export async function registerAudit(
         regressions: [],
         discrepancies: [],
         conflicts: [],
+        acknowledgement: { notify: false, reason: "unchanged", fingerprint: "sha256:none" },
       }
     },
   } as never)

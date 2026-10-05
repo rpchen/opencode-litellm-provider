@@ -147,6 +147,22 @@ export declare const publicationRpc: {
                     readonly failureKind: {
                         readonly type: "string";
                     };
+                    readonly acknowledgement: {
+                        readonly type: "object";
+                        readonly properties: {
+                            readonly notify: {
+                                readonly type: "boolean";
+                            };
+                            readonly reason: {
+                                readonly type: "string";
+                            };
+                            readonly fingerprint: {
+                                readonly type: "string";
+                            };
+                        };
+                        readonly required: readonly ["notify", "reason", "fingerprint"];
+                        readonly additionalProperties: false;
+                    };
                 };
                 readonly required: readonly ["discovered", "publishable", "lkgIDs", "withheld", "partial", "unusable", "regressions"];
                 readonly additionalProperties: false;

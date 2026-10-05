@@ -107,6 +107,7 @@ export async function registerMultiEndpointAudit(
         regressions: [],
         discrepancies: [],
         conflicts: [],
+        acknowledgement: { notify: false, reason: "unchanged", fingerprint: "sha256:none" },
       }
     },
   } as never)

@@ -75,6 +75,115 @@ export function buildCatalogPublication(input) {
         fingerprint: catalogDegradationFingerprint(withheld),
     };
 }
+// ---------------------------------------------------------------------------
+// Acknowledgement: notification suppression only
+// ---------------------------------------------------------------------------
+/**
+ * Bumped when the persisted publication memory changes shape or meaning.
+ * An unreadable or older record is dropped, which can only cause one
+ * repeated notification — never a publication change.
+ */
+export const PUBLICATION_MEMORY_SCHEMA_VERSION = 1;
+/** Versioned shape of the acknowledgement record itself. */
+export const ACKNOWLEDGEMENT_SCHEMA_VERSION = 1;
+const FINGERPRINT_PATTERN = /^sha256:[0-9a-f]{32}$/;
+function parseAcknowledgementRecord(value) {
+    if (!isRecord(value))
+        return undefined;
+    if (value.schemaVersion !== ACKNOWLEDGEMENT_SCHEMA_VERSION)
+        return undefined;
+    if (typeof value.fingerprint !== "string" || value.fingerprint.length === 0)
+        return undefined;
+    if (typeof value.acknowledgedAt !== "string" || !Number.isFinite(Date.parse(value.acknowledgedAt)))
+        return undefined;
+    if (!isRecord(value.models))
+        return undefined;
+    const models = {};
+    for (const [key, fingerprint] of Object.entries(value.models)) {
+        const normalized = key.trim().toLowerCase();
+        if (normalized.length === 0)
+            return undefined;
+        if (typeof fingerprint !== "string" || !FINGERPRINT_PATTERN.test(fingerprint))
+            return undefined;
+        models[normalized] = fingerprint;
+    }
+    return {
+        schemaVersion: ACKNOWLEDGEMENT_SCHEMA_VERSION,
+        fingerprint: value.fingerprint,
+        models,
+        acknowledgedAt: value.acknowledgedAt,
+    };
+}
+/**
+ * Read persisted publication memory. A missing, corrupt, foreign, or
+ * older-schema record yields `undefined`, which at worst repeats a
+ * notification on the next round; it can never publish or withhold a model.
+ */
+export function parsePublicationMemory(value) {
+    const candidate = typeof value === "string" ? safeJSON(value) : value;
+    if (!isRecord(candidate))
+        return undefined;
+    if (candidate.schemaVersion !== PUBLICATION_MEMORY_SCHEMA_VERSION)
+        return undefined;
+    const published = Array.isArray(candidate.published)
+        ? candidate.published.filter((id) => typeof id === "string" && id.trim().length > 0)
+        : [];
+    const acknowledgement = candidate.acknowledgement === undefined || candidate.acknowledgement === null
+        ? undefined
+        : parseAcknowledgementRecord(candidate.acknowledgement);
+    // A record whose acknowledgement is present but unreadable is dropped as a
+    // whole: partially trusting it could wrongly suppress a real problem.
+    if (candidate.acknowledgement !== undefined && candidate.acknowledgement !== null && acknowledgement === undefined) {
+        return { schemaVersion: PUBLICATION_MEMORY_SCHEMA_VERSION, published };
+    }
+    return {
+        schemaVersion: PUBLICATION_MEMORY_SCHEMA_VERSION,
+        acknowledgement,
+        published: [...new Set(published)],
+    };
+}
+/** Stable, versioned payload an adapter stores verbatim. */
+export function serializePublicationMemory(memory) {
+    const published = [...new Set(memory.published)].sort((left, right) => left.localeCompare(right, "en"));
+    const acknowledgement = memory.acknowledgement;
+    return {
+        schemaVersion: PUBLICATION_MEMORY_SCHEMA_VERSION,
+        acknowledgement: acknowledgement === undefined
+            ? null
+            : {
+                schemaVersion: acknowledgement.schemaVersion,
+                fingerprint: acknowledgement.fingerprint,
+                models: Object.fromEntries(Object.entries(acknowledgement.models).sort(([left], [right]) => left.localeCompare(right, "en"))),
+                acknowledgedAt: acknowledgement.acknowledgedAt,
+            },
+        published,
+    };
+}
+/**
+ * Next regression baseline: keep previously published models that the
+ * endpoint still serves (published or withheld), add the ones published now,
+ * and forget models LiteLLM no longer returns at all so the set stays bounded.
+ */
+export function nextPublishedBaseline(previous, currentPublishable, currentWithheld) {
+    const known = new Set([...currentPublishable, ...currentWithheld]);
+    const next = new Set(currentPublishable);
+    for (const id of previous) {
+        if (known.has(id))
+            next.add(id);
+    }
+    return [...next];
+}
+function isRecord(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function safeJSON(value) {
+    try {
+        return JSON.parse(value);
+    }
+    catch {
+        return undefined;
+    }
+}
 function modelKey(id) {
     return id.trim().toLowerCase();
 }
@@ -84,9 +193,13 @@ function modelFingerprintMap(withheld) {
         map[modelKey(entry.id)] = entry.fingerprint;
     return map;
 }
+function acknowledgementOf(fingerprint, models, acknowledgedAt) {
+    return { schemaVersion: ACKNOWLEDGEMENT_SCHEMA_VERSION, fingerprint, models, acknowledgedAt };
+}
 /**
  * Decide whether this round may be surfaced, and what the next suppression
- * state should be.
+ * state should be. The returned state is what an adapter persists, so a
+ * restart re-observes the same problem set as `unchanged`.
  *
  * - full recovery clears the acknowledgement;
  * - a strict subset (a withheld model recovered, the rest unchanged) is an
@@ -98,87 +211,61 @@ function modelFingerprintMap(withheld) {
  * - `discovered > 0 && publishable = 0` is always surfaced: the endpoint is
  *   reachable but the catalog is currently unusable.
  */
+/**
+ * Decide whether this round may be surfaced, and what the next suppression
+ * state should be. The returned state is what an adapter persists, so after a
+ * restart the same problem set is recognised as .
+ *
+ * - a previously published model becoming withheld is a regression and is
+ *   always surfaced, even when the user acknowledged other problems;
+ * - an unusable catalog (discovered > 0, nothing publishable) is surfaced the
+ *   first time it is observed and whenever it materially grows; a continuing
+ *   identical state stays quiet and remains visible in diagnostics;
+ * - full recovery clears the acknowledgement;
+ * - a strict subset (a withheld model recovered, the rest unchanged) is an
+ *   improvement and stays quiet while updating the baseline;
+ * - a newly discovered model that cannot be published is visible in
+ *   diagnostics but is not interruptive on its own.
+ */
 export function decideAcknowledgement(previous, catalog, acknowledgedAt) {
     const currentFingerprint = catalog.fingerprint;
     const currentModels = modelFingerprintMap(catalog.withheld);
     if (catalog.withheld.length === 0) {
-        return {
-            notify: false,
-            reason: "catalog-recovered",
-            next: undefined,
-        };
-    }
-    if (catalog.unusable) {
-        return {
-            notify: true,
-            reason: "catalog-unusable",
-            next: {
-                version: 1,
-                fingerprint: currentFingerprint,
-                models: currentModels,
-                acknowledgedAt,
-            },
-        };
-    }
-    if (!previous || previous.version !== 1) {
-        const regression = catalog.regressions.length > 0;
-        return {
-            notify: regression,
-            reason: regression ? "regression" : "first-observation",
-            next: regression
-                ? { version: 1, fingerprint: currentFingerprint, models: currentModels, acknowledgedAt }
-                : undefined,
-        };
-    }
-    const previousModels = previous.models ?? {};
-    const regressionUnacknowledged = catalog.regressions.some((entry) => previousModels[modelKey(entry.id)] !== entry.fingerprint);
-    if (regressionUnacknowledged) {
-        return {
-            notify: true,
-            reason: "regression",
-            next: {
-                version: 1,
-                fingerprint: currentFingerprint,
-                models: currentModels,
-                acknowledgedAt,
-            },
-        };
+        return { notify: false, reason: "catalog-recovered", next: undefined };
     }
     const currentKeys = Object.keys(currentModels);
+    const usablePrevious = previous?.schemaVersion === ACKNOWLEDGEMENT_SCHEMA_VERSION ? previous : undefined;
+    const previousModels = usablePrevious?.models ?? {};
+    const regressionUnacknowledged = catalog.regressions.some((entry) => previousModels[modelKey(entry.id)] !== entry.fingerprint);
+    if (!usablePrevious) {
+        if (regressionUnacknowledged) {
+            return { notify: true, reason: "regression", next: acknowledgementOf(currentFingerprint, currentModels, acknowledgedAt) };
+        }
+        if (catalog.unusable) {
+            return { notify: true, reason: "catalog-unusable", next: acknowledgementOf(currentFingerprint, currentModels, acknowledgedAt) };
+        }
+        return { notify: false, reason: "first-observation", next: undefined };
+    }
+    if (regressionUnacknowledged) {
+        return { notify: true, reason: "regression", next: acknowledgementOf(currentFingerprint, currentModels, acknowledgedAt) };
+    }
     const isSubsetOrEqual = currentKeys.every((key) => previousModels[key] === currentModels[key]);
     if (isSubsetOrEqual) {
         const unchanged = currentKeys.length === Object.keys(previousModels).length;
         return {
             notify: false,
             reason: unchanged ? "unchanged" : "improved",
-            next: {
-                version: 1,
-                fingerprint: currentFingerprint,
-                models: currentModels,
-                acknowledgedAt: previous.acknowledgedAt,
-            },
+            next: acknowledgementOf(currentFingerprint, currentModels, usablePrevious.acknowledgedAt),
         };
     }
     return {
         notify: true,
-        reason: "new-issues",
-        next: {
-            version: 1,
-            fingerprint: currentFingerprint,
-            models: currentModels,
-            acknowledgedAt,
-        },
+        reason: catalog.unusable ? "catalog-unusable" : "new-issues",
+        next: acknowledgementOf(currentFingerprint, currentModels, acknowledgedAt),
     };
 }
 export function isDegradationAcknowledgement(value) {
-    if (typeof value !== "object" || value === null)
-        return false;
-    const candidate = value;
-    return candidate.version === 1 &&
-        typeof candidate.fingerprint === "string" &&
-        typeof candidate.acknowledgedAt === "string" &&
-        typeof candidate.models === "object" &&
-        candidate.models !== null;
+    return parseAcknowledgementRecord(value) !== undefined;
 }
 /**
  * Build catalog facts from a Core publication partition. Adapters pass the

@@ -41,6 +41,16 @@ const fieldFact = {
     required: ["model", "field", "status", "resolution"],
     additionalProperties: false,
 };
+const acknowledgement = {
+    type: "object",
+    properties: {
+        notify: { type: "boolean" },
+        reason: { type: "string" },
+        fingerprint: { type: "string" },
+    },
+    required: ["notify", "reason", "fingerprint"],
+    additionalProperties: false,
+};
 const summary = {
     type: "object",
     properties: {
@@ -55,6 +65,7 @@ const summary = {
         discrepancies: { type: "array", items: fieldFact },
         conflicts: { type: "array", items: fieldFact },
         failureKind: { type: "string" },
+        acknowledgement,
     },
     required: ["discovered", "publishable", "lkgIDs", "withheld", "partial", "unusable", "regressions"],
     additionalProperties: false,

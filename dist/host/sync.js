@@ -1,6 +1,6 @@
 import { buildModelSpecs, hasOperationalLimits, modelFingerprint, toOpenCodeModelSpec } from "../core/build.js";
 import { createDiscoveryCacheDiagnostics, diagnoseModelSpecs, } from "../core/diagnostics.js";
-import { classifyMetadataFailure, capturedPublicationVerdict, createLastKnownGoodEntry, decideAcknowledgement, groupLiteLLMDeployments, lastKnownGoodKey, } from "../generated/discovery-core/index.js";
+import { classifyMetadataFailure, capturedPublicationVerdict, createLastKnownGoodEntry, decideAcknowledgement, groupLiteLLMDeployments, lastKnownGoodKey, nextPublishedBaseline, parsePublicationMemory, serializePublicationMemory, PUBLICATION_MEMORY_SCHEMA_VERSION, } from "../generated/discovery-core/index.js";
 import { normalizeLiteLLMURL } from "../core/litellm.js";
 import { createDiscoveryCoordinator } from "../core/refresh.js";
 import { compareDiscoverySnapshots, createDiscoverySnapshot, endpointFingerprint, inspectDiscoverySnapshot, } from "../core/snapshot.js";
@@ -10,10 +10,15 @@ import { createRegistrationView } from "./register.js";
 import { catalogFactsFor, createPublicationState, summarizePublication, } from "./publication.js";
 import { buildPublicationModels } from "./models.js";
 const DISCOVERY_SNAPSHOT_STORAGE_KEY = "litellm.discovery.snapshot.v1";
+const PUBLICATION_MEMORY_STORAGE_KEY = "litellm.publication.memory.v1";
 const DEFAULT_ENDPOINT = endpointIdentity("default", undefined, true);
 /** Storage key of an endpoint's persisted discovery snapshot (legacy default keeps the unsuffixed key). */
 export function discoverySnapshotKey(endpointId, legacy) {
     return legacy ? DISCOVERY_SNAPSHOT_STORAGE_KEY : `${DISCOVERY_SNAPSHOT_STORAGE_KEY}.${endpointId}`;
+}
+/** Storage key of an endpoint's persisted publication memory (acknowledgement + regression baseline). */
+export function publicationMemoryKey(endpointId, legacy) {
+    return legacy ? PUBLICATION_MEMORY_STORAGE_KEY : `${PUBLICATION_MEMORY_STORAGE_KEY}.${endpointId}`;
 }
 const defaultScheduler = {
     setTimeout: (callback, milliseconds) => setTimeout(callback, milliseconds),
@@ -89,6 +94,8 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
     let lastFingerprint;
     let persistedIdentity;
     let persistedSnapshot;
+    let persistedPublicationMemory;
+    let publicationMemoryLoaded = false;
     let reloadPending = false;
     let eventTask;
     const reload = async () => {
@@ -150,6 +157,49 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
         }
         catch (error) {
             logger.warn(`LiteLLM snapshot 清理失败：${redact(error instanceof Error ? error.message : String(error))}`);
+        }
+    };
+    /**
+     * Restore the persisted publication memory (acknowledgement + regression
+     * baseline) into the endpoint controller. Reporting state only: it can
+     * suppress a repeated notification and mark a withdrawal as a regression,
+     * and can never publish or withhold a model.
+     */
+    const loadPublicationMemory = async (controller) => {
+        if (!context.storage)
+            return;
+        try {
+            const raw = await context.storage.get(publicationMemoryKey(endpoint.id, endpoint.legacy));
+            if (raw === undefined || raw === null)
+                return;
+            const memory = parsePublicationMemory(typeof raw === "string" ? raw : JSON.stringify(raw));
+            if (!memory)
+                return;
+            controller.acknowledgement = memory.acknowledgement;
+            for (const id of memory.published)
+                controller.previouslyPublished.add(id);
+            persistedPublicationMemory = JSON.stringify(serializePublicationMemory(memory));
+        }
+        catch (error) {
+            logger.warn(`LiteLLM publication memory 读取失败，继续发现：${redact(error instanceof Error ? error.message : String(error))}`);
+        }
+    };
+    /** Persist publication memory when it changed; failure never affects discovery. */
+    const persistPublicationMemory = async (memory) => {
+        const serialized = serializePublicationMemory(memory);
+        const material = JSON.stringify(serialized);
+        if (material === persistedPublicationMemory)
+            return;
+        if (!context.storage) {
+            persistedPublicationMemory = material;
+            return;
+        }
+        try {
+            await context.storage.set(publicationMemoryKey(endpoint.id, endpoint.legacy), material);
+            persistedPublicationMemory = material;
+        }
+        catch (error) {
+            logger.warn(`LiteLLM publication memory 持久化失败（不影响本次发现）：${redact(error instanceof Error ? error.message : String(error))}`);
         }
     };
     const cancelTimer = () => {
@@ -361,6 +411,10 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                     return { models, fingerprint: fingerprint(models) };
                 }
                 const controller = snapshot.publicationState ??= createPublicationState();
+                if (!publicationMemoryLoaded) {
+                    await loadPublicationMemory(controller);
+                    publicationMemoryLoaded = true;
+                }
                 const now = Date.now();
                 const { models, result } = buildPublicationModels(response, catalog, options, {
                     store: controller.store,
@@ -457,12 +511,15 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
             if (controller && coordinated.value.catalog && publication) {
                 const acknowledgement = decideAcknowledgement(controller.acknowledgement, coordinated.value.catalog, refreshedAtIso);
                 controller.acknowledgement = acknowledgement.next;
-                // Additive: the baseline answers "was this model ever published by the
-                // applied catalog", so a withdrawal stays visible in diagnostics across
-                // later rounds. A recovered model leaves the regression list by becoming
-                // publishable again, never by the baseline forgetting it.
-                for (const model of models)
-                    controller.previouslyPublished.add(model.id);
+                const memory = {
+                    schemaVersion: PUBLICATION_MEMORY_SCHEMA_VERSION,
+                    acknowledgement: acknowledgement.next,
+                    // Additive for models the endpoint still serves, bounded by forgetting
+                    // models LiteLLM no longer returns: a withdrawal stays a regression
+                    // for later rounds and after a restart.
+                    published: nextPublishedBaseline([...controller.previouslyPublished], models.map((model) => model.id), coordinated.value.catalog.withheld.map((entry) => entry.id)),
+                };
+                controller.previouslyPublished = new Set(memory.published);
                 if (acknowledgement.notify) {
                     controller.pendingNotice = {
                         reason: acknowledgement.reason,
@@ -477,6 +534,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                         fingerprint: acknowledgement.next?.fingerprint ?? "sha256:none",
                     },
                 };
+                await persistPublicationMemory(memory);
             }
             snapshot.diagnostics = {
                 discovery: coordinated.value.diagnostics,
