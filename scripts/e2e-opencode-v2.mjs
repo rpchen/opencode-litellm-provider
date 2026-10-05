@@ -760,8 +760,8 @@ try {
   assert(/withheld[\s：:]*shared-route/u.test(rejectionDiagnostics), `ambiguous group must stay withheld: ${rejectionDiagnostics}`)
   assert(/withheld[\s：:]*gpt-5\.5/u.test(rejectionDiagnostics), `conflicting group must stay withheld: ${rejectionDiagnostics}`)
   assert(
-    /部分可用/u.test(rejectionDiagnostics),
-    `partial availability must be stated: ${rejectionDiagnostics}`,
+    /发现 \d+ · 可用 \d+ · withheld \d+/u.test(rejectionDiagnostics),
+    `the partial-availability counts must be stated: ${rejectionDiagnostics}`,
   )
 
   // 3) A previously configured LiteLLM-only model loses its capability evidence:
@@ -842,7 +842,7 @@ try {
     "the unusable catalog after restart",
   )
   assert(
-    /提醒状态：该问题集合已确认（跨重启保留），不重复提醒/u.test(restoredDiagnostics),
+    /提醒状态：该问题集合已确认/u.test(restoredDiagnostics),
     `the restored acknowledgement must suppress a repeated notice: ${restoredDiagnostics}`,
   )
   assert(/withheld[s：:]*gap-a/u.test(restoredDiagnostics), `the withheld reasons must survive the restart: ${restoredDiagnostics}`)
