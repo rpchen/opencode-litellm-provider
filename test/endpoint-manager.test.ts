@@ -40,6 +40,8 @@ function host(content: string, opts: { legacyUrl?: string; inlineOptions?: unkno
     async removeStorage(key) { removed.push(key) },
     async sourceTarget() { return PKG },
     write: opts.write,
+    snapshots: () => new Map(),
+    async triggerEndpoint() { return { ok: true } },
   })
   return { manager, target, text: () => readFileSync(target.file, "utf8"), removed, events, get activation() { return activation }, get options() { return options }, active: () => activeEndpointIds(ids(), activation) }
 }
@@ -50,10 +52,12 @@ describe("endpoint manager (server)", () => {
   test("[LIST-SINGLE][LIST-MULTI] lists explicit endpoints with active state", async () => {
     const h = host(file(TWO))
     await h.manager.refresh?.()
-    expect(h.manager.endpoints()).toEqual([
-      { id: "default", baseUrl: "https://a.example", active: true, legacy: false },
-      { id: "company", baseUrl: "https://b.example", active: true, legacy: false },
-    ])
+    const list = h.manager.endpoints()
+    expect(list.map((item) => ({ id: item.id, baseUrl: item.baseUrl, active: item.active, legacy: item.legacy })))
+      .toEqual([
+        { id: "default", baseUrl: "https://a.example", active: true, legacy: false },
+        { id: "company", baseUrl: "https://b.example", active: true, legacy: false },
+      ])
     expect(h.manager.writable().writable).toBe(true)
   })
 
@@ -64,7 +68,7 @@ describe("endpoint manager (server)", () => {
     // legacy with a connected address → the default endpoint is listed with its address
     const legacy = host(file(), { legacyUrl: "https://old.example" })
     await legacy.manager.refresh?.()
-    expect(legacy.manager.endpoints()).toEqual([{ id: "default", baseUrl: "https://old.example", active: true, legacy: true }])
+    expect(legacy.manager.endpoints().map((item) => ({ id: item.id, baseUrl: item.baseUrl, active: item.active, legacy: item.legacy }))).toEqual([{ id: "default", baseUrl: "https://old.example", active: true, legacy: true }])
     expect(legacy.manager.writable().legacyMigration).toBe(true)
     // legacy without any connection/URL → no ghost default row; the user just adds endpoints
     const ghostless = host(file())
@@ -164,6 +168,8 @@ describe("endpoint manager (server)", () => {
       async removeStorage() {},
       async sourceTarget() { return PKG },
       write: { rename: () => { throw new Error("disk full") } },
+      snapshots: () => new Map(),
+      async triggerEndpoint() { return { ok: true } },
     })
     const result = await failingHost.add({ endpointId: "lab", baseUrl: "https://lab.example" })
     expect(result.ok).toBe(false)
@@ -181,7 +187,7 @@ describe("endpoint manager (server)", () => {
     // the runtime-internal legacy id "default" must never be materialised into activation
     expect(h.activation).toEqual({ mode: "selected", endpointIds: [] })
     expect(h.events).toContain('activation:{"mode":"selected","endpointIds":[]}')
-    expect(h.options.endpoints?.company).toEqual({ baseUrl: "https://b.example", protocolOverrides: {} })
+    expect(h.options.endpoints?.company).toMatchObject({ baseUrl: "https://b.example", protocolOverrides: {} })
     expect(h.active()).toEqual([])
     // later the user hand-adds endpoints.default in the config file
     writeFileSync(h.target.file, file({ company: { baseUrl: "https://b.example" }, default: { baseUrl: "https://a.example" } }))
@@ -209,7 +215,7 @@ describe("endpoint manager (server)", () => {
     expect(h.options.endpoints).toBeUndefined()
     const second = await h.manager.add({ endpointId: "lab", baseUrl: "https://lab.example", confirmMigration: true })
     expect(second).toEqual({ ok: true, migrated: true })
-    expect(h.options.endpoints).toEqual({
+    expect(h.options.endpoints).toMatchObject({
       default: { baseUrl: "https://old.example", protocolOverrides: { m: "chat" } },
       lab: { baseUrl: "https://lab.example", protocolOverrides: {} },
     })
@@ -220,7 +226,7 @@ describe("endpoint manager (server)", () => {
   test("[EDIT-URL][EDIT-PRESERVE][EDIT-ISOLATED] edit changes only that Base URL", async () => {
     const h = host(file(TWO))
     expect((await h.manager.edit({ endpointId: "company", baseUrl: "https://new.example" })).ok).toBe(true)
-    expect(h.options.endpoints?.company).toEqual({ baseUrl: "https://new.example", protocolOverrides: { m: "messages" } })
+    expect(h.options.endpoints?.company).toMatchObject({ baseUrl: "https://new.example", protocolOverrides: { m: "messages" } })
     expect(h.options.endpoints?.default?.baseUrl).toBe("https://a.example")
     expect((await h.manager.edit({ endpointId: "ghost", baseUrl: "https://x.example" })).code).toBe("not-found")
   })
@@ -260,7 +266,7 @@ describe("endpoint manager (server)", () => {
     await h.manager.refresh?.()
     const result = await h.manager.migrate()
     expect(result).toEqual({ ok: true, migrated: true })
-    expect(h.options.endpoints).toEqual({
+    expect(h.options.endpoints).toMatchObject({
       default: { baseUrl: "https://old.example", protocolOverrides: { m: "chat" } },
     })
     // after migration the default endpoint is a normal managed endpoint: edit and delete work
@@ -298,6 +304,6 @@ describe("endpoint manager (server)", () => {
     await h.manager.remove({ endpointId: "company" })
     await h.manager.add({ endpointId: "company", baseUrl: "https://b2.example" })
     expect(h.active()).toEqual(["default"])
-    expect(h.options.endpoints?.company).toEqual({ baseUrl: "https://b2.example", protocolOverrides: {} })
+    expect(h.options.endpoints?.company).toMatchObject({ baseUrl: "https://b2.example", protocolOverrides: {} })
   })
 })

@@ -1,4 +1,5 @@
 import { isEndpointID } from "./generated/discovery-core/index.js";
+import { normalizeLiteLLMURL } from "./core/litellm.js";
 export const DEFAULT_OPTIONS = {
     pollInterval: 300,
     contextTierCap: true,
@@ -85,20 +86,39 @@ export function parseOptions(input, logger = console) {
                 logger.warn(`endpoint ${id} 必须是对象，已跳过`);
                 continue;
             }
-            const baseUrl = typeof raw.baseUrl === "string" ? raw.baseUrl.trim() : "";
+            const rawUrl = typeof raw.baseUrl === "string" ? raw.baseUrl.trim() : "";
+            // Use the same entry rule as runtime: normalizeLiteLLMURL rejects
+            // non-http(s) AND userinfo-bearing URLs. No additional heuristics.
             let valid = false;
-            try {
-                const url = new URL(baseUrl);
-                valid = url.protocol === "http:" || url.protocol === "https:";
+            if (rawUrl.length > 0) {
+                try {
+                    normalizeLiteLLMURL(rawUrl);
+                    valid = true;
+                }
+                catch { }
             }
-            catch { }
             if (!valid) {
-                logger.warn(`endpoint ${id} 缺少合法 http(s) baseUrl，已跳过`);
+                // Invalid endpoints are KEPT in the registry so the management UI and
+                // diagnostics can show them as "Invalid configuration" instead of the
+                // endpoint silently disappearing. Entries with no baseUrl at all are
+                // still skipped (treated as "missing required field", not "invalid").
+                if (rawUrl.length === 0) {
+                    logger.warn(`endpoint ${id} 缺少 baseUrl，已跳过`);
+                    continue;
+                }
+                logger.warn(`endpoint ${id} 的 baseUrl 非法（${rawUrl.length > 0 ? "需为 http(s) 且不包含用户名/密码" : "缺失"}）；保留为 Invalid configuration`);
+                endpoints[id] = {
+                    baseUrl: "",
+                    protocolOverrides: parseProtocolOverrides(raw.protocolOverrides, `endpoints.${id}.protocolOverrides`, logger),
+                    validation: { kind: "invalid", reason: "Base URL 非法（需要非空的 http(s) 地址，且不能包含用户名/密码）" },
+                    invalidBaseUrl: rawUrl,
+                };
                 continue;
             }
             endpoints[id] = {
-                baseUrl,
+                baseUrl: rawUrl,
                 protocolOverrides: parseProtocolOverrides(raw.protocolOverrides, `endpoints.${id}.protocolOverrides`, logger),
+                validation: { kind: "ok" },
             };
         }
     }

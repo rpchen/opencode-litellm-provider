@@ -1,6 +1,7 @@
 import { activeEndpointIds } from "../endpoints.js";
 import { parseOptions } from "../options.js";
 import { ConfigFileError, locateConfig, mutateEndpoints, readPluginOptions, } from "./config-file.js";
+import { canRetry, statusLabel, userVisibleStatus, } from "./endpoint-state.js";
 import { discoverySnapshotKey } from "./sync.js";
 const QUIET = { warn() { } };
 const fail = (code, message) => ({ ok: false, code, message });
@@ -66,18 +67,42 @@ export function createEndpointManagement(host) {
     };
     const currentEndpoints = () => {
         const options = host.options();
+        const snapshotMap = host.snapshots();
+        const canonicalFor = (id) => snapshotMap.get(id)?.endpointState;
         const active = new Set(activeEndpointIds(host.ids(), host.activation()));
         // Legacy default is not a config entry: its address lives in the /connect credential. With no
         // connected address there is no endpoint at all — do not show a ghost "default" row.
         if (options.endpoints === undefined) {
-            return legacyUrl ? [{ id: "default", baseUrl: legacyUrl, active: active.has("default"), legacy: true }] : [];
+            if (!legacyUrl)
+                return [];
+            const canonical = canonicalFor("default");
+            return [{
+                    id: "default",
+                    baseUrl: legacyUrl,
+                    legacy: true,
+                    active: active.has("default"),
+                    state: canonical,
+                    status: canonical ? userVisibleStatus(canonical) : undefined,
+                    statusLabel: canonical ? statusLabel(userVisibleStatus(canonical)) : undefined,
+                    canRetry: canonical ? canRetry(canonical) : false,
+                }];
         }
-        return Object.entries(options.endpoints).map(([id, definition]) => ({
-            id,
-            baseUrl: definition.baseUrl,
-            active: active.has(id),
-            legacy: false,
-        }));
+        return Object.entries(options.endpoints).map(([id, definition]) => {
+            const canonical = canonicalFor(id);
+            const baseUrl = definition.validation?.kind === "invalid"
+                ? (definition.invalidBaseUrl ?? definition.baseUrl)
+                : definition.baseUrl;
+            return {
+                id,
+                baseUrl,
+                legacy: false,
+                active: active.has(id),
+                state: canonical,
+                status: canonical ? userVisibleStatus(canonical) : undefined,
+                statusLabel: canonical ? statusLabel(userVisibleStatus(canonical)) : undefined,
+                canRetry: canonical ? canRetry(canonical) : false,
+            };
+        });
     };
     /**
      * The endpoint definitions that really exist right now: explicit config entries, or legacy `default`
@@ -175,7 +200,7 @@ export function createEndpointManagement(host) {
             try {
                 const address = await host.legacyBaseUrl();
                 if (!address)
-                    return fail("not-found", "没有可迁移的 legacy 地址（当前没有已连接的 LiteLLM endpoint）");
+                    return fail("not-found", "没有可迁移的 legacy 地址（当前没有配置地址的 LiteLLM endpoint）");
                 const result = await write(target, { kind: "migrate", baseUrl: address });
                 await afterWrite(target);
                 await host.removeStorage(discoverySnapshotKey("default", true)).catch(() => { });
@@ -239,6 +264,25 @@ export function createEndpointManagement(host) {
                     return fail(error.code, error.message);
                 return fail("error", messageOf(error));
             }
+        },
+        async trigger(input) {
+            // Retry / 重新应用: only meaningful for enabled endpoints that are not currently active.
+            const current = currentEndpoints().find((item) => item.id === input.endpointId);
+            if (!current)
+                return fail("not-found", `Endpoint ${input.endpointId} 不存在`);
+            const canonical = current.state;
+            if (canonical) {
+                if (canonical.desired !== "enabled")
+                    return fail("invalid-state", `Endpoint ${input.endpointId} 未启用，无需重新应用`);
+                if (canonical.validation.kind === "invalid")
+                    return fail("invalid-state", `Endpoint ${input.endpointId} 配置非法，请先修改 Base URL`);
+                if (canonical.applied.kind === "active")
+                    return { ok: true, message: `Endpoint ${input.endpointId} 已是已生效状态` };
+            }
+            const result = await host.triggerEndpoint(input.endpointId);
+            if (!result.ok)
+                return fail("error", result.message ?? `重新应用 ${input.endpointId} 失败`);
+            return { ok: true };
         },
     };
 }

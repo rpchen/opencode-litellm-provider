@@ -104,14 +104,44 @@ endpoint id 是用户定义的稳定 ASCII slug，必须匹配 `[a-z0-9][a-z0-9-
 
 ### 管理 endpoint（`/litellm-endpoints`）
 
-执行 `/litellm-endpoints` 打开 OpenCode 原生选择框（终端 TUI）：`↑` / `↓` 移动，`Enter` 确认，`Esc` 返回/关闭；鼠标点选由 OpenCode 处理。列表每行显示 `✓`/`○`（启用/未启用）和凭据状态（已连接/未连接）。
+执行 `/litellm-endpoints` 打开 OpenCode 原生选择框（终端 TUI）：`↑` / `↓` 移动，`Enter` 确认，`Esc` 返回/关闭；鼠标点选由 OpenCode 处理。列表每行显示 `✓`/`○`（启用/未启用）、用户可见状态与凭据状态。
+
+#### Endpoint 状态模型
+
+每个 endpoint 的状态由四个独立维度派生，管理中心、`/litellm-diagnostics` 与 `/models` 全部从同一份 canonical state 读取：
+
+| 维度 | 含义 |
+|---|---|
+| **期望状态** | 你在 `options.endpoints` + activation 中要求的：`已启用` 或 `未启用` |
+| **配置** | endpoint 定义是否合法（`baseUrl` 是否合法 http(s) 且不带凭据） |
+| **凭据** | 是否已保存 API Key |
+| **Runtime** | 当前进程里该 endpoint 是否真正被应用成功（provider 注册 + 最近一次 discovery 的结果） |
+
+派生的用户可见状态标签（与 `pi-litellm-provider` 完全一致）：
+
+| 标签 | 含义 | 下一步 |
+|---|---|---|
+| `已启用 · 已生效` | 启用 + 配置合法 + 已保存凭据 + 本进程 apply 成功 | 正常使用 `/models` |
+| `已启用 · 需要认证` | 启用但未保存 API Key | 在详情选 **连接 API Key**，或 `/connect` |
+| `已启用 · 未生效` | 启用但当前进程尚未 apply 成功一次 | 在详情选 **重新应用** 触发强制 refresh |
+| `已启用 · 出错` | 最近一次 apply 失败（网络/认证/解析等） | 查看 `/litellm-diagnostics <id>` 的错误分类；修复后 **重新应用** |
+| `已启用 · 配置非法` | `baseUrl` 等定义非法；不会被注册 | 在详情选 **修改 Base URL** 修复 |
+| `未启用` | 配置合法但已停用 | 在详情选 **启用** |
+| `未启用 · 配置非法` | 既停用又配置非法；仍可见可修复 | 先修复，再视需要启用 |
+
+**配置表达你的意图，runtime 表达现实。** 启用成功但 apply 失败时，activation 持久化里仍是 `已启用`——我们不会因为 runtime 临时失败而偷偷把你的配置改回去；UI 也不会谎报成功。
+
+**凭据状态只描述"是否已保存 API Key"，不等于"已连接"：** `已保存 API Key` 并不蕴含 endpoint 可达；要确认可达，看 `Runtime` 是否 `已生效`。
+
+非法 endpoint 永远不会从管理界面或 diagnostics 消失：即使 `未启用 · 配置非法`，它仍然列出并按提示修复。修复 Base URL 后状态即转为 `已启用 · 未生效`，再 `重新应用` 即可。
 
 | 想做的事 | 怎么做 |
 |---|---|
-| **新增** | 选 **＋ 新增 endpoint** → 输入 Endpoint ID → 输入 Base URL。新 endpoint **默认未启用、未连接**，不会自动启用 |
+| **新增** | 选 **＋ 新增 endpoint** → 输入 Endpoint ID → 输入 Base URL。新 endpoint **默认未启用、未保存 API Key**，不会自动启用 |
 | **修改 Base URL** | 选中 endpoint → **修改 Base URL**。ID 不可修改（没有 rename）；`protocolOverrides` 等配置和你的注释原样保留 |
 | **连接 / 替换 / 断开 API Key** | 选中 endpoint → **连接 API Key** / **替换 API Key** / **断开凭据**。已保存的 Key 永远不会显示；断开只删除该 endpoint 的 Key |
 | **启用 / 停用** | 选中 endpoint → **启用** / **停用**；也可以用 **全部启用** / **全部停用**。立即生效，允许 0 个启用 |
+| **重新应用** | 选中 endpoint（`已启用 · 未生效` / `已启用 · 出错` / `已启用 · 需要认证` 时显示）→ **重新应用**：强制该 endpoint 一次 refresh，不需要先停用再启用 |
 | **删除** | 选中 endpoint → **删除 endpoint**，确认后彻底删除：配置、启用状态、已保存的 Key、模型发现缓存。**取消确认不会留下任何改动**（包括 legacy default 的内部迁移） |
 
 说明：
@@ -150,17 +180,17 @@ endpoint id 是用户定义的稳定 ASCII slug，必须匹配 `[a-z0-9][a-z0-9-
 
 这里传的是配置中的 endpoint id，不是 provider id；例如应传 `company`，而不是 `litellm-company`。
 
-查看当前插件运行状态，包括：
+详情包含：`期望状态`（已启用/未启用）、`配置`（合法/非法 + 原因）、`凭据`（已保存 API Key / 未保存 / 环境变量 / 状态未知）、`Runtime`（已生效 / 未生效 / 出错 + 分类）、当前注册模型数、最近成功发现时刻，以及 discovery / publication / 缓存 / Runtime Identity 细节。**任何状态的 endpoint 都给出完整详情**——`未启用`、`配置非法`、`需要认证`、`未生效`、`出错` 都不会让 detail 退化为占位信息。
 
-- 已注册模型数
-- 模型配置：可用 / 未完成（含缺失字段） / 已接受降级 / LKG（历史完整快照）数量
-- 缓存来源：`snapshot` / `network` / `memory-cache` / `stale`
-- models.dev 命中情况
-- 协议 fallback 数量
-- 当前插件编入的 Core SHA
-- Runtime Identity（见下文）：当前运行 artifact 自身的不可变身份
+`/litellm-diagnostics` 只读取现有状态，**不会发起模型请求，也不会产生额外 token 消耗**。
 
-这个命令只读取现有状态，**不会发起模型请求，也不会产生额外 token 消耗**。
+**`/models`（OpenCode 模型选择器 / `opencode models`）只承诺现实**：仅当 endpoint 同时满足下面三条时才会出现：
+
+1. 期望状态是 `已启用`
+2. 配置合法
+3. 当前进程里最近一次 apply 已成功（`已生效`）
+
+任一条件不满足（含 `已启用 · 未生效` / `已启用 · 出错` / `已启用 · 需要认证` / `已启用 · 配置非法` / `未启用`），该 endpoint 的模型不会出现在 `/models`——包括历史 snapshot 也不会让模型继续显示。历史 discovery 结果仍保留用于诊断回放，但不会被伪装成当前可调用的模型。
 
 endpoint 里发现了模型，不等于模型已经正确配置完成。只有能力信息完整可信（上下文窗口、输出上限、工具调用、reasoning 等足以让宿主正确使用）的模型，才会作为正常模型注册。未完成模型不会伪装成正常模型；元数据获取失败（超时、5xx、网络不可达等）不会用默认值拼出看似正常的配置。元数据暂时失败但存在仍可信的历史完整快照（LKG）时，模型继续可用并在诊断中标注（标注来源与数据年龄；年龄本身不会使快照失效）。
 
@@ -331,15 +361,16 @@ github:rpchen/opencode-litellm-provider#v0.7.0
 
 ## 常见问题
 
-### 连接成功但看不到模型
+### 已保存 API Key 但看不到模型
 
 依次检查：
 
 1. 当前 API Key 是否有权访问 `/v1/model/info`
 2. `opencode plugin list` 中插件是否 active
-3. 终端 TUI 执行 `/litellm-diagnostics` 查看当前状态
-4. 是否仍保留了手工配置的同名 `litellm` provider
-5. 若刚更新插件，执行 `opencode plugin update ...` 后再 `opencode reload`
+3. **终端 TUI 执行 `/litellm-endpoints` 查看 endpoint 的用户可见状态**：若是 `已启用 · 未生效` / `已启用 · 出错`，在详情选 **重新应用**；若是 `已启用 · 需要认证`，在详情选 **连接 API Key** 或用 `/connect`；若是 `已启用 · 配置非法`，先 **修改 Base URL**
+4. 执行 `/litellm-diagnostics <endpoint-id>` 查看完整 canonical state 与最近错误分类
+5. 是否仍保留了手工配置的同名 `litellm` provider
+6. 若刚更新插件，执行 `opencode plugin update ...` 后再 `opencode reload`
 
 ### 为什么短暂断网后模型还在？
 

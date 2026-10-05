@@ -1,8 +1,21 @@
+export interface EndpointStateCompact {
+    desired: "enabled" | "disabled";
+    validationKind: "ok" | "invalid";
+    credentialKind: "stored" | "environment" | "none" | "unknown";
+    appliedKind: "active" | "not-applied" | "error";
+    applyErrorCategory?: string;
+}
 export interface EndpointViewItem {
     id: string;
     baseUrl: string;
+    /** @deprecated backward-compat with older servers; new servers always send `state`-derived fields. */
     active: boolean;
     legacy: boolean;
+    /** Canonical state echo from the server. */
+    state?: EndpointStateCompact;
+    status?: string;
+    statusLabel?: string;
+    canRetry?: boolean;
 }
 export interface EndpointStateView {
     sequence: number;
@@ -46,6 +59,10 @@ export interface EndpointRpcClient {
         endpointId: string;
     }): Promise<unknown>;
     migrate(input: Record<string, never>): Promise<unknown>;
+    /** Retry / 重新应用: force a refresh for one endpoint. */
+    trigger(input: {
+        endpointId: string;
+    }): Promise<unknown>;
 }
 export interface ConnectionLike {
     type: string;
@@ -117,7 +134,7 @@ export declare function keyMethodRequiresUrl(client: CredentialClient, endpointI
  * Connect (or replace) an endpoint's key through the host credential store. The key is never returned.
  *
  * OpenCode validates the key method's form before authenticating: a legacy integration requires the
- * `url` answer, so omitting it makes the host reject the credential (the endpoint is left unconnected).
+ * `url` answer, so omitting it makes the host reject the credential (no key is saved for the endpoint).
  */
 export declare function saveKey(client: CredentialClient, endpointId: string, key: string, url?: string): Promise<void>;
 /** Disconnect removes only this endpoint's stored credentials (env connections are not ours to remove). */

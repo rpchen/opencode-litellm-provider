@@ -4,6 +4,7 @@ import type { ModelSpec } from "../core/build.js"
 import type { DiscoveryCacheDiagnostics, DiscoveryDiagnostics } from "../generated/discovery-core/index.js"
 import { PROTOCOL_PACKAGES } from "../core/protocol.js"
 import { endpointIdentity, type EndpointIdentity } from "../endpoints.js"
+import { canPublish, type EndpointState } from "./endpoint-state.js"
 import type { PublicationState, PublicationSummary } from "./publication.js"
 
 export interface Registration {
@@ -65,6 +66,16 @@ export interface ProviderSnapshot {
   diagnostics?: ProviderDiagnosticsSnapshot
   /** Per-endpoint publication controller memory (LKG store + degraded acceptance). */
   publicationState?: PublicationState
+  /**
+   * Canonical endpoint state: desired × validation × credential × applied.
+   * This is the single source of truth every user-visible surface derives from
+   * (management list, endpoint detail, /litellm-diagnostics, /models gating).
+   *
+   * The field may be absent briefly during plugin setup before the runtime has
+   * computed it; consumers must fall back to a disabled/unknown placeholder via
+   * `endpointStateOf(snapshot, fallback)` instead of inventing their own logic.
+   */
+  endpointState?: EndpointState
 }
 
 export function applyIntegration(editor: IntegrationEditorLike, endpoint: EndpointIdentity = DEFAULT_IDENTITY): void {
@@ -152,7 +163,11 @@ export function createRegistrationView(models: readonly ModelSpec[], apiBaseURL:
 }
 
 export function applyProvider(editor: ProviderEditorLike, snapshot: ProviderSnapshot, endpoint: EndpointIdentity = DEFAULT_IDENTITY): void {
+  // Canonical gating: the host may only see a provider/model registration for an
+  // endpoint that is enabled + validated + credentialed + applied. This subsumes
+  // the previous `ready && connection && apiBaseURL` check with an auditable rule.
   if (!snapshot.ready || !snapshot.connection || !snapshot.apiBaseURL) return
+  if (snapshot.endpointState && !canPublish(snapshot.endpointState)) return
   const view = snapshot.registrationView ?? snapshot.audit?.view ?? createRegistrationView(snapshot.models, snapshot.apiBaseURL, endpoint)
 
   editor.add({
@@ -181,4 +196,31 @@ export function registerProvider(
   endpoint: EndpointIdentity = DEFAULT_IDENTITY,
 ): Promise<Registration> {
   return context.provider.transform((editor) => applyProvider(editor, snapshot, endpoint))
+}
+
+/**
+ * Read the canonical state with a safe fallback. When the snapshot was produced
+ * without canonical state (older code paths or test fixtures), derive a best-effort
+ * approximation from the existing `audit.status`. Once the runtime has refreshed
+ * in this process, `endpointState` is authoritative and MUST be preferred.
+ */
+export function endpointStateOf(snapshot: ProviderSnapshot, endpointId: string): EndpointState {
+  if (snapshot.endpointState) return snapshot.endpointState
+  // Backfill from the legacy audit status so older fixtures still render a truthful view.
+  const status = snapshot.audit?.status ?? "disconnected"
+  const applied: EndpointState["applied"] =
+    status === "ready" || status === "empty" || status === "stale"
+      ? { kind: "active", modelCount: snapshot.models.length, lastDiscoveryAt: snapshot.audit?.lastSuccessfulDiscoveryAt }
+      : status === "cleared-auth"
+        ? { kind: "error", category: "auth" }
+        : status === "cleared-notfound"
+          ? { kind: "error", category: "network" }
+          : { kind: "not-applied" }
+  return {
+    endpointId,
+    desired: "enabled",
+    validation: { kind: "ok" },
+    credential: snapshot.connection ? "stored" : "none",
+    applied,
+  }
 }

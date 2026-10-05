@@ -64,7 +64,7 @@ export function formatHostDateTime(value, timezoneOffsetMinutes) {
     ].join(" ");
 }
 const STATUS_TEXT = {
-    disconnected: "未连接",
+    disconnected: "尚未发现 LiteLLM",
     pending: "等待首次发现",
     switching: "连接切换中",
     ready: "正常",

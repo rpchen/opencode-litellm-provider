@@ -61,6 +61,26 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
     const coordinator = createDiscoveryCoordinator();
     const abortEvents = new AbortController();
     snapshot.audit ??= { status: "disconnected" };
+    // Canonical endpoint state writers. desired and validation are owned by the
+    // reconciler in index.ts; this loop owns credential and applied. When the loop
+    // runs at all, the endpoint is in the active set — so a missing endpointState
+    // is initialised with desired=enabled (the reconciler will re-write it on the
+    // next activation transition).
+    const writeCanonical = (patch) => {
+        const current = snapshot.endpointState ?? {
+            endpointId: endpoint.id,
+            desired: "enabled",
+            validation: endpoint.validation,
+            credential: "unknown",
+            applied: { kind: "not-applied" },
+        };
+        snapshot.endpointState = {
+            ...current,
+            ...(patch.credential !== undefined ? { credential: patch.credential } : {}),
+            ...(patch.applied !== undefined ? { applied: patch.applied } : {}),
+            // desired/validation are reconciler-owned; do not mutate here.
+        };
+    };
     let timer;
     let disposed = false;
     let running;
@@ -157,7 +177,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
         snapshot.audit = { status };
         snapshot.diagnostics = {
             cache: createDiscoveryCacheDiagnostics({ source: "none" }),
-            note: status === "disconnected" ? "LiteLLM 尚未连接。" : undefined,
+            note: status === "disconnected" ? "LiteLLM 尚未完成发现。" : undefined,
         };
         if (identity)
             coordinator.clear(identity);
@@ -165,6 +185,10 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
         lastFingerprint = undefined;
         persistedIdentity = undefined;
         persistedSnapshot = undefined;
+        // Canonical: this endpoint is no longer applied to the runtime. Note that we
+        // do NOT call writeCanonical here when the caller has already classified the
+        // specific failure (config-invalid, credential-missing, auth); those callers
+        // write their own categorised error before invoking removeProvider.
         if (hadRegistration)
             await reload();
     };
@@ -192,6 +216,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
         const connection = await context.integration.connection.active(endpoint.integrationId);
         if (!connection) {
             cancelTimer();
+            writeCanonical({ credential: "none", applied: { kind: "not-applied" } });
             await removeProvider();
             return;
         }
@@ -214,6 +239,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
             lastFingerprint = undefined;
             persistedIdentity = undefined;
             persistedSnapshot = undefined;
+            writeCanonical({ applied: { kind: "not-applied" } });
             if (hadRegistration)
                 await reload();
         }
@@ -227,12 +253,20 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
         const resolved = await context.integration.connection.resolve(connection);
         if (!isKeyCredential(resolved)) {
             logger.error("LiteLLM 活动连接没有可用的 API Key");
+            writeCanonical({
+                credential: "none",
+                applied: { kind: "error", category: "credential-missing", at: new Date().toISOString() },
+            });
             await removeProvider();
             return;
         }
+        writeCanonical({ credential: "stored" });
         const rawURL = endpoint.fixedBaseUrl ?? resolved.configuration?.url;
         if (typeof rawURL !== "string" || rawURL.length === 0) {
             logger.error(`LiteLLM endpoint ${endpoint.id} 缺少必填地址`);
+            writeCanonical({
+                applied: { kind: "error", category: "config-invalid", message: "缺少必填地址", at: new Date().toISOString() },
+            });
             await removeProvider();
             return;
         }
@@ -242,6 +276,9 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
         }
         catch (error) {
             logger.error(error instanceof Error ? error.message : "LiteLLM 地址无效");
+            writeCanonical({
+                applied: { kind: "error", category: "config-invalid", message: "地址无法规范化", at: new Date().toISOString() },
+            });
             await removeProvider();
             return;
         }
@@ -299,6 +336,9 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                 }),
                 note: "当前结果来自 endpoint-compatible 持久化快照，等待网络确认。",
             };
+            // Snapshot restore is last-known-good, NOT a successful apply. Canonical
+            // applied stays "not-applied" until this refresh round succeeds.
+            writeCanonical({ applied: { kind: "not-applied" } });
             await reload();
         }
         try {
@@ -382,18 +422,26 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
             const view = changed || !snapshot.registrationView
                 ? createRegistrationView(models, addresses.apiBaseURL, endpoint)
                 : snapshot.registrationView;
+            const refreshedAtIso = new Date(coordinated.refreshedAt).toISOString();
             snapshot.ready = true;
             snapshot.connection = connection;
             snapshot.apiBaseURL = addresses.apiBaseURL;
             snapshot.models = models;
             snapshot.registrationView = view;
+            // Canonical `applied = active` must be written BEFORE reload(), because reload
+            // triggers applyProvider which gates on canPublish(endpointState) — including
+            // applied.kind === "active". Writing it after reload would mean applyProvider
+            // sees the stale "not-applied" value and refuses to add the provider.
+            writeCanonical({
+                applied: { kind: "active", lastDiscoveryAt: refreshedAtIso, modelCount: models.length },
+            });
             if (changed)
                 await reload();
             lastFingerprint = nextFingerprint;
             await persistSnapshot(nextIdentity, nextPersisted);
             snapshot.audit = {
                 status: models.length === 0 ? "empty" : "ready",
-                lastSuccessfulDiscoveryAt: new Date(coordinated.refreshedAt).toISOString(),
+                lastSuccessfulDiscoveryAt: refreshedAtIso,
                 view,
             };
             snapshot.diagnostics = {
@@ -415,6 +463,13 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                 logger.error(redact(error.message, resolved.key));
                 await clearPersistedSnapshot(nextIdentity);
                 await clearModels(connection, addresses.apiBaseURL, error.kind === "auth" ? "cleared-auth" : "cleared-notfound");
+                writeCanonical({
+                    applied: {
+                        kind: "error",
+                        category: error.kind === "auth" ? "auth" : "network",
+                        at: new Date().toISOString(),
+                    },
+                });
             }
             else {
                 const message = error instanceof Error ? error.message : String(error);
@@ -434,6 +489,19 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                     }),
                     note: "发现失败；详细错误已通过宿主日志记录。",
                 };
+                // Classify into the frozen taxonomy so /litellm-diagnostics can show
+                // "Enabled · Error" with a reason distinct from "Enabled · Not applied".
+                const appliedCategory = (() => {
+                    if (error instanceof DiscoveryError) {
+                        if (error.kind === "parse")
+                            return "parse";
+                        return "network";
+                    }
+                    return "network";
+                })();
+                writeCanonical({
+                    applied: { kind: "error", category: appliedCategory, at: new Date().toISOString() },
+                });
             }
         }
         finally {

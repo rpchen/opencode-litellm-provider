@@ -104,9 +104,26 @@ describe("PR9 multi-endpoint diagnostics and audit", () => {
 
   test("diagnostics no-arg is overview and endpoint arg is scoped detail", async () => {
     const h = harness()
-    const snapshots = new Map([
-      ["default", snapshot("default")],
-      ["company", snapshot("company")],
+    // The default endpoint is disabled+not-applied (new); company is enabled and active.
+    const defaultSnapshot = snapshot("default")
+    defaultSnapshot.endpointState = {
+      endpointId: "default",
+      desired: "disabled",
+      validation: { kind: "ok" },
+      credential: "unknown",
+      applied: { kind: "not-applied" },
+    }
+    const companySnapshot = snapshot("company")
+    companySnapshot.endpointState = {
+      endpointId: "company",
+      desired: "enabled",
+      validation: { kind: "ok" },
+      credential: "stored",
+      applied: { kind: "active", modelCount: 1, lastDiscoveryAt: "2026-10-04T00:00:00Z" },
+    }
+    const snapshots = new Map<string, ProviderSnapshot>([
+      ["default", defaultSnapshot],
+      ["company", companySnapshot],
     ])
     const registration = await registerMultiEndpointAudit(
       h.context,
@@ -120,14 +137,25 @@ describe("PR9 multi-endpoint diagnostics and audit", () => {
     await command.execute({ sessionID: "overview", prompt: { text: "" } })
     const overview = h.events.at(-1)!.value as { lines: string[] }
     expect(overview.lines.join("\n")).toContain("active 1/2")
-    expect(overview.lines.join("\n")).toContain("○ default · 未激活")
-    expect(overview.lines.join("\n")).toContain("✓ company")
+    expect(overview.lines.join("\n")).toContain("○ default · litellm · 未启用")
+    expect(overview.lines.join("\n")).toContain("✓ company · litellm-company · 已启用 · 已生效")
 
     await command.execute({ sessionID: "detail", prompt: { text: "  company  " } })
     const detail = h.events.at(-1)!.value as { lines: string[] }
-    expect(detail.lines[0]).toBe("Endpoint：company")
-    expect(detail.lines.join("\n")).toContain("状态：正常")
+    expect(detail.lines[0]).toContain("Endpoint：company")
+    expect(detail.lines[0]).toContain("状态：已启用 · 已生效")
+    expect(detail.lines[0]).toContain("期望：已启用")
+    expect(detail.lines[0]).toContain("凭据：已保存 API Key")
+    expect(detail.lines[0]).toContain("Runtime：已生效")
     expect(detail.lines.join("\n")).not.toContain("LiteLLM Endpoints · active")
+
+    // [DIAG-DETAIL-DISABLED] disabled endpoint has full detail, not a placeholder
+    await command.execute({ sessionID: "detail-disabled", prompt: { text: "default" } })
+    const disabled = h.events.at(-1)!.value as { lines: string[] }
+    expect(disabled.lines[0]).toContain("Endpoint：default")
+    expect(disabled.lines[0]).toContain("状态：未启用")
+    expect(disabled.lines[0]).toContain("期望：未启用")
+    expect(disabled.lines[0]).not.toBe("Endpoint：default\n状态：未激活\n已注册模型：0")
 
     await command.execute({ sessionID: "unknown", prompt: { text: "missing" } })
     const unknown = h.events.at(-1)!.value as { lines: string[] }

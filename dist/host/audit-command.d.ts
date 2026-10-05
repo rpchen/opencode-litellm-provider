@@ -1,7 +1,7 @@
 import type { Plugin } from "@opencode/plugin";
 import { writeAuditFile } from "./audit-file.js";
 import { type FeedbackSubmitter } from "./audit-feedback.js";
-import type { ProviderSnapshot, Registration } from "./register.js";
+import { type ProviderSnapshot, type Registration } from "./register.js";
 export interface AuditDependencies {
     writeFile?: typeof writeAuditFile;
     now?: () => Date;

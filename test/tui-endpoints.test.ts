@@ -80,6 +80,7 @@ function world(initial: {
       endpoints = endpoints.map((e) => (e.legacy ? { id: "default", baseUrl: initial.legacyUrl ?? e.baseUrl, active: e.active, legacy: false } : e))
       return wrap(true, undefined, undefined, true)
     },
+    trigger: async (input) => { calls.push(`trigger:${input.endpointId}`); return wrap(true) },
   }
 
   const client: CredentialClient = {
@@ -149,19 +150,22 @@ describe("TUI endpoint management (host-native dialogs)", () => {
     const w = world({ endpoints: TWO, credentials: { "litellm-company": [{ type: "credential", id: "c1" }] } })
     await w.run([{ select: undefined }])
     const options = w.log[0]!.options!
-    expect(options.find((o) => o.value === "endpoint:default")).toMatchObject({ title: "✓ default", description: "已启用 · 未连接" })
-    expect(options.find((o) => o.value === "endpoint:company")).toMatchObject({ title: "○ company", description: "未启用 · 已连接" })
+    expect(options.find((o) => o.value === "endpoint:default")).toMatchObject({ title: "✓ default", description: "已启用 · 未保存 API Key" })
+    expect(options.find((o) => o.value === "endpoint:company")).toMatchObject({ title: "○ company", description: "未启用 · 已保存 API Key" })
     expect(w.log.every((entry) => ["select", "prompt", "confirm"].includes(entry.kind))).toBe(true)
   })
 
-  test("[ADD-OK][ADD-INACTIVE] Add asks ID then Base URL only, result is inactive + not connected", async () => {
+  test("[ADD-OK][ADD-INACTIVE] Add asks ID then Base URL only, result is inactive + no saved credential", async () => {
     const w = world({ endpoints: TWO })
     await w.run([{ select: "add" }, { prompt: "lab" }, { prompt: "http://litellm.example:4000" }, { select: undefined }])
     expect(w.log.filter((l) => l.kind === "prompt").map((l) => l.title)).toEqual(["新增 endpoint：Endpoint ID", "新增 endpoint lab：Base URL"])
     expect(w.calls).toContain("add:lab:http://litellm.example:4000:false")
-    expect(w.toasts.at(-1)!.message).toContain("未启用、未连接")
+    // [CRED-STORED-LABEL] regression: the toast describes the credential dimension, never a connection state.
+    const toast = w.toasts.at(-1)!.message
+    expect(toast).toContain("未启用、未保存 API Key")
+    expect(toast).not.toMatch(/已连接|未连接|connected/i)
     expect(w.endpoints().find((e) => e.id === "lab")).toMatchObject({ active: false })
-    expect(w.log.at(-1)!.options!.find((o) => o.value === "endpoint:lab")!.description).toBe("未启用 · 未连接")
+    expect(w.log.at(-1)!.options!.find((o) => o.value === "endpoint:lab")!.description).toBe("未启用 · 未保存 API Key")
   })
 
   test("[ADD-DUP][ADD-BAD-ID][ADD-BAD-URL] invalid input re-prompts locally and never reaches the server", async () => {
@@ -226,7 +230,7 @@ describe("TUI endpoint management (host-native dialogs)", () => {
     expect(w.calls).toEqual(expect.arrayContaining(["connect:litellm-company", "cred.activate:cred-1"]))
     expect(w.calls.some((c) => c.startsWith("set:"))).toBe(false)
     expect(JSON.stringify({ log: w.log, toasts: w.toasts, calls: w.calls })).not.toContain("sk-secret-123")
-    expect(w.log.at(-1)!.options!.find((o) => o.value === "endpoint:company")).toMatchObject({ description: "未启用 · 已连接" })
+    expect(w.log.at(-1)!.options!.find((o) => o.value === "endpoint:company")).toMatchObject({ description: "未启用 · 已保存 API Key" })
   })
 
   test("[CRED-REPLACE] replace overwrites: new key added and activated, the old credential removed", async () => {
@@ -234,7 +238,7 @@ describe("TUI endpoint management (host-native dialogs)", () => {
     await w.run([{ select: "endpoint:company" }, { select: "connect" }, { prompt: "sk-new" }, { select: "back" }, { select: undefined }])
     expect(w.creds["litellm-company"]!.map((c) => c.id)).toEqual(["cred-1"])
     expect(w.calls).toEqual(expect.arrayContaining(["connect:litellm-company", "cred.activate:cred-1", "cred.remove:old-1"]))
-    expect(w.log.some((l) => l.kind === "select" && l.title.includes("已连接"))).toBe(true)
+    expect(w.log.some((l) => l.kind === "select" && l.title.includes("已保存 API Key"))).toBe(true)
   })
 
   test("[CRED-DISCONNECT][CRED-ACTIVATION-INDEPENDENT] disconnect removes only this endpoint's credentials after confirmation; declining keeps them", async () => {
@@ -376,7 +380,7 @@ describe("credential helpers", () => {
       },
       credential: { remove: async (i) => { for (const k of Object.keys(store)) store[k] = store[k]!.filter((c) => c.id !== i.credentialID) }, activate: async () => undefined },
     }
-    // saved by the host's /connect (same API the native flow uses) → UI sees Connected
+    // saved by the host's /connect (same API the native flow uses) → UI sees 已保存 API Key
     await client.integration.connect.key({ integrationID: "litellm-company", key: "sk-host" })
     expect(await credentialKind(client, "company")).toBe("stored")
     // saved by the management UI → the host's own listing sees it (no second store)

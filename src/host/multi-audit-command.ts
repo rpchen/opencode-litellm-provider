@@ -4,11 +4,17 @@ import { writeAuditFile } from "./audit-file.js"
 import { auditRpc } from "./audit-rpc.js"
 import { createDiagnosticsLines } from "./diagnostics.js"
 import {
+  applyErrorLabel,
+  credentialLabel,
+  statusLabel,
+  userVisibleStatus,
+} from "./endpoint-state.js"
+import {
   acceptDegradedForSnapshot,
   splitAcceptArgs,
 } from "./publication.js"
 import { publicationRpc } from "./publication-rpc.js"
-import type { ProviderSnapshot, Registration } from "./register.js"
+import { endpointStateOf, type ProviderSnapshot, type Registration } from "./register.js"
 
 interface MultiAuditDependencies {
   writeFile?: typeof writeAuditFile
@@ -138,23 +144,48 @@ export async function registerMultiEndpointAudit(
           if (requested) {
             if (!endpointIds.includes(requested)) {
               lines = [`未知 LiteLLM endpoint：${requested}`]
-            } else if (!active.has(requested)) {
-              lines = [
-                `Endpoint：${requested}`,
-                "状态：未激活",
-                "已注册模型：0",
-              ]
             } else {
-              const snapshot = snapshots.get(requested) ?? { ready: false, models: [], audit: { status: "pending" as const } }
-              lines = [`Endpoint：${requested}`, ...createDiagnosticsLines(snapshot)]
+              // Diagnostics detail never degrades to a placeholder. Every configured
+              // endpoint — including disabled, invalid, credential-missing — gets a
+              // complete canonical record derived from the same source as /litellm-endpoints.
+              const snapshot = snapshots.get(requested)
+              const state = snapshot ? endpointStateOf(snapshot, requested) : {
+                endpointId: requested,
+                desired: "disabled" as const,
+                validation: { kind: "ok" as const },
+                credential: "unknown" as const,
+                applied: { kind: "not-applied" as const },
+              }
+              const status = statusLabel(userVisibleStatus(state))
+              const desired = state.desired === "enabled" ? "已启用" : "未启用"
+              const validation = state.validation.kind === "ok" ? "合法" : `非法（${state.validation.reason}）`
+              const applied = state.applied.kind === "active"
+                ? `已生效（${state.applied.modelCount} 个模型${state.applied.lastDiscoveryAt ? `，最近成功发现 ${state.applied.lastDiscoveryAt}` : ""}）`
+                : state.applied.kind === "not-applied"
+                  ? "未生效"
+                  : `出错（${applyErrorLabel(state.applied.category)}${state.applied.message ? `：${state.applied.message}` : ""}）`
+              const registeredModelCount = snapshot?.audit?.view?.models.length ?? snapshot?.models.length ?? 0
+              lines = [
+                `Endpoint：${requested} · 状态：${status} · 期望：${desired} · 配置：${validation} · 凭据：${credentialLabel(state.credential)} · Runtime：${applied} · 当前注册模型数：${registeredModelCount}`,
+                ...createDiagnosticsLines(snapshot ?? { ready: false, models: [], audit: { status: "disconnected" } }),
+              ]
             }
           } else {
             lines = [
               `LiteLLM Endpoints · active ${active.size}/${endpointIds.length}`,
               ...endpointIds.map((id) => {
-                if (!active.has(id)) return `○ ${id} · 未激活 · models=0`
                 const snapshot = snapshots.get(id)
-                return `✓ ${id} · ${snapshot?.audit?.status ?? "pending"} · models=${snapshot?.audit?.view?.models.length ?? snapshot?.models.length ?? 0}`
+                const fallbackState = {
+                  endpointId: id,
+                  desired: (active.has(id) ? "enabled" : "disabled") as "enabled" | "disabled",
+                  validation: { kind: "ok" as const },
+                  credential: "unknown" as const,
+                  applied: { kind: "not-applied" as const },
+                }
+                const state = snapshot ? endpointStateOf(snapshot, id) : fallbackState
+                const marker = state.desired === "enabled" ? "✓" : "○"
+                const models = snapshot?.audit?.view?.models.length ?? snapshot?.models.length ?? 0
+                return `${marker} ${id} · ${state.endpointId === "default" ? "litellm" : `litellm-${id}`} · ${statusLabel(userVisibleStatus(state))} · models=${models}`
               }),
             ]
           }

@@ -3,6 +3,7 @@ import { Model, Plugin, Provider } from "@opencode/plugin";
 import type { ModelSpec } from "../core/build.js";
 import type { DiscoveryCacheDiagnostics, DiscoveryDiagnostics } from "../generated/discovery-core/index.js";
 import { type EndpointIdentity } from "../endpoints.js";
+import { type EndpointState } from "./endpoint-state.js";
 import type { PublicationState, PublicationSummary } from "./publication.js";
 export interface Registration {
     readonly dispose: () => Promise<void>;
@@ -45,6 +46,16 @@ export interface ProviderSnapshot {
     diagnostics?: ProviderDiagnosticsSnapshot;
     /** Per-endpoint publication controller memory (LKG store + degraded acceptance). */
     publicationState?: PublicationState;
+    /**
+     * Canonical endpoint state: desired × validation × credential × applied.
+     * This is the single source of truth every user-visible surface derives from
+     * (management list, endpoint detail, /litellm-diagnostics, /models gating).
+     *
+     * The field may be absent briefly during plugin setup before the runtime has
+     * computed it; consumers must fall back to a disabled/unknown placeholder via
+     * `endpointStateOf(snapshot, fallback)` instead of inventing their own logic.
+     */
+    endpointState?: EndpointState;
 }
 export declare function applyIntegration(editor: IntegrationEditorLike, endpoint?: EndpointIdentity): void;
 export declare function createRegistrationView(models: readonly ModelSpec[], apiBaseURL: string, endpoint?: EndpointIdentity): RegistrationView;
@@ -52,3 +63,10 @@ export declare function applyProvider(editor: ProviderEditorLike, snapshot: Prov
 export declare function registerIntegration(context: Pick<Plugin.Context, "integration">, endpoint?: EndpointIdentity): Promise<Registration>;
 export declare function registerIntegrations(context: Pick<Plugin.Context, "integration">, endpoints: readonly EndpointIdentity[]): Promise<Registration>;
 export declare function registerProvider(context: Pick<Plugin.Context, "provider">, snapshot: ProviderSnapshot, endpoint?: EndpointIdentity): Promise<Registration>;
+/**
+ * Read the canonical state with a safe fallback. When the snapshot was produced
+ * without canonical state (older code paths or test fixtures), derive a best-effort
+ * approximation from the existing `audit.status`. Once the runtime has refreshed
+ * in this process, `endpointState` is authoritative and MUST be preferred.
+ */
+export declare function endpointStateOf(snapshot: ProviderSnapshot, endpointId: string): EndpointState;

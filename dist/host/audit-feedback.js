@@ -5,7 +5,7 @@ const NL = String.fromCharCode(10);
  */
 export const FEEDBACK_MARKER = "[litellm 插件]";
 const STATUS_LABELS = {
-    disconnected: "未连接",
+    disconnected: "尚未发现 LiteLLM",
     pending: "待首次发现",
     switching: "连接切换，待重新发现",
     ready: "正常",
