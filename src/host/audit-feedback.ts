@@ -22,7 +22,7 @@ export type AuditExportOutcome =
     }
 
 const STATUS_LABELS: Record<DiscoveryStatus, string> = {
-  disconnected: "未连接",
+  disconnected: "尚未发现 LiteLLM",
   pending: "待首次发现",
   switching: "连接切换，待重新发现",
   ready: "正常",

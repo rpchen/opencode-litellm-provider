@@ -305,7 +305,7 @@ export function createDiscoveryLoop(
     snapshot.audit = { status }
     snapshot.diagnostics = {
       cache: createDiscoveryCacheDiagnostics({ source: "none" }),
-      note: status === "disconnected" ? "LiteLLM 尚未连接。" : undefined,
+      note: status === "disconnected" ? "LiteLLM 尚未完成发现。" : undefined,
     }
     if (identity) coordinator.clear(identity)
     identity = undefined

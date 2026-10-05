@@ -155,12 +155,15 @@ describe("TUI endpoint management (host-native dialogs)", () => {
     expect(w.log.every((entry) => ["select", "prompt", "confirm"].includes(entry.kind))).toBe(true)
   })
 
-  test("[ADD-OK][ADD-INACTIVE] Add asks ID then Base URL only, result is inactive + not connected", async () => {
+  test("[ADD-OK][ADD-INACTIVE] Add asks ID then Base URL only, result is inactive + no saved credential", async () => {
     const w = world({ endpoints: TWO })
     await w.run([{ select: "add" }, { prompt: "lab" }, { prompt: "http://litellm.example:4000" }, { select: undefined }])
     expect(w.log.filter((l) => l.kind === "prompt").map((l) => l.title)).toEqual(["新增 endpoint：Endpoint ID", "新增 endpoint lab：Base URL"])
     expect(w.calls).toContain("add:lab:http://litellm.example:4000:false")
-    expect(w.toasts.at(-1)!.message).toContain("未启用、未连接")
+    // [CRED-STORED-LABEL] regression: the toast describes the credential dimension, never a connection state.
+    const toast = w.toasts.at(-1)!.message
+    expect(toast).toContain("未启用、未保存 API Key")
+    expect(toast).not.toMatch(/已连接|未连接|connected/i)
     expect(w.endpoints().find((e) => e.id === "lab")).toMatchObject({ active: false })
     expect(w.log.at(-1)!.options!.find((o) => o.value === "endpoint:lab")!.description).toBe("未启用 · 未保存 API Key")
   })

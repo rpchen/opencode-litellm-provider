@@ -44,7 +44,7 @@ export async function keyMethodRequiresUrl(client, endpointId) {
  * Connect (or replace) an endpoint's key through the host credential store. The key is never returned.
  *
  * OpenCode validates the key method's form before authenticating: a legacy integration requires the
- * `url` answer, so omitting it makes the host reject the credential (the endpoint is left unconnected).
+ * `url` answer, so omitting it makes the host reject the credential (no key is saved for the endpoint).
  */
 export async function saveKey(client, endpointId, key, url) {
     const integrationID = integrationIdFor(endpointId);
@@ -137,7 +137,7 @@ export function createEndpointUi(deps) {
                 return warn(result.message ?? "endpoint 配置已保存，但运行时重新加载失败；新 endpoint 保持未启用，可稍后重试 reload");
             return error(result.message ?? "新增 endpoint 失败");
         }
-        info(`已添加 endpoint ${id}（未启用、未连接）。请在列表中选择它来连接 API Key 并启用。`);
+        info(`已添加 endpoint ${id}（未启用、未保存 API Key）。请在列表中选择它来连接 API Key 并启用。`);
     };
     const editUrl = async (item) => {
         const baseUrl = await promptBaseUrl(`修改 ${item.id} 的 Base URL（ID 不可修改）`, item.baseUrl, item.baseUrl);

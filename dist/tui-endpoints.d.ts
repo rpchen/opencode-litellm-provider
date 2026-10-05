@@ -134,7 +134,7 @@ export declare function keyMethodRequiresUrl(client: CredentialClient, endpointI
  * Connect (or replace) an endpoint's key through the host credential store. The key is never returned.
  *
  * OpenCode validates the key method's form before authenticating: a legacy integration requires the
- * `url` answer, so omitting it makes the host reject the credential (the endpoint is left unconnected).
+ * `url` answer, so omitting it makes the host reject the credential (no key is saved for the endpoint).
  */
 export declare function saveKey(client: CredentialClient, endpointId: string, key: string, url?: string): Promise<void>;
 /** Disconnect removes only this endpoint's stored credentials (env connections are not ours to remove). */

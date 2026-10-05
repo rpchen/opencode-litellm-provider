@@ -200,7 +200,7 @@ export function createEndpointManagement(host) {
             try {
                 const address = await host.legacyBaseUrl();
                 if (!address)
-                    return fail("not-found", "没有可迁移的 legacy 地址（当前没有已连接的 LiteLLM endpoint）");
+                    return fail("not-found", "没有可迁移的 legacy 地址（当前没有配置地址的 LiteLLM endpoint）");
                 const result = await write(target, { kind: "migrate", baseUrl: address });
                 await afterWrite(target);
                 await host.removeStorage(discoverySnapshotKey("default", true)).catch(() => { });

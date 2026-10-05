@@ -361,7 +361,7 @@ github:rpchen/opencode-litellm-provider#v0.7.0
 
 ## 常见问题
 
-### 连接成功但看不到模型
+### 已保存 API Key 但看不到模型
 
 依次检查：
 
