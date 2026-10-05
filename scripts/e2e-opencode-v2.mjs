@@ -818,13 +818,12 @@ try {
 
   // 4b) Acknowledgement persistence across a real host restart. Suppression is
   //     observable through diagnostics; the problem set itself stays visible.
-  const unusableModels = () => ({
-    data: ["gap-a", "gap-b"].map((model_name) => ({
+  const unusableModels = () =>
+    ["gap-a", "gap-b"].map((model_name) => ({
       model_name,
       litellm_params: { model: `custom/${model_name}` },
       model_info: { mode: "chat" },
-    })),
-  })
+    }))
 
   servedModels = unusableModels()
   await waitForRefreshAfter(Date.now(), "the unusable catalog state")
@@ -844,11 +843,11 @@ try {
   assert(/withheld[s：:]*gap-b/u.test(restoredDiagnostics), `the withheld reasons must survive the restart: ${restoredDiagnostics}`)
 
   // Material change after the restart is surfaced again (no suppression line).
-  servedModels = { data: [...unusableModels().data, {
+  servedModels = [...unusableModels(), {
     model_name: "gap-c",
     litellm_params: { model: "custom/gap-c" },
     model_info: { mode: "chat" },
-  }] }
+  }]
   await waitForRefreshAfter(Date.now(), "the grown problem set")
   const grownDiagnostics = await diagnosticsThroughTui(/withheld[s：:]*gap-c/u, "the grown problem set")
   assert(
