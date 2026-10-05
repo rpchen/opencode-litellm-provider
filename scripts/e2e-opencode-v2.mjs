@@ -835,9 +835,15 @@ try {
   openCodeServer = await startOpenCodeServer()
   env.OPENCODE_PASSWORD = openCodeServer.password
   await waitForRefreshAfter(Date.now(), "the post-restart discovery round")
+  // The suppression state is rendered in the same diagnostics card as the
+  // problem set, so assert both from one rendered snapshot.
   const restoredDiagnostics = await diagnosticsThroughTui(
-    /提醒状态：该问题集合已确认（跨重启保留），不重复提醒/u,
-    "the restored acknowledgement after restart",
+    /catalog 当前不可用/u,
+    "the unusable catalog after restart",
+  )
+  assert(
+    /提醒状态：该问题集合已确认（跨重启保留），不重复提醒/u.test(restoredDiagnostics),
+    `the restored acknowledgement must suppress a repeated notice: ${restoredDiagnostics}`,
   )
   assert(/withheld[s：:]*gap-a/u.test(restoredDiagnostics), `the withheld reasons must survive the restart: ${restoredDiagnostics}`)
   assert(/withheld[s：:]*gap-b/u.test(restoredDiagnostics), `the withheld reasons must survive the restart: ${restoredDiagnostics}`)
