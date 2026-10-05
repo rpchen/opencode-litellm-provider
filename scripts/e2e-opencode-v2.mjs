@@ -721,7 +721,7 @@ try {
       runSessionCommand("litellm-diagnostics", "default")
       const diagTui = startAttachedTui(sessionID)
       try {
-        await waitForTui(diagTui, /Endpoint\s+default/u, { timeout: 20_000 })
+        await waitForTui(diagTui, /Endpoint[\s：:]+default/u, { timeout: 20_000 })
         last = diagTui.output()
         if (matches(last)) return last
       } catch (error) {
