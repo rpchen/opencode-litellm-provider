@@ -9,10 +9,6 @@ import {
   statusLabel,
   userVisibleStatus,
 } from "./endpoint-state.js"
-import {
-  acceptDegradedForSnapshot,
-  splitAcceptArgs,
-} from "./publication.js"
 import { publicationRpc } from "./publication-rpc.js"
 import {
   createFeedbackSubmitter,
@@ -116,36 +112,20 @@ export async function registerAudit(
   })
   const publication = await context.rpc.register(publicationRpc, {
     async state() {
-      return snapshot.diagnostics?.publication ?? { publishable: [], degradedIDs: [], lkgIDs: [], blocked: [] }
-    },
-    async accept(input: unknown) {
-      const { sessionID, modelId } = input as { sessionID: string; modelId: string }
-      const outcome = acceptDegradedForSnapshot(snapshot, modelId)
-      await publication.events.emit("accepted", {
-        sessionID,
-        modelId,
-        ok: outcome.accepted,
-        status: outcome.status ?? "",
-        gaps: [...(outcome.gaps ?? [])],
-        reason: outcome.reason ?? (outcome.accepted ? "degraded-accepted" : "rejected"),
-      })
-      latest = {
-        sequence: ++diagnosticSequence,
-        sessionID,
-        ok: outcome.accepted,
-        path: "",
-        error: outcome.accepted ? "" : (outcome.reason ?? "rejected"),
-        lines: createDiagnosticsLines(snapshot),
-      }
-      await rpc.events.emit("completed", latest)
-      return {
-        ok: outcome.accepted,
-        status: outcome.status ?? "",
-        gaps: [...(outcome.gaps ?? [])],
-        reason: outcome.reason ?? (outcome.accepted ? "degraded-accepted" : "rejected"),
+      return snapshot.diagnostics?.publication ?? {
+        discovered: 0,
+        publishable: [],
+        lkgIDs: [],
+        withheld: [],
+        partial: false,
+        unusable: false,
+        regressions: [],
+        discrepancies: [],
+        conflicts: [],
       }
     },
   } as never)
+
   try {
     const command = await context.command.transform((editor) => {
       editor.add({
@@ -180,34 +160,6 @@ export async function registerAudit(
           await submitFeedback(sessionID, outcome)
         },
       })
-      editor.add({
-        name: "litellm-accept-degraded",
-        description: "显式接受某个未完成模型的降级配置（仍标记为降级，下次刷新生效）",
-        async execute(input) {
-          const record = input as { sessionID: string }
-          const [modelId] = splitAcceptArgs(readAcceptText(input)).slice(-1)
-          const outcome = modelId
-            ? acceptDegradedForSnapshot(snapshot, modelId)
-            : { accepted: false as const, reason: "usage" }
-          await publication.events.emit("accepted", {
-            sessionID: record.sessionID,
-            modelId: modelId ?? "",
-            ok: outcome.accepted,
-            status: outcome.status ?? "",
-            gaps: [...(outcome.gaps ?? [])],
-            reason: outcome.reason ?? (outcome.accepted ? "degraded-accepted" : "rejected"),
-          })
-          latest = {
-            sequence: ++diagnosticSequence,
-            sessionID: record.sessionID,
-            ok: outcome.accepted,
-            path: "",
-            error: outcome.accepted ? "" : (outcome.reason ?? "rejected"),
-            lines: createDiagnosticsLines(snapshot),
-          }
-          await rpc.events.emit("completed", latest)
-        },
-      })
     })
     return {
       async dispose() {
@@ -223,16 +175,3 @@ export async function registerAudit(
   }
 }
 
-function readAcceptText(input: unknown): string {
-  if (typeof input !== "object" || input === null) return ""
-  const record = input as Record<string, unknown>
-  const prompt = record.prompt
-  if (typeof prompt === "object" && prompt !== null) {
-    const text = (prompt as Record<string, unknown>).text
-    if (typeof text === "string") return text.trim()
-  }
-  for (const key of ["args", "arguments", "argument"] as const) {
-    if (typeof record[key] === "string") return (record[key] as string).trim()
-  }
-  return ""
-}

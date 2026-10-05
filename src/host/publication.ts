@@ -3,16 +3,21 @@
  *
  * No business policy lives here: the Core partition decides what may
  * publish. This module only anchors per-endpoint controller memory
- * (LKG store + degraded acceptance) to the ProviderSnapshot object the
- * discovery loop already mutates, so RPC handlers and the loop share
- * state without touching persisted shapes.
+ * (LKG store, regression baseline, notification acknowledgement) to the
+ * ProviderSnapshot object the discovery loop already mutates, so RPC
+ * handlers and the loop share state without touching persisted shapes.
+ *
+ * Acknowledgement is reporting state only. There is no user confirmation
+ * path into publication: a model Core withholds stays withheld.
  */
 import {
+  catalogFromPublication,
   createLastKnownGoodStore,
-  degradationEligibility,
   type BlockedEntry,
-  type CompletenessAssessment,
+  type CatalogPublication,
+  type DegradationAcknowledgement,
   type LastKnownGoodStore,
+  type PublicationResult,
   type PublishableEntry,
 } from "../generated/discovery-core/index.js"
 
@@ -21,111 +26,156 @@ export interface PublicationModelState {
   readonly status: string
 }
 
-export interface PublicationBlockedModel {
-  readonly id: string
-  readonly status: string
-  readonly gaps: readonly string[]
-  /** Core eligibility. Adapters must not re-derive this from status strings. */
-  readonly degradationEligible: boolean
-  readonly degradationReason?: string
+export interface PublicationWithheldReason {
+  readonly code: string
+  readonly message: string
+  readonly fields: readonly string[]
 }
 
-/** Adapter-visible slice of the Core publication partition. */
+/** One model that could not be safely published, with every reason. */
+export interface PublicationWithheldModel {
+  readonly id: string
+  readonly status: string
+  readonly reasons: readonly PublicationWithheldReason[]
+  readonly previouslyPublished: boolean
+  readonly retryable: boolean
+}
+
+/** A field-level evidence fact worth showing to the user. */
+export interface PublicationFieldFact {
+  readonly model: string
+  readonly field: string
+  readonly status: string
+  readonly resolution: string
+}
+
+/** Adapter-visible slice of the Core publication + catalog partition. */
 export interface PublicationSummary {
+  readonly discovered: number
   readonly publishable: readonly PublicationModelState[]
-  readonly degradedIDs: readonly string[]
   readonly lkgIDs: readonly string[]
-  readonly blocked: readonly PublicationBlockedModel[]
+  readonly lkgDetail?: string
+  readonly withheld: readonly PublicationWithheldModel[]
+  readonly partial: boolean
+  readonly unusable: boolean
+  readonly regressions: readonly string[]
+  readonly discrepancies: readonly PublicationFieldFact[]
+  readonly conflicts: readonly PublicationFieldFact[]
   readonly failureKind?: string
+  readonly acknowledgement: {
+    readonly notify: boolean
+    readonly reason: string
+    readonly fingerprint: string
+  }
 }
 
 /** Per-endpoint controller memory anchored to one ProviderSnapshot. */
 export interface PublicationState {
   readonly store: LastKnownGoodStore
-  readonly acceptedDegradedIDs: Set<string>
+  previouslyPublished: Set<string>
+  acknowledgement?: DegradationAcknowledgement
+  /** Unconsumed user-facing notice derived from the acknowledgement decision. */
+  pendingNotice?: { readonly reason: string; readonly message: string }
 }
 
 export function createPublicationState(): PublicationState {
-  return { store: createLastKnownGoodStore(), acceptedDegradedIDs: new Set<string>() }
+  return { store: createLastKnownGoodStore(), previouslyPublished: new Set<string>() }
 }
 
 export function summarizePublication(
-  publication: { publishable: readonly PublishableEntry[]; blocked: readonly BlockedEntry[] },
+  publication: PublicationResult,
+  catalogFacts: CatalogPublication,
   failureKind?: string,
 ): PublicationSummary {
+  const facts = (id: string, assessment: PublicationResult["blocked"][number]["assessment"]) => [
+    ...assessment.discrepancies.map((item) => ({
+      model: id,
+      field: item.field,
+      status: item.status,
+      resolution: item.resolution,
+    })),
+    ...assessment.conflicts.map((item) => ({
+      model: id,
+      field: item.field,
+      status: item.status,
+      resolution: item.resolution,
+    })),
+  ]
+  const allFacts = [
+    ...publication.publishable.flatMap((entry) => facts(entry.spec.id, entry.assessment)),
+    ...publication.blocked.flatMap((entry) => facts(entry.spec.id, entry.assessment)),
+  ]
+  const lkgDetail = publication.publishable
+    .map((entry) => entry.assessment.lkgDetail)
+    .find((detail): detail is string => detail !== undefined)
   return {
+    discovered: catalogFacts.discovered,
     publishable: publication.publishable.map((entry) => ({
       id: entry.spec.id,
       status: entry.assessment.status,
     })),
-    degradedIDs: publication.publishable
-      .filter((entry) => entry.degraded !== undefined)
-      .map((entry) => entry.spec.id),
     lkgIDs: publication.publishable
       .filter((entry) => entry.assessment.usingLKG)
       .map((entry) => entry.spec.id),
-    blocked: publication.blocked.map((entry) => {
-      const eligibility = degradationEligibility(entry.assessment)
-      return {
-        id: entry.spec.id,
-        status: entry.assessment.status,
-        degradationEligible: eligibility.eligible,
-        degradationReason: eligibility.eligible ? undefined : eligibility.reason,
-        gaps: [
-          ...entry.assessment.missingFields,
-          ...entry.assessment.unknownFields,
-          ...entry.assessment.illegalFields,
-        ],
-      }
-    }),
+    lkgDetail,
+    withheld: catalogFacts.withheld.map((entry) => ({
+      id: entry.id,
+      status: entry.status,
+      reasons: entry.reasons,
+      previouslyPublished: entry.previouslyPublished,
+      retryable: entry.retryability === "retryable",
+    })),
+    partial: catalogFacts.partial,
+    unusable: catalogFacts.unusable,
+    regressions: catalogFacts.regressions.map((entry) => entry.id),
+    discrepancies: allFacts.filter((fact) => fact.status === "resolved-discrepancy"),
+    conflicts: allFacts.filter((fact) => fact.status === "unresolved-conflict"),
     failureKind,
+    acknowledgement: { notify: false, reason: "unchanged", fingerprint: catalogFacts.fingerprint },
   }
 }
 
-export interface AcceptDegradedOutcome {
-  readonly accepted: boolean
-  readonly status?: string
-  readonly gaps?: readonly string[]
-  readonly reason?: string
+/** Core catalog facts for one publication partition (single source of truth). */
+export function catalogFactsFor(
+  publication: PublicationResult,
+  options: { readonly previouslyPublished?: ReadonlySet<string>; readonly discovered?: number } = {},
+): CatalogPublication {
+  return catalogFromPublication(publication, options)
 }
 
 /**
- * Record explicit user acceptance for a blocked model.
- *
- * Succeeds only for models the Core partition currently reports as
- * blocked; already-publishable models need no acceptance and unknown
- * ids are rejected. The degraded label is preserved by the Core
- * wrapper on the next refresh; this helper never re-labels anything
- * as configured.
+ * User-facing notice for a materially new or regressed availability
+ * problem. A first-time gap on a newly discovered model is intentionally
+ * silent (diagnostics only); a regression or an unusable catalog is not.
  */
-export function acceptDegradedForSummary(
+export function catalogNotice(
   summary: PublicationSummary | undefined,
-  accepted: Set<string>,
-  modelId: string,
-): AcceptDegradedOutcome {
-  const blocked = summary?.blocked.find((model) => model.id === modelId)
-  if (!blocked) {
-    const publishable = summary?.publishable.some((model) => model.id === modelId) ?? false
-    return publishable
-      ? { accepted: false, reason: "already-configured" }
-      : { accepted: false, reason: "unknown-model" }
+): { readonly level: "info" | "warning"; readonly message: string } | undefined {
+  if (!summary?.acknowledgement.notify) return undefined
+  switch (summary.acknowledgement.reason) {
+    case "catalog-unusable":
+      return {
+        level: "warning",
+        message:
+          `endpoint 连接成功，发现 ${summary.discovered} 个模型，但当前没有任何模型可以安全发布。` +
+          (summary.regressions.length > 0 ? `此前可用的模型已被撤下：${summary.regressions.join("、")}。` : "") +
+          `请重新刷新（Retry）或运行 /litellm-diagnostics 查看每个模型的 withheld 原因。`,
+      }
+    case "regression":
+      return {
+        level: "warning",
+        message:
+          `此前可用的模型已被撤下：${summary.regressions.join("、")}。它们当前不可安全使用，` +
+          `插件不会自动切换到其他模型；请重新刷新（Retry）或改选其他模型。`,
+      }
+    case "new-issues":
+      return {
+        level: "info",
+        message: `可用模型集合发生变化：${summary.withheld.length} 个模型 withheld。运行 /litellm-diagnostics 查看原因。`,
+      }
+    default:
+      return undefined
   }
-  if (!blocked.degradationEligible) {
-    return {
-      accepted: false,
-      status: blocked.status,
-      gaps: blocked.gaps,
-      reason: blocked.degradationReason ?? "not-eligible",
-    }
-  }
-  accepted.add(modelId)
-  return { accepted: true, status: blocked.status, gaps: blocked.gaps }
-}
-
-/** Test/helper seam: eligibility always comes from Core, never from a local status table. */
-export function degradationReasonFor(assessment: CompletenessAssessment): string | undefined {
-  const eligibility = degradationEligibility(assessment)
-  return eligibility.eligible ? undefined : eligibility.reason
 }
 
 export interface SnapshotPublicationLike {
@@ -133,20 +183,16 @@ export interface SnapshotPublicationLike {
   publicationState?: PublicationState
 }
 
-/**
- * Snapshot-anchored acceptance: ensures the per-endpoint controller
- * exists on the snapshot the discovery loop mutates, so RPC/command
- * handlers and the next refresh share the accepted set.
- */
-export function acceptDegradedForSnapshot(
+/** Consume a pending catalog notice exactly once. */
+export function takePendingNotice(
   snapshot: SnapshotPublicationLike,
-  modelId: string,
-): AcceptDegradedOutcome {
-  const state = snapshot.publicationState ??= createPublicationState()
-  return acceptDegradedForSummary(snapshot.diagnostics?.publication, state.acceptedDegradedIDs, modelId)
+): { readonly reason: string; readonly message: string } | undefined {
+  const state = snapshot.publicationState
+  if (!state?.pendingNotice) return undefined
+  const notice = state.pendingNotice
+  state.pendingNotice = undefined
+  return notice
 }
 
-/** Split `<endpoint-id> <model-id>` (multi) or `<model-id>` (legacy) input text. */
-export function splitAcceptArgs(text: string): string[] {
-  return text.trim().split(/\s+/).filter((part) => part.length > 0)
-}
+/** Test/helper seam kept for the publication partition types. */
+export type { BlockedEntry, PublishableEntry }

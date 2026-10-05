@@ -11,6 +11,7 @@ import {
   classifyMetadataFailure,
   capturedPublicationVerdict,
   createLastKnownGoodEntry,
+  decideAcknowledgement,
   groupLiteLLMDeployments,
   lastKnownGoodKey,
   type LastKnownGoodStore,
@@ -38,6 +39,7 @@ import {
 } from "../net/fetch.js"
 import { createRegistrationView, type ProviderSnapshot, type DiscoveryStatus } from "./register.js"
 import {
+  catalogFactsFor,
   createPublicationState,
   summarizePublication,
   type PublicationSummary,
@@ -177,6 +179,8 @@ export function createDiscoveryLoop(
     fingerprint: string
     diagnostics?: DiscoveryDiagnostics
     publication?: PublicationSummary
+    /** Core catalog facts (availability, regression, acknowledgement input). */
+    catalog?: import("../generated/discovery-core/index.js").CatalogPublication
     snapshotSpecs?: ModelSpec[]
   }>()
   const abortEvents = new AbortController()
@@ -500,22 +504,27 @@ export function createDiscoveryLoop(
           const now = Date.now()
           const { models, result } = buildPublicationModels(response, catalog, options, {
             store: controller.store,
-            acceptedDegradedIDs: controller.acceptedDegradedIDs,
             failure: catalogFailure,
             now,
           })
           seedPublicationLKG(controller.store, response, result.publishable, now)
+          // Published specs are the only persisted specs: a withheld model
+          // never survives into a snapshot, and no user confirmation adds one.
           const snapshotSpecs = result.publishable
-            .filter((entry) => entry.degraded === undefined)
             .map((entry) => entry.spec)
             .map(toOpenCodeModelSpec)
             .filter(hasOperationalLimits)
           const diagnosed = diagnoseModelSpecs(response, catalog, options)
+          const catalogFacts = catalogFactsFor(result, {
+            discovered: diagnosed.diagnostics.stats.models,
+            previouslyPublished: controller.previouslyPublished,
+          })
           return {
             models,
             fingerprint: fingerprint(models),
             diagnostics: diagnosed.diagnostics,
-            publication: summarizePublication(result, catalogFailure?.kind),
+            publication: summarizePublication(result, catalogFacts, catalogFailure?.kind),
+            catalog: catalogFacts,
             snapshotSpecs,
           }
         },
@@ -588,9 +597,41 @@ export function createDiscoveryLoop(
         lastSuccessfulDiscoveryAt: refreshedAtIso,
         view,
       }
+      // Availability facts: acknowledge only notification, record the
+      // published set as the regression baseline, and remember whether to
+      // surface this round. None of this can change what Core published.
+      const controller = snapshot.publicationState
+      let publication: PublicationSummary | undefined = coordinated.value.publication
+      if (controller && coordinated.value.catalog && publication) {
+        const acknowledgement = decideAcknowledgement(
+          controller.acknowledgement,
+          coordinated.value.catalog,
+          refreshedAtIso,
+        )
+        controller.acknowledgement = acknowledgement.next
+        // Additive: the baseline answers "was this model ever published by the
+        // applied catalog", so a withdrawal stays visible in diagnostics across
+        // later rounds. A recovered model leaves the regression list by becoming
+        // publishable again, never by the baseline forgetting it.
+        for (const model of models) controller.previouslyPublished.add(model.id)
+        if (acknowledgement.notify) {
+          controller.pendingNotice = {
+            reason: acknowledgement.reason,
+            message: publication.acknowledgement.reason,
+          }
+        }
+        publication = {
+          ...publication,
+          acknowledgement: {
+            notify: acknowledgement.notify,
+            reason: acknowledgement.reason,
+            fingerprint: acknowledgement.next?.fingerprint ?? "sha256:none",
+          },
+        }
+      }
       snapshot.diagnostics = {
         discovery: coordinated.value.diagnostics,
-        publication: coordinated.value.publication,
+        publication,
         cache: createDiscoveryCacheDiagnostics({
           source: coordinated.source === "cache" ? "memory-cache" : "network",
           stale: false,

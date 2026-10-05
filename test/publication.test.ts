@@ -3,10 +3,7 @@ import type { ConnectionInfo } from "@opencode/client"
 import { registerAudit } from "../src/host/audit-command.js"
 import { createDiagnosticsLines } from "../src/host/diagnostics.js"
 import { buildPublicationModels, toOpenCodeModelSpecWithPublication } from "../src/host/models.js"
-import {
-  acceptDegradedForSnapshot,
-  summarizePublication,
-} from "../src/host/publication.js"
+import { catalogNotice, summarizePublication } from "../src/host/publication.js"
 import type { ProviderSnapshot } from "../src/host/register.js"
 import { createDiscoveryLoop, type SyncContext } from "../src/host/sync.js"
 import { createDiagnosticsResultStore } from "../src/tui-card.js"
@@ -20,6 +17,9 @@ const COMPLETE_INFO = {
   supports_function_calling: true,
   supports_reasoning: false,
   supports_vision: false,
+  supports_pdf_input: false,
+  supports_audio_input: false,
+  supports_video_input: false,
   supports_audio_output: false,
 }
 
@@ -94,19 +94,6 @@ function loopHarness(catalog: () => Promise<unknown>, fetch = async () => COMPLE
 }
 
 describe("publication mapping", () => {
-  test("unknown tools on degraded entries register as disabled", () => {
-    const { result } = buildPublicationModels(
-      { data: [{ model_name: "gap", litellm_params: { model: "openai/gap" }, model_info: { mode: "chat", max_input_tokens: 50000, max_output_tokens: 5000 } }] },
-      {},
-      OPTIONS,
-      { acceptedDegradedIDs: new Set(["gap"]) },
-    )
-    const degraded = result.publishable.find((entry) => entry.spec.id === "gap")
-    expect(degraded?.assessment.status).toBe("degraded")
-    const mapped = toOpenCodeModelSpecWithPublication(degraded!)
-    expect(mapped.capabilities.tools).toBeFalse()
-  })
-
   test("configured entries keep their Core tool verdict", () => {
     const { models, result } = buildPublicationModels(COMPLETE_RESPONSE, COMPLETE_CATALOG, OPTIONS)
     expect(models.map((model) => model.id)).toEqual(["pub-complete"])
@@ -119,10 +106,32 @@ describe("publication mapping", () => {
       { data: [{ model_name: "zero", litellm_params: { model: "openai/zero" }, model_info: { mode: "chat" } }] },
       {},
       OPTIONS,
-      { acceptedDegradedIDs: new Set(["zero"]) },
     )
-    // Degraded with zero limits is still excluded from host registration.
+    // Withheld with zero limits never reaches host registration.
     expect(models).toEqual([])
+  })
+
+  test("publication needs no user confirmation: a withheld entry stays withheld", () => {
+    const { models, result } = buildPublicationModels(
+      { data: [{ model_name: "gap", litellm_params: { model: "openai/gap" }, model_info: { mode: "chat", max_input_tokens: 50000, max_output_tokens: 5000 } }] },
+      {},
+      OPTIONS,
+    )
+    expect(models).toEqual([])
+    expect(result.publishable).toEqual([])
+    expect(result.blocked[0]!.assessment.publishable).toBeFalse()
+    // There is no publication option that changes this outcome.
+    expect(Object.keys(result)).toEqual(["publishable", "blocked", "assessments"])
+  })
+
+  test("a withheld entry never maps to a host model shape", () => {
+    const { result } = buildPublicationModels(
+      { data: [{ model_name: "gap", litellm_params: { model: "openai/gap" }, model_info: { mode: "chat", max_input_tokens: 50000, max_output_tokens: 5000 } }] },
+      {},
+      OPTIONS,
+    )
+    expect(result.blocked).toHaveLength(1)
+    expect(toOpenCodeModelSpecWithPublication as unknown).toBeFunction()
   })
 })
 
@@ -133,10 +142,13 @@ describe("publication sync partition", () => {
     try {
       expect(h.snapshot.models.map((model) => model.id)).toEqual(["pub-complete"])
       const publication = h.snapshot.diagnostics?.publication
-      expect(publication?.blocked.map((model) => model.id)).toEqual(["pub-incomplete"])
-      expect(publication?.blocked[0]!.gaps.length).toBeGreaterThan(0)
+      expect(publication?.withheld.map((model) => model.id)).toEqual(["pub-incomplete"])
+      expect(publication?.withheld[0]!.reasons.length).toBeGreaterThan(0)
+      expect(publication?.partial).toBeTrue()
+      expect(publication?.discovered).toBe(2)
       const lines = createDiagnosticsLines(h.snapshot).join("\n")
       expect(lines).toContain("pub-incomplete")
+      expect(lines).toContain("部分可用")
     } finally {
       await h.loop.dispose()
     }
@@ -168,6 +180,7 @@ describe("publication sync partition", () => {
     try {
       expect(h2.snapshot.models.map((model) => model.id)).toEqual(["pub-complete"])
       expect(h2.snapshot.diagnostics?.publication?.lkgIDs).toEqual(["pub-complete"])
+      expect(h2.snapshot.diagnostics?.publication?.lkgDetail).toContain("live unavailable")
       expect(h2.snapshot.diagnostics?.publication?.failureKind).toBe("unreachable")
     } finally {
       await h2.loop.dispose()
@@ -191,6 +204,92 @@ describe("publication sync partition", () => {
       await h.loop.trigger(true)
       expect(h.snapshot.diagnostics?.publication?.lkgIDs ?? []).toEqual([])
       expect(h.snapshot.models.map((model) => model.id)).toEqual(["pub-complete"])
+    } finally {
+      await h.loop.dispose()
+    }
+  })
+
+  test("a withheld model recovering is published automatically without user approval", async () => {
+    let complete = false
+    const h = loopHarness(async () => COMPLETE_CATALOG, async () => ({
+      data: [
+        { model_name: "pub-complete", litellm_params: { model: "openai/pub-complete" }, model_info: { ...COMPLETE_INFO } },
+        {
+          model_name: "pub-incomplete",
+          litellm_params: { model: "openai/pub-incomplete" },
+          model_info: complete ? { ...COMPLETE_INFO } : { mode: "chat" },
+        },
+      ],
+    }))
+    await h.loop.start()
+    try {
+      expect(h.snapshot.models.map((model) => model.id)).toEqual(["pub-complete"])
+      expect(h.snapshot.diagnostics?.publication?.withheld.map((model) => model.id)).toEqual(["pub-incomplete"])
+      complete = true
+      await h.loop.trigger(true)
+      expect(h.snapshot.models.map((model) => model.id).sort()).toEqual(["pub-complete", "pub-incomplete"])
+      expect(h.snapshot.diagnostics?.publication?.withheld).toEqual([])
+    } finally {
+      await h.loop.dispose()
+    }
+  })
+
+  test("previously published model becoming withheld is a regression and a loud notice", async () => {
+    // The canonical route changes while enrichment is unavailable: the old
+    // trusted snapshot no longer describes this model, so it is withheld and
+    // reported as a regression instead of silently disappearing.
+    let phase: "fresh" | "changed" = "fresh"
+    const h = loopHarness(async () => ({}), async () => ({
+      data: [{
+        model_name: "pub-complete",
+        litellm_params: { model: phase === "fresh" ? "openai/pub-complete" : "openai/pub-complete-renamed" },
+        model_info: phase === "fresh"
+          ? { ...COMPLETE_INFO }
+          : { mode: "chat", supports_function_calling: true, supports_reasoning: false },
+      }],
+    }))
+    await h.loop.start()
+    try {
+      expect(h.snapshot.models.map((model) => model.id)).toEqual(["pub-complete"])
+      phase = "changed"
+      await h.loop.trigger(true)
+      expect(h.snapshot.models).toEqual([])
+      const publication = h.snapshot.diagnostics?.publication
+      expect(publication?.regressions).toEqual(["pub-complete"])
+      expect(publication?.discovered).toBe(1)
+      expect(publication?.unusable).toBeTrue()
+      expect(publication?.lkgIDs).toEqual([])
+      const lines = createDiagnosticsLines(h.snapshot).join("\n")
+      expect(lines).toContain("此前可用、现已撤下：pub-complete")
+      expect(lines).toContain("catalog 当前不可用")
+      // The notice is a warning and is consumed through the acknowledgement
+      // state, never through publication.
+      expect(publication?.acknowledgement.notify).toBeTrue()
+      expect(catalogNotice(publication)?.level).toBe("warning")
+      expect(catalogNotice(publication)?.message).toContain("没有任何模型可以安全发布")
+    } finally {
+      await h.loop.dispose()
+    }
+  })
+
+  test("the whole catalog being unpublishable is reported, not silent", async () => {
+    const h = loopHarness(async () => ({}), async () => ({
+      data: [
+        { model_name: "a", litellm_params: { model: "openai/a" }, model_info: { mode: "chat" } },
+        { model_name: "b", litellm_params: { model: "openai/b" }, model_info: { mode: "chat" } },
+      ],
+    }))
+    await h.loop.start()
+    try {
+      const publication = h.snapshot.diagnostics?.publication
+      expect(publication?.discovered).toBe(2)
+      expect(publication?.publishable).toEqual([])
+      expect(publication?.unusable).toBeTrue()
+      expect(publication?.partial).toBeFalse()
+      const lines = createDiagnosticsLines(h.snapshot).join("\n")
+      expect(lines).toContain("catalog 当前不可用")
+      expect(lines).toContain("发现 2 · 可用 0 · withheld 2")
+      expect(catalogNotice(publication)?.message).toContain("没有任何模型可以安全发布")
     } finally {
       await h.loop.dispose()
     }
@@ -223,7 +322,7 @@ describe("publication longitudinal: Core -> snapshot -> RPC -> TUI lines", () =>
     return { context, rpcHandlers, rpcEmits, commands }
   }
 
-  test("blocked -> RPC accept -> degraded registration with gaps, visible in TUI lines", async () => {
+  test("no accept-degraded command or RPC exists; withheld stays withheld", async () => {
     const h = loopHarness(async () => ({}), async () => ({
       data: [{
         model_name: "gap-model",
@@ -234,58 +333,55 @@ describe("publication longitudinal: Core -> snapshot -> RPC -> TUI lines", () =>
     await h.loop.start()
     try {
       expect(h.snapshot.models).toEqual([])
-      expect(h.snapshot.diagnostics?.publication?.blocked.map((model) => model.id)).toEqual(["gap-model"])
+      expect(h.snapshot.diagnostics?.publication?.withheld.map((model) => model.id)).toEqual(["gap-model"])
 
       const audit = auditHarness(h.snapshot)
       const registration = await registerAudit(audit.context as never, h.snapshot, {})
-      const accept = audit.rpcHandlers.get("litellm-publication")!.accept as (input: unknown) => Promise<{ ok: boolean; gaps: string[] }>
-      const outcome = await accept({ sessionID: "s1", modelId: "gap-model" })
-      expect(outcome.ok).toBeTrue()
-      expect(outcome.gaps.length).toBeGreaterThan(0)
+      expect([...audit.commands.keys()]).not.toContain("litellm-accept-degraded")
+      expect([...audit.commands.keys()].some((name) => name.includes("degraded"))).toBeFalse()
+      const handlers = audit.rpcHandlers.get("litellm-publication")!
+      expect(Object.keys(handlers)).toEqual(["state"])
+      expect("accept" in handlers).toBeFalse()
 
-      // Pending acceptance is immediately visible in diagnostics lines.
-      const pendingLines = createDiagnosticsLines(h.snapshot).join("\n")
-      expect(pendingLines).toContain("gap-model")
+      const state = await handlers.state!({}) as { withheld: Array<{ id: string }>; partial: boolean }
+      expect(state.withheld.map((model) => model.id)).toEqual(["gap-model"])
+      expect(state.partial).toBeFalse()
 
-      // Next refresh applies the degraded path; the label stays degraded.
+      // Even after a refresh nothing forces the model in: publication is
+      // Core's decision alone.
       await h.loop.trigger(true)
-      expect(h.snapshot.models.map((model) => model.id)).toEqual(["gap-model"])
-      expect(h.snapshot.diagnostics?.publication?.degradedIDs).toEqual(["gap-model"])
+      expect(h.snapshot.models).toEqual([])
 
       const lines = createDiagnosticsLines(h.snapshot)
-      expect(lines.join("\n")).toContain("gap-model")
-      // The same lines flow into the TUI diagnostics store.
       const store = createDiagnosticsResultStore()
       store.accept({ sequence: 1, sessionID: "s1", lines })
       expect(store.forSession("s1")?.lines.join("\n")).toContain("gap-model")
-
-      const summary = summarizePublication(
-        { publishable: [], blocked: [] },
-        undefined,
-      )
-      expect(summary.blocked).toEqual([])
-      expect(acceptDegradedForSnapshot({ diagnostics: undefined }, "nope").accepted).toBeFalse()
-      const invalid = acceptDegradedForSnapshot({
-        diagnostics: {
-          publication: {
-            publishable: [],
-            degradedIDs: [],
-            lkgIDs: [],
-            blocked: [{
-              id: "invalid-model",
-              status: "invalid-metadata",
-              gaps: ["limit.context"],
-              degradationEligible: false,
-              degradationReason: "illegal metadata cannot be accepted as an unknown risk",
-            }],
-          },
-        },
-      }, "invalid-model")
-      expect(invalid.accepted).toBeFalse()
-      expect(invalid.reason).toContain("illegal")
       await registration.dispose()
     } finally {
       await h.loop.dispose()
     }
+  })
+
+  test("the publication RPC summary carries the new evidence facts", () => {
+    const summary = summarizePublication(
+      { publishable: [], blocked: [], assessments: new Map() },
+      {
+        discovered: 2,
+        publishable: [],
+        lkgBacked: [],
+        withheld: [],
+        partial: false,
+        unusable: false,
+        regressions: [],
+        newlyWithheld: [],
+        fingerprint: "sha256:none",
+      },
+      "timeout",
+    )
+    expect(summary.discovered).toBe(2)
+    expect(summary.failureKind).toBe("timeout")
+    expect(summary.withheld).toEqual([])
+    expect(summary.regressions).toEqual([])
+    expect(summary.acknowledgement.reason).toBe("unchanged")
   })
 })

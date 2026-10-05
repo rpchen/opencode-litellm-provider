@@ -5,19 +5,43 @@
  * model's metadata reliable enough to publish as a fully configured
  * model?" Covers completeness/publishability policy, false-vs-unknown
  * semantics, reasoning/levels decoupling, deterministic inheritance,
- * failure taxonomy, TTL-free Last Known Good, explicit degradation,
- * configuration states, and field-level provenance.
+ * failure taxonomy, TTL-free Last Known Good, evidence source
+ * authority, resolved discrepancies vs unresolved conflicts, and
+ * field-level provenance.
+ *
+ * The publication gate is never relaxed. There is no user confirmation,
+ * override, or degraded-publication path: a model that cannot be proven
+ * trustworthy is withheld, while every other model of the same endpoint
+ * is published normally.
  *
  * No I/O, no timers, no host SDK imports. Adapters consume the verdicts
  * without reimplementing policy.
  */
 import { type ModelLimits } from "./capabilities.js";
+import { type FieldResolution } from "./evidence.js";
 import { type CapabilityState, type DetailedSelection, type SelectedModelRecord } from "./modelsdev.js";
 import { type DeploymentGroup } from "./litellm.js";
 import { type BuildOptions, type ModelSpec } from "./build.js";
 export type { CapabilityState };
 /** Per-model configuration state. Names are domain semantics, not wire enums. */
-export type ModelConfigurationStatus = "configured" | "configured-lkg" | "discovered-incomplete" | "unmatched" | "ambiguous" | "metadata-unavailable" | "invalid-metadata" | "degraded";
+export type ModelConfigurationStatus = "configured" | "configured-lkg" | "discovered-incomplete" | "unmatched" | "ambiguous" | "metadata-unavailable" | "invalid-metadata";
+/**
+ * Why a model is withheld from the host. Several reasons may apply at
+ * once (for example an incomplete modality set plus an unresolved limit
+ * conflict); the list is never collapsed into one label.
+ */
+export type WithheldReasonCode = "identity-ambiguous" | "identity-unmatched" | "metadata-unavailable" | "incomplete-metadata" | "authoritative-conflict" | "illegal-metadata";
+export interface WithheldReason {
+    readonly code: WithheldReasonCode;
+    readonly message: string;
+    readonly fields: readonly string[];
+}
+/**
+ * Withheld reasons for one assessment. Publication state never depends on
+ * user acknowledgement; this list exists so the user can see *why* a
+ * model is not available and whether a retry can help.
+ */
+export declare function withheldReasons(assessment: CompletenessAssessment): readonly WithheldReason[];
 export type MetadataFailureKind = "timeout" | "server-5xx" | "unreachable" | "not-found" | "ambiguous" | "missing-field" | "illegal-value" | "schema-incompatible" | "cached" | "recovered-after-retry";
 export interface MetadataFailure {
     readonly kind: MetadataFailureKind;
@@ -37,6 +61,8 @@ export interface PublicationFieldProvenance {
 export interface ToolAssessment {
     readonly state: CapabilityState;
     readonly provenance: PublicationFieldProvenance;
+    readonly resolution?: FieldResolution;
+    readonly discrepancy?: boolean;
 }
 export interface ReasoningAssessment {
     readonly state: CapabilityState;
@@ -45,6 +71,8 @@ export interface ReasoningAssessment {
     readonly provenance: PublicationFieldProvenance;
     readonly levelsProvenance: PublicationFieldProvenance;
     readonly conflict: boolean;
+    readonly resolution?: FieldResolution;
+    readonly discrepancy?: boolean;
 }
 export interface LimitAssessment {
     /** Positive agreed value when known; otherwise 0, never a usable default. */
@@ -55,12 +83,20 @@ export interface LimitAssessment {
     readonly conflict: boolean;
     readonly illegal: boolean;
     readonly provenance: PublicationFieldProvenance;
+    /** Evidence resolution for this dimension, including any resolved discrepancy. */
+    readonly resolution: FieldResolution;
+    /** True when lower-authority evidence disagreed and authority resolved it. */
+    readonly discrepancy: boolean;
+    /** Narrowest proven endpoint runtime constraint for this dimension, if any. */
+    readonly deploymentConstraint?: number;
 }
 export interface ModalityAssessment {
     readonly values: readonly string[];
-    /** False means the text-only baseline is used without explicit evidence. */
+    /** False means no complete evidence exists for this direction. */
     readonly known: boolean;
     readonly provenance: PublicationFieldProvenance;
+    readonly resolution: FieldResolution;
+    readonly discrepancy: boolean;
 }
 export interface CompletenessAssessment {
     readonly publishable: boolean;
@@ -79,35 +115,14 @@ export interface CompletenessAssessment {
     readonly illegalFields: readonly string[];
     /** Fields whose deployment/model-level evidence contradicts itself. */
     readonly conflictFields: readonly string[];
+    /** Recorded value differences that source authority already resolved. */
+    readonly discrepancies: readonly FieldResolution[];
+    /** Genuine conflicts that no authority can decide; these withhold the model. */
+    readonly conflicts: readonly FieldResolution[];
     readonly failure?: MetadataFailure;
     readonly usingLKG: boolean;
     readonly lkgDetail?: string;
 }
-type ScalarEvidenceState = "known" | "unknown" | "conflict";
-export interface ScalarEvidence {
-    readonly state: ScalarEvidenceState;
-    /** The agreed value when known; 0 otherwise. */
-    readonly value: number;
-    readonly conflict: boolean;
-    readonly source: "litellm" | "models.dev" | "derived" | "none";
-}
-/**
- * Scalar group aggregation preserving unknown and conflict. Never drops
- * missing declarations: `value + unknown` stays unknown. Deployment
- * disagreement and same-dimension deployment-vs-model-level disagreement
- * are conflicts, not silently-minimum merges.
- *
- * `modelLevelAuthoritative` marks fields where the model-level value is a
- * distinct, more precise dimension (context): there it decides known on
- * its own and never conflicts with deployment inputs.
- */
-export declare function aggregateScalarEvidence(deploymentValues: readonly (number | undefined)[], modelLevel: number | undefined, modelLevelAuthoritative?: boolean): ScalarEvidence;
-/**
- * The group's agreed limit value, mirroring exactly what the published
- * spec carries (context capped when `contextTierCap` is enabled).
- * `undefined` when the group evidence is unknown or conflicting.
- */
-export declare function agreedLimitValue(group: DeploymentGroup, selected: SelectedModelRecord | undefined, field: "context" | "output", contextTierCap?: boolean): number | undefined;
 export interface AssessInput {
     readonly catalogAvailable: boolean;
     readonly failure?: MetadataFailure;
@@ -119,20 +134,18 @@ export interface AssessInput {
  * hide gaps and never guesses from names or families.
  */
 export declare function assessModelConfiguration(group: DeploymentGroup, catalog: unknown, options: BuildOptions, input?: AssessInput): CompletenessAssessment;
-/** True only for `configured` and `configured-lkg`. Degraded needs its own path. */
+/** True only for `configured` and `configured-lkg`. This is the whole gate. */
 export declare function isNormallyPublishable(status: ModelConfigurationStatus): boolean;
-/** True for normally publishable states plus user-accepted `degraded`. */
-export declare function isPublishableWithDegradedAcceptance(status: ModelConfigurationStatus): boolean;
 /**
  * Bumped when publication completeness grows, captured facts change
- * meaning, or the LKG identity shape changes. An older number cannot
- * satisfy a newer policy; restoration also re-checks the captured verdict
- * against the stored spec and the stored stable identity against the
- * current group evidence, so a same-number entry with unknown
- * capabilities, inconsistent facts, or a route-stripped identity still
- * fails closed.
+ * meaning, the authority model changes, or the LKG identity shape changes.
+ * An older number cannot satisfy a newer policy; restoration also
+ * re-checks the captured verdict against the stored spec and the stored
+ * stable identity against the current group evidence, so a same-number
+ * entry with unknown capabilities, inconsistent facts, or a route-stripped
+ * identity still fails closed.
  */
-export declare const PUBLICATION_SCHEMA_VERSION: 4;
+export declare const PUBLICATION_SCHEMA_VERSION: 5;
 export interface LastKnownGoodCapabilityVerdict {
     readonly tools: CapabilityState;
     readonly reasoning: CapabilityState;
@@ -235,50 +248,10 @@ export interface ConfigurationWithLKG {
  * whose stored spec itself passes completeness.
  */
 export declare function resolveConfigurationWithLKG(assessment: CompletenessAssessment, group: DeploymentGroup, catalog: unknown, options: BuildOptions, store: LastKnownGoodStore, now?: number): ConfigurationWithLKG;
-export interface DegradationAcceptance {
-    readonly acceptedAt: string;
-    readonly reason?: string;
-    readonly acceptedFields: readonly string[];
-}
-export interface DegradedConfiguration {
-    readonly status: "degraded";
-    readonly assessment: CompletenessAssessment;
-    readonly acceptance: DegradationAcceptance;
-    /** Still lists every gap; acceptance never erases unknowns. */
-    readonly remainingGaps: readonly string[];
-}
-export type DegradationEligibility = {
-    readonly eligible: true;
-} | {
-    readonly eligible: false;
-    readonly reason: string;
-};
-/**
- * Which blocked states a user may explicitly accept.
- *
- * Only known-identity incompleteness and a failed metadata source are
- * "the user knows what is missing". Ambiguous identity, illegal values,
- * and unmatched identity are different failures and stay blocked.
- */
-export declare function degradationEligibility(assessment: CompletenessAssessment): DegradationEligibility;
-export declare function isDegradationEligible(assessment: CompletenessAssessment): boolean;
-/**
- * User-accepted degradation. The returned wrapper stays `degraded` and
- * keeps every missing/unknown/illegal field listed; it is publishable
- * only through the degraded path, never as `configured`.
- *
- * Ineligible states throw so adapters cannot report a successful accept
- * for ambiguous, invalid, unmatched, or already-configured models.
- */
-export declare function acceptDegradedConfiguration(assessment: CompletenessAssessment, acceptance: {
-    reason?: string;
-    acceptedAt?: string;
-}): DegradedConfiguration;
 export declare function describeAssessment(assessment: CompletenessAssessment): string;
 export interface PublishableEntry {
     readonly spec: ModelSpec;
     readonly assessment: CompletenessAssessment;
-    readonly degraded?: DegradedConfiguration;
 }
 export interface BlockedEntry {
     readonly spec: ModelSpec;
@@ -292,9 +265,6 @@ export interface PublicationResult {
 }
 export interface BuildPublicationOptions {
     readonly store?: LastKnownGoodStore;
-    /** Model ids the user explicitly accepted as degraded. */
-    readonly acceptedDegradedIDs?: ReadonlySet<string>;
-    readonly degradationReason?: string;
     /** Classified metadata failure when the catalog itself failed to load. */
     readonly failure?: MetadataFailure;
     readonly now?: number;
@@ -302,11 +272,15 @@ export interface BuildPublicationOptions {
 /**
  * Partition discovery output for adapters.
  *
- * Publishable entries are `configured`, `configured-lkg`, or
- * user-accepted `degraded` only. Everything else is blocked with its
- * assessment. Adapters must not reimplement this partition; they only
- * map entries to host shapes and still honor the operational-limits
- * guard before host registration.
+ * Publishable entries are `configured` and `configured-lkg` only, and
+ * nothing else. There is no user confirmation, override, or degraded
+ * publication path: a model that cannot be proven trustworthy is
+ * withheld with its reasons while every other model of the same
+ * endpoint is published normally.
+ *
+ * Adapters must not reimplement this partition; they only map entries to
+ * host shapes and still honor the operational-limits guard before host
+ * registration.
  */
 export declare function buildPublicationResult(litellmResponse: unknown, catalog: unknown, options: BuildOptions, buildOptions?: BuildPublicationOptions): PublicationResult;
 /** Host-transport mapping for a publishable reasoning state. Conservative: unknown never reaches here. */

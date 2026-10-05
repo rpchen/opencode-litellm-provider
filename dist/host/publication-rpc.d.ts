@@ -1,3 +1,9 @@
+/**
+ * Read-only publication state surface.
+ *
+ * There is intentionally no acceptance/override method: publication is
+ * decided by Core alone and never by a client action.
+ */
 export declare const publicationRpc: {
     readonly id: "litellm-publication";
     readonly methods: {
@@ -10,6 +16,9 @@ export declare const publicationRpc: {
             readonly output: {
                 readonly type: "object";
                 readonly properties: {
+                    readonly discovered: {
+                        readonly type: "number";
+                    };
                     readonly publishable: {
                         readonly type: "array";
                         readonly items: {
@@ -26,19 +35,16 @@ export declare const publicationRpc: {
                             readonly additionalProperties: false;
                         };
                     };
-                    readonly degradedIDs: {
-                        readonly type: "array";
-                        readonly items: {
-                            readonly type: "string";
-                        };
-                    };
                     readonly lkgIDs: {
                         readonly type: "array";
                         readonly items: {
                             readonly type: "string";
                         };
                     };
-                    readonly blocked: {
+                    readonly lkgDetail: {
+                        readonly type: "string";
+                    };
+                    readonly withheld: {
                         readonly type: "array";
                         readonly items: {
                             readonly type: "object";
@@ -49,99 +55,103 @@ export declare const publicationRpc: {
                                 readonly status: {
                                     readonly type: "string";
                                 };
-                                readonly gaps: {
+                                readonly reasons: {
                                     readonly type: "array";
                                     readonly items: {
-                                        readonly type: "string";
+                                        readonly type: "object";
+                                        readonly properties: {
+                                            readonly code: {
+                                                readonly type: "string";
+                                            };
+                                            readonly message: {
+                                                readonly type: "string";
+                                            };
+                                            readonly fields: {
+                                                readonly type: "array";
+                                                readonly items: {
+                                                    readonly type: "string";
+                                                };
+                                            };
+                                        };
+                                        readonly required: readonly ["code", "message", "fields"];
+                                        readonly additionalProperties: false;
                                     };
                                 };
-                                readonly degradationEligible: {
+                                readonly previouslyPublished: {
                                     readonly type: "boolean";
                                 };
-                                readonly degradationReason: {
-                                    readonly type: "string";
+                                readonly retryable: {
+                                    readonly type: "boolean";
                                 };
                             };
-                            readonly required: readonly ["id", "status", "gaps", "degradationEligible"];
+                            readonly required: readonly ["id", "status", "reasons", "previouslyPublished", "retryable"];
                             readonly additionalProperties: false;
                         };
                     };
-                };
-                readonly required: readonly ["publishable", "degradedIDs", "lkgIDs", "blocked"];
-                readonly additionalProperties: false;
-            };
-        };
-        readonly accept: {
-            readonly input: {
-                readonly type: "object";
-                readonly properties: {
-                    readonly sessionID: {
-                        readonly type: "string";
-                    };
-                    readonly modelId: {
-                        readonly type: "string";
-                    };
-                    readonly endpointId: {
-                        readonly type: "string";
-                    };
-                };
-                readonly required: readonly ["sessionID", "modelId"];
-                readonly additionalProperties: false;
-            };
-            readonly output: {
-                readonly type: "object";
-                readonly properties: {
-                    readonly ok: {
+                    readonly partial: {
                         readonly type: "boolean";
                     };
-                    readonly status: {
-                        readonly type: "string";
+                    readonly unusable: {
+                        readonly type: "boolean";
                     };
-                    readonly gaps: {
+                    readonly regressions: {
                         readonly type: "array";
                         readonly items: {
                             readonly type: "string";
                         };
                     };
-                    readonly reason: {
-                        readonly type: "string";
-                    };
-                };
-                readonly required: readonly ["ok", "status", "gaps", "reason"];
-                readonly additionalProperties: false;
-            };
-        };
-    };
-    readonly events: {
-        readonly accepted: {
-            readonly schema: {
-                readonly type: "object";
-                readonly properties: {
-                    readonly sessionID: {
-                        readonly type: "string";
-                    };
-                    readonly modelId: {
-                        readonly type: "string";
-                    };
-                    readonly ok: {
-                        readonly type: "boolean";
-                    };
-                    readonly status: {
-                        readonly type: "string";
-                    };
-                    readonly gaps: {
+                    readonly discrepancies: {
                         readonly type: "array";
                         readonly items: {
-                            readonly type: "string";
+                            readonly type: "object";
+                            readonly properties: {
+                                readonly model: {
+                                    readonly type: "string";
+                                };
+                                readonly field: {
+                                    readonly type: "string";
+                                };
+                                readonly status: {
+                                    readonly type: "string";
+                                };
+                                readonly resolution: {
+                                    readonly type: "string";
+                                };
+                            };
+                            readonly required: readonly ["model", "field", "status", "resolution"];
+                            readonly additionalProperties: false;
                         };
                     };
-                    readonly reason: {
+                    readonly conflicts: {
+                        readonly type: "array";
+                        readonly items: {
+                            readonly type: "object";
+                            readonly properties: {
+                                readonly model: {
+                                    readonly type: "string";
+                                };
+                                readonly field: {
+                                    readonly type: "string";
+                                };
+                                readonly status: {
+                                    readonly type: "string";
+                                };
+                                readonly resolution: {
+                                    readonly type: "string";
+                                };
+                            };
+                            readonly required: readonly ["model", "field", "status", "resolution"];
+                            readonly additionalProperties: false;
+                        };
+                    };
+                    readonly failureKind: {
                         readonly type: "string";
                     };
                 };
-                readonly required: readonly ["sessionID", "modelId", "ok", "status", "gaps", "reason"];
+                readonly required: readonly ["discovered", "publishable", "lkgIDs", "withheld", "partial", "unusable", "regressions"];
                 readonly additionalProperties: false;
             };
         };
     };
+    readonly events: {};
 };

@@ -472,6 +472,14 @@ try {
   for (const name of ["litellm-endpoints", "litellm-diagnostics", "litellm-audit-export"]) {
     assert(commandNames.includes(name), `missing real host command ${name}: ${JSON.stringify(commandNames)}`)
   }
+  assert(
+    !commandNames.some((name) => String(name).includes("degraded")),
+    `no degraded-acceptance command may exist: ${JSON.stringify(commandNames)}`,
+  )
+  assert(
+    !commandNames.includes("litellm-acknowledge"),
+    `acknowledgement must not be exposed as a slash command: ${JSON.stringify(commandNames)}`,
+  )
 
   // Reproduce the user-visible startup order before any endpoint has a credential:
   // commands are executed while no TUI listener exists, and /models has no LiteLLM namespace yet.
@@ -721,20 +729,22 @@ try {
     assert(!baselineIds.includes(blocked), `${blocked} must never enter the host model list: ${JSON.stringify(baselineIds)}`)
   }
 
-  // 2) Ineligible accept attempts never claim success (invalid / ambiguous groups).
-  runSessionCommand("litellm-accept-degraded", "default gpt-5.5")
-  runSessionCommand("litellm-accept-degraded", "default shared-route")
+  // 2) There is no user confirmation path at all, and every withheld model stays
+  //    withheld with its own reason visible in diagnostics.
   const afterRejections = defaultAuditReport(await exportAudit())
-  for (const rejected of ["gpt-5.5", "shared-route"]) {
+  for (const rejected of ["gpt-5.5", "shared-route", "invalid-fields"]) {
     assert(
       !afterRejections.models.some((model) => model.id === rejected),
-      `ineligible ${rejected} must not register through accept-degraded`,
+      `withheld ${rejected} must never register`,
     )
   }
-  // The rejected models stay visible as blocked states in diagnostics.
-  const rejectionDiagnostics = await diagnosticsThroughTui(/未完成[\s：:]*gpt-5\.5/u, "the rejected accepts")
-  assert(/未完成[\s：:]*shared-route/u.test(rejectionDiagnostics), `ambiguous group must stay blocked: ${rejectionDiagnostics}`)
-  assert(/未完成[\s：:]*invalid-fields/u.test(rejectionDiagnostics), `invalid metadata must stay blocked: ${rejectionDiagnostics}`)
+  const rejectionDiagnostics = await diagnosticsThroughTui(/withheld[\s：:]*invalid-fields/u, "the withheld reasons")
+  assert(/withheld[\s：:]*shared-route/u.test(rejectionDiagnostics), `ambiguous group must stay withheld: ${rejectionDiagnostics}`)
+  assert(/withheld[\s：:]*gpt-5\.5/u.test(rejectionDiagnostics), `conflicting group must stay withheld: ${rejectionDiagnostics}`)
+  assert(
+    /部分可用/u.test(rejectionDiagnostics),
+    `partial availability must be stated: ${rejectionDiagnostics}`,
+  )
 
   // 3) A previously configured LiteLLM-only model loses its capability evidence:
   // only a provably belonging LKG snapshot keeps it registered.
@@ -757,22 +767,36 @@ try {
     `LKG must keep the previously configured model registered: ${JSON.stringify(lkgReport.models.map((m) => m.id))}`,
   )
   assert(hostModels().includes("litellm/multi-endpoint-model"), "the LKG-backed model must stay visible in CLI models")
-  await diagnosticsThroughTui(/LKG[\s：:]*提供[\s：:]*multi-endpoint-model/u, "the valid LKG substitution")
+  await diagnosticsThroughTui(
+    /使用已信任的前次完整配置（LKG）：multi-endpoint-model/u,
+    "the valid LKG substitution",
+  )
 
-  // 4) An eligible blocked model registers only through the degraded path and
-  //    keeps the degraded label with its gaps.
-  const acceptStartedAt = Date.now()
-  runSessionCommand("litellm-accept-degraded", "default minimax-m3")
-  const degradedReport = await waitForRefreshAfter(acceptStartedAt, "the degraded acceptance")
+  // 4) A withheld model that becomes complete again is published automatically:
+  //    no user approval, no stored acceptance, no confirmation step.
+  const recoveryStartedAt = Date.now()
+  declare("minimax-m3", { supports_reasoning: true })
+  const recoveredWithheld = await waitForRefreshAfter(recoveryStartedAt, "the automatic recovery")
   assert(
-    degradedReport.models.some((model) => model.id === "minimax-m3"),
-    `the accepted degraded model must register: ${JSON.stringify(degradedReport.models.map((m) => m.id))}`,
+    recoveredWithheld.models.some((model) => model.id === "minimax-m3"),
+    `the recovered model must register automatically: ${JSON.stringify(recoveredWithheld.models.map((m) => m.id))}`,
   )
-  const degradedDiagnostics = await diagnosticsThroughTui(
-    /已接受降级[\s：:]*minimax-m3/u,
-    "the degraded acceptance",
+  assert(
+    hostModels().includes("litellm/minimax-m3"),
+    "the recovered model must be visible in the host CLI model list",
   )
-  assert(!/LKG[\s：:]*提供[\s：:]*minimax-m3/u.test(degradedDiagnostics), "a degraded model must never be reported as LKG")
+  const recoveryDiagnostics = await diagnosticsThroughTui(
+    /模型配置：发现 \d+ · 可用 \d+ · withheld \d+/u,
+    "the recovered publication partition",
+  )
+  assert(
+    !/withheld[\s：:]*minimax-m3/u.test(recoveryDiagnostics),
+    `a recovered model must leave the withheld list: ${recoveryDiagnostics}`,
+  )
+  assert(
+    !/降级/u.test(recoveryDiagnostics),
+    `the degraded vocabulary must be gone from diagnostics: ${recoveryDiagnostics}`,
+  )
 
   // 5) A real metadata outage is reported, never hidden.
   mockFailStatus = 500
@@ -794,7 +818,7 @@ try {
   servedModels = servedFixture.data
   mockFailStatus = 0
   console.log(
-    "Real OpenCode publication E2E passed: partition, toggle reasoning, LKG substitution, degraded accept/reject and metadata-failure diagnostics are verified through the real host.",
+    "Real OpenCode publication E2E passed: partial catalog, withheld reasons, trusted LKG, automatic recovery, no confirmation path and metadata-failure diagnostics are verified through the real host.",
   )
 
   // ===== Phase 2: Endpoint Management UX over the real TUI (file-declared options, real PTY keys) =====

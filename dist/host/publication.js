@@ -3,86 +3,106 @@
  *
  * No business policy lives here: the Core partition decides what may
  * publish. This module only anchors per-endpoint controller memory
- * (LKG store + degraded acceptance) to the ProviderSnapshot object the
- * discovery loop already mutates, so RPC handlers and the loop share
- * state without touching persisted shapes.
+ * (LKG store, regression baseline, notification acknowledgement) to the
+ * ProviderSnapshot object the discovery loop already mutates, so RPC
+ * handlers and the loop share state without touching persisted shapes.
+ *
+ * Acknowledgement is reporting state only. There is no user confirmation
+ * path into publication: a model Core withholds stays withheld.
  */
-import { createLastKnownGoodStore, degradationEligibility, } from "../generated/discovery-core/index.js";
+import { catalogFromPublication, createLastKnownGoodStore, } from "../generated/discovery-core/index.js";
 export function createPublicationState() {
-    return { store: createLastKnownGoodStore(), acceptedDegradedIDs: new Set() };
+    return { store: createLastKnownGoodStore(), previouslyPublished: new Set() };
 }
-export function summarizePublication(publication, failureKind) {
+export function summarizePublication(publication, catalogFacts, failureKind) {
+    const facts = (id, assessment) => [
+        ...assessment.discrepancies.map((item) => ({
+            model: id,
+            field: item.field,
+            status: item.status,
+            resolution: item.resolution,
+        })),
+        ...assessment.conflicts.map((item) => ({
+            model: id,
+            field: item.field,
+            status: item.status,
+            resolution: item.resolution,
+        })),
+    ];
+    const allFacts = [
+        ...publication.publishable.flatMap((entry) => facts(entry.spec.id, entry.assessment)),
+        ...publication.blocked.flatMap((entry) => facts(entry.spec.id, entry.assessment)),
+    ];
+    const lkgDetail = publication.publishable
+        .map((entry) => entry.assessment.lkgDetail)
+        .find((detail) => detail !== undefined);
     return {
+        discovered: catalogFacts.discovered,
         publishable: publication.publishable.map((entry) => ({
             id: entry.spec.id,
             status: entry.assessment.status,
         })),
-        degradedIDs: publication.publishable
-            .filter((entry) => entry.degraded !== undefined)
-            .map((entry) => entry.spec.id),
         lkgIDs: publication.publishable
             .filter((entry) => entry.assessment.usingLKG)
             .map((entry) => entry.spec.id),
-        blocked: publication.blocked.map((entry) => {
-            const eligibility = degradationEligibility(entry.assessment);
-            return {
-                id: entry.spec.id,
-                status: entry.assessment.status,
-                degradationEligible: eligibility.eligible,
-                degradationReason: eligibility.eligible ? undefined : eligibility.reason,
-                gaps: [
-                    ...entry.assessment.missingFields,
-                    ...entry.assessment.unknownFields,
-                    ...entry.assessment.illegalFields,
-                ],
-            };
-        }),
+        lkgDetail,
+        withheld: catalogFacts.withheld.map((entry) => ({
+            id: entry.id,
+            status: entry.status,
+            reasons: entry.reasons,
+            previouslyPublished: entry.previouslyPublished,
+            retryable: entry.retryability === "retryable",
+        })),
+        partial: catalogFacts.partial,
+        unusable: catalogFacts.unusable,
+        regressions: catalogFacts.regressions.map((entry) => entry.id),
+        discrepancies: allFacts.filter((fact) => fact.status === "resolved-discrepancy"),
+        conflicts: allFacts.filter((fact) => fact.status === "unresolved-conflict"),
         failureKind,
+        acknowledgement: { notify: false, reason: "unchanged", fingerprint: catalogFacts.fingerprint },
     };
 }
-/**
- * Record explicit user acceptance for a blocked model.
- *
- * Succeeds only for models the Core partition currently reports as
- * blocked; already-publishable models need no acceptance and unknown
- * ids are rejected. The degraded label is preserved by the Core
- * wrapper on the next refresh; this helper never re-labels anything
- * as configured.
- */
-export function acceptDegradedForSummary(summary, accepted, modelId) {
-    const blocked = summary?.blocked.find((model) => model.id === modelId);
-    if (!blocked) {
-        const publishable = summary?.publishable.some((model) => model.id === modelId) ?? false;
-        return publishable
-            ? { accepted: false, reason: "already-configured" }
-            : { accepted: false, reason: "unknown-model" };
-    }
-    if (!blocked.degradationEligible) {
-        return {
-            accepted: false,
-            status: blocked.status,
-            gaps: blocked.gaps,
-            reason: blocked.degradationReason ?? "not-eligible",
-        };
-    }
-    accepted.add(modelId);
-    return { accepted: true, status: blocked.status, gaps: blocked.gaps };
-}
-/** Test/helper seam: eligibility always comes from Core, never from a local status table. */
-export function degradationReasonFor(assessment) {
-    const eligibility = degradationEligibility(assessment);
-    return eligibility.eligible ? undefined : eligibility.reason;
+/** Core catalog facts for one publication partition (single source of truth). */
+export function catalogFactsFor(publication, options = {}) {
+    return catalogFromPublication(publication, options);
 }
 /**
- * Snapshot-anchored acceptance: ensures the per-endpoint controller
- * exists on the snapshot the discovery loop mutates, so RPC/command
- * handlers and the next refresh share the accepted set.
+ * User-facing notice for a materially new or regressed availability
+ * problem. A first-time gap on a newly discovered model is intentionally
+ * silent (diagnostics only); a regression or an unusable catalog is not.
  */
-export function acceptDegradedForSnapshot(snapshot, modelId) {
-    const state = snapshot.publicationState ??= createPublicationState();
-    return acceptDegradedForSummary(snapshot.diagnostics?.publication, state.acceptedDegradedIDs, modelId);
+export function catalogNotice(summary) {
+    if (!summary?.acknowledgement.notify)
+        return undefined;
+    switch (summary.acknowledgement.reason) {
+        case "catalog-unusable":
+            return {
+                level: "warning",
+                message: `endpoint 连接成功，发现 ${summary.discovered} 个模型，但当前没有任何模型可以安全发布。` +
+                    (summary.regressions.length > 0 ? `此前可用的模型已被撤下：${summary.regressions.join("、")}。` : "") +
+                    `请重新刷新（Retry）或运行 /litellm-diagnostics 查看每个模型的 withheld 原因。`,
+            };
+        case "regression":
+            return {
+                level: "warning",
+                message: `此前可用的模型已被撤下：${summary.regressions.join("、")}。它们当前不可安全使用，` +
+                    `插件不会自动切换到其他模型；请重新刷新（Retry）或改选其他模型。`,
+            };
+        case "new-issues":
+            return {
+                level: "info",
+                message: `可用模型集合发生变化：${summary.withheld.length} 个模型 withheld。运行 /litellm-diagnostics 查看原因。`,
+            };
+        default:
+            return undefined;
+    }
 }
-/** Split `<endpoint-id> <model-id>` (multi) or `<model-id>` (legacy) input text. */
-export function splitAcceptArgs(text) {
-    return text.trim().split(/\s+/).filter((part) => part.length > 0);
+/** Consume a pending catalog notice exactly once. */
+export function takePendingNotice(snapshot) {
+    const state = snapshot.publicationState;
+    if (!state?.pendingNotice)
+        return undefined;
+    const notice = state.pendingNotice;
+    state.pendingNotice = undefined;
+    return notice;
 }

@@ -3,7 +3,6 @@ import { writeAuditFile } from "./audit-file.js";
 import { auditRpc } from "./audit-rpc.js";
 import { createDiagnosticsLines } from "./diagnostics.js";
 import { applyErrorLabel, credentialLabel, statusLabel, userVisibleStatus, } from "./endpoint-state.js";
-import { acceptDegradedForSnapshot, splitAcceptArgs, } from "./publication.js";
 import { publicationRpc } from "./publication-rpc.js";
 import { endpointStateOf } from "./register.js";
 function failureMessage(error) {
@@ -72,31 +71,17 @@ export async function registerMultiEndpointAudit(context, endpointIds, activeEnd
         async state(input) {
             const { endpointId } = input;
             const candidates = endpointId ? [snapshots.get(endpointId)] : [...snapshots.values()];
-            const found = candidates.find((snapshot) => snapshot?.diagnostics?.publication !== undefined);
-            return found?.diagnostics?.publication ?? { publishable: [], degradedIDs: [], lkgIDs: [], blocked: [] };
-        },
-        async accept(input) {
-            const { sessionID, modelId, endpointId } = input;
-            const target = endpointId
-                ? snapshots.get(endpointId)
-                : [...snapshots.values()].find((snapshot) => snapshot.diagnostics?.publication?.blocked.some((model) => model.id === modelId));
-            if (!target) {
-                return { ok: false, status: "", gaps: [], reason: endpointId ? "unknown-endpoint" : "unknown-model" };
-            }
-            const outcome = acceptDegradedForSnapshot(target, modelId);
-            await publication.events.emit("accepted", {
-                sessionID,
-                modelId,
-                ok: outcome.accepted,
-                status: outcome.status ?? "",
-                gaps: [...(outcome.gaps ?? [])],
-                reason: outcome.reason ?? (outcome.accepted ? "degraded-accepted" : "rejected"),
-            });
-            return {
-                ok: outcome.accepted,
-                status: outcome.status ?? "",
-                gaps: [...(outcome.gaps ?? [])],
-                reason: outcome.reason ?? (outcome.accepted ? "degraded-accepted" : "rejected"),
+            const found = candidates.find((item) => item?.diagnostics?.publication !== undefined);
+            return found?.diagnostics?.publication ?? {
+                discovered: 0,
+                publishable: [],
+                lkgIDs: [],
+                withheld: [],
+                partial: false,
+                unusable: false,
+                regressions: [],
+                discrepancies: [],
+                conflicts: [],
             };
         },
     });
@@ -176,41 +161,6 @@ export async function registerMultiEndpointAudit(context, endpointIds, activeEnd
                 description: "导出当前 active LiteLLM endpoints 的模型注册视图",
                 async execute({ sessionID }) {
                     await performExport(sessionID);
-                },
-            });
-            editor.add({
-                name: "litellm-accept-degraded",
-                description: "对指定 endpoint 的未完成模型显式接受降级配置",
-                async execute(input) {
-                    const record = input;
-                    const parts = splitAcceptArgs(requestedEndpoint(input));
-                    const endpointId = parts.length >= 2 ? parts[0] : undefined;
-                    const modelId = parts.length >= 2 ? parts.slice(1).join(" ") : parts[0];
-                    const target = endpointId ? snapshots.get(endpointId) : undefined;
-                    let outcome;
-                    if (parts.length < 2 || !target || !modelId) {
-                        outcome = { accepted: false, reason: !target && parts.length >= 2 ? "unknown-endpoint" : "usage" };
-                    }
-                    else {
-                        outcome = acceptDegradedForSnapshot(target, modelId);
-                    }
-                    await publication.events.emit("accepted", {
-                        sessionID: record.sessionID,
-                        modelId: modelId ?? "",
-                        ok: outcome.accepted,
-                        status: outcome.status ?? "",
-                        gaps: [...(outcome.gaps ?? [])],
-                        reason: outcome.reason ?? (outcome.accepted ? "degraded-accepted" : "rejected"),
-                    });
-                    latest = {
-                        sequence: ++diagnosticSequence,
-                        sessionID: record.sessionID,
-                        ok: outcome.accepted,
-                        path: "",
-                        error: outcome.accepted ? "" : (outcome.reason ?? "rejected"),
-                        lines: target ? createDiagnosticsLines(target) : ["unknown-endpoint"],
-                    };
-                    await rpc.events.emit("completed", latest);
                 },
             });
         });

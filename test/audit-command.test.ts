@@ -159,7 +159,9 @@ describe('审查导出命令', () => {
       return 'C:/audit/example.json'
     })
     const registration = await registerAudit(h.context, snapshot, { writeFile: h.writeFile })
-    expect(h.commands.map((item) => item.name)).toEqual(["litellm-diagnostics", "litellm-audit-export", "litellm-accept-degraded"])
+    expect(h.commands.map((item) => item.name)).toEqual(["litellm-diagnostics", "litellm-audit-export"])
+    // No degraded-acceptance command exists: publication never depends on a user action.
+    expect(h.commands.some((item) => String(item.name ?? "").includes("degraded"))).toBeFalse()
     expect(await h.handlers.latest()).toEqual({ sequence: 0, sessionID: '', ok: false, path: '', error: '' })
     await h.command.execute({ sessionID: 'session-1' })
     expect(written).toHaveLength(1)
