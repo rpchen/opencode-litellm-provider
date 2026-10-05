@@ -130,27 +130,45 @@ const offlineEnv = {
 delete env.OPENCODE_SERVER
 env.OPENCODE_CONFIG = opencodeConfigFile
 
-function command(args, options = {}) {
-  const result = spawnSync("opencode", args, {
-    cwd: project,
-    env,
-    encoding: "utf8",
-    timeout: options.timeout ?? 120_000,
-    maxBuffer: 32 * 1024 * 1024,
-  })
-  const stdout = sanitize(result.stdout ?? "")
-  const stderr = sanitize(result.stderr ?? "")
-  if (options.echo !== false) {
-    process.stdout.write(`$ opencode ${args.join(" ")}\n`)
-    if (stdout) process.stdout.write(stdout)
-    if (stderr) process.stderr.write(stderr)
-  }
-  if (!options.allowFailure && (result.error || result.status !== 0)) {
-    throw new Error(`opencode exited ${result.status ?? "unknown"}: ${result.error?.message ?? (stderr || stdout)}`)
-  }
-  return { status: result.status, stdout, stderr }
+/** Synchronous sleep so the retry loop stays inside spawnSync-based helpers. */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 }
 
+function command(args, options = {}) {
+  const attempts = options.retries ?? 1
+  for (let attempt = 1; ; attempt += 1) {
+    const result = spawnSync("opencode", args, {
+      cwd: project,
+      env,
+      encoding: "utf8",
+      timeout: options.timeout ?? 120_000,
+      maxBuffer: 33554432,
+    })
+    const stdout = sanitize(result.stdout ?? "")
+    const stderr = sanitize(result.stderr ?? "")
+    const transportFailure = (result.error || result.status !== 0) &&
+      /Could not reach server|timed out|Transport:/u.test(stdout + stderr)
+    if (attempt < attempts && transportFailure) {
+      // The real host's own CLI client uses a short HTTP timeout while the server
+      // is still starting its filesystem watchers: a transient transport failure
+      // is not a plugin failure.
+      if (options.echo !== false) process.stdout.write("$ opencode " + args.join(" ") + " (retry " + attempt + "/" + attempts + ")\n")
+      sleepSync(2_000)
+      continue
+    }
+    if (options.echo !== false) {
+      process.stdout.write("$ opencode " + args.join(" "))
+      process.stdout.write("\n")
+      if (stdout) process.stdout.write(stdout)
+      if (stderr) process.stderr.write(stderr)
+    }
+    if (!options.allowFailure && (result.error || result.status !== 0)) {
+      throw new Error("opencode exited " + (result.status ?? "unknown") + ": " + (result.error?.message ?? (stderr || stdout)))
+    }
+    return { status: result.status, stdout, stderr }
+  }
+}
 function jsonOutput(result, label) {
   const text = result.stdout.trim()
   try {
@@ -432,7 +450,7 @@ try {
 
   openCodeServer = await startOpenCodeServer()
   env.OPENCODE_PASSWORD = openCodeServer.password
-  const api = (...args) => command(["api", "--server", openCodeServer.url, ...args])
+  const api = (...args) => command(["api", "--server", openCodeServer.url, ...args], { retries: 6 })
   const serverCommand = (name, ...args) => command([name, "--server", openCodeServer.url, ...args])
 
   // Server listen readiness precedes external plugin activation in OpenCode 2.0.16.
