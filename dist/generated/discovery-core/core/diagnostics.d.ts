@@ -1,5 +1,6 @@
 import { type BuildOptions, type ModelSpec } from "./build.js";
 import { type ReasoningSupportResolution } from "./modelsdev.js";
+import type { FieldResolution } from "./evidence.js";
 import { type ProtocolReason, type ProtocolSupport } from "./protocol.js";
 export declare const DISCOVERY_DIAGNOSTICS_SCHEMA_VERSION: 1;
 export type DiagnosticSeverity = "info" | "warning" | "error";
@@ -60,6 +61,17 @@ export interface ModelDiagnostic {
         readonly reasoningLevels: readonly string[];
         readonly inheritedFields: readonly string[];
         readonly inheritanceChain: readonly string[];
+        /** Recorded value differences that source authority already resolved. */
+        readonly discrepancies: readonly FieldResolution[];
+        /** Genuine conflicts that no authority can decide; these withhold the model. */
+        readonly conflicts: readonly FieldResolution[];
+        /** Proven endpoint runtime constraints that narrowed an effective value. */
+        readonly deploymentConstraints: readonly {
+            readonly field: string;
+            readonly value: number;
+        }[];
+        readonly usingLKG: boolean;
+        readonly lkgDetail?: string;
     };
     readonly provenance: {
         readonly protocol: FieldProvenance;

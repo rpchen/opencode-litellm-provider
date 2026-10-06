@@ -3,70 +3,94 @@
  *
  * No business policy lives here: the Core partition decides what may
  * publish. This module only anchors per-endpoint controller memory
- * (LKG store + degraded acceptance) to the ProviderSnapshot object the
- * discovery loop already mutates, so RPC handlers and the loop share
- * state without touching persisted shapes.
+ * (LKG store, regression baseline, notification acknowledgement) to the
+ * ProviderSnapshot object the discovery loop already mutates, so RPC
+ * handlers and the loop share state without touching persisted shapes.
+ *
+ * Acknowledgement is reporting state only. There is no user confirmation
+ * path into publication: a model Core withholds stays withheld.
  */
-import { type BlockedEntry, type CompletenessAssessment, type LastKnownGoodStore, type PublishableEntry } from "../generated/discovery-core/index.js";
+import { type BlockedEntry, type CatalogPublication, type DegradationAcknowledgement, type LastKnownGoodStore, type PublicationResult, type PublishableEntry } from "../generated/discovery-core/index.js";
 export interface PublicationModelState {
     readonly id: string;
     readonly status: string;
 }
-export interface PublicationBlockedModel {
+export interface PublicationWithheldReason {
+    readonly code: string;
+    readonly message: string;
+    readonly fields: readonly string[];
+}
+/** One model that could not be safely published, with every reason. */
+export interface PublicationWithheldModel {
     readonly id: string;
     readonly status: string;
-    readonly gaps: readonly string[];
-    /** Core eligibility. Adapters must not re-derive this from status strings. */
-    readonly degradationEligible: boolean;
-    readonly degradationReason?: string;
+    readonly reasons: readonly PublicationWithheldReason[];
+    readonly previouslyPublished: boolean;
+    readonly retryable: boolean;
 }
-/** Adapter-visible slice of the Core publication partition. */
+/** A field-level evidence fact worth showing to the user. */
+export interface PublicationFieldFact {
+    readonly model: string;
+    readonly field: string;
+    readonly status: string;
+    readonly resolution: string;
+}
+/** Adapter-visible slice of the Core publication + catalog partition. */
 export interface PublicationSummary {
+    readonly discovered: number;
     readonly publishable: readonly PublicationModelState[];
-    readonly degradedIDs: readonly string[];
     readonly lkgIDs: readonly string[];
-    readonly blocked: readonly PublicationBlockedModel[];
+    readonly lkgDetail?: string;
+    readonly withheld: readonly PublicationWithheldModel[];
+    readonly partial: boolean;
+    readonly unusable: boolean;
+    readonly regressions: readonly string[];
+    readonly discrepancies: readonly PublicationFieldFact[];
+    readonly conflicts: readonly PublicationFieldFact[];
     readonly failureKind?: string;
+    readonly acknowledgement: {
+        readonly notify: boolean;
+        readonly reason: string;
+        readonly fingerprint: string;
+    };
 }
 /** Per-endpoint controller memory anchored to one ProviderSnapshot. */
 export interface PublicationState {
     readonly store: LastKnownGoodStore;
-    readonly acceptedDegradedIDs: Set<string>;
+    previouslyPublished: Set<string>;
+    acknowledgement?: DegradationAcknowledgement;
+    /** Unconsumed user-facing notice derived from the acknowledgement decision. */
+    pendingNotice?: {
+        readonly reason: string;
+        readonly message: string;
+    };
 }
 export declare function createPublicationState(): PublicationState;
-export declare function summarizePublication(publication: {
-    publishable: readonly PublishableEntry[];
-    blocked: readonly BlockedEntry[];
-}, failureKind?: string): PublicationSummary;
-export interface AcceptDegradedOutcome {
-    readonly accepted: boolean;
-    readonly status?: string;
-    readonly gaps?: readonly string[];
-    readonly reason?: string;
-}
+export declare function summarizePublication(publication: PublicationResult, catalogFacts: CatalogPublication, failureKind?: string): PublicationSummary;
+/** Core catalog facts for one publication partition (single source of truth). */
+export declare function catalogFactsFor(publication: PublicationResult, options?: {
+    readonly previouslyPublished?: ReadonlySet<string>;
+    readonly discovered?: number;
+}): CatalogPublication;
 /**
- * Record explicit user acceptance for a blocked model.
- *
- * Succeeds only for models the Core partition currently reports as
- * blocked; already-publishable models need no acceptance and unknown
- * ids are rejected. The degraded label is preserved by the Core
- * wrapper on the next refresh; this helper never re-labels anything
- * as configured.
+ * User-facing notice for a materially new or regressed availability
+ * problem. A first-time gap on a newly discovered model is intentionally
+ * silent (diagnostics only); a regression or an unusable catalog is not.
  */
-export declare function acceptDegradedForSummary(summary: PublicationSummary | undefined, accepted: Set<string>, modelId: string): AcceptDegradedOutcome;
-/** Test/helper seam: eligibility always comes from Core, never from a local status table. */
-export declare function degradationReasonFor(assessment: CompletenessAssessment): string | undefined;
+export declare function catalogNotice(summary: PublicationSummary | undefined): {
+    readonly level: "info" | "warning";
+    readonly message: string;
+} | undefined;
 export interface SnapshotPublicationLike {
     diagnostics?: {
         publication?: PublicationSummary;
     };
     publicationState?: PublicationState;
 }
-/**
- * Snapshot-anchored acceptance: ensures the per-endpoint controller
- * exists on the snapshot the discovery loop mutates, so RPC/command
- * handlers and the next refresh share the accepted set.
- */
-export declare function acceptDegradedForSnapshot(snapshot: SnapshotPublicationLike, modelId: string): AcceptDegradedOutcome;
-/** Split `<endpoint-id> <model-id>` (multi) or `<model-id>` (legacy) input text. */
-export declare function splitAcceptArgs(text: string): string[];
+/** Consume a pending catalog notice exactly once. */
+export declare function takePendingNotice(snapshot: SnapshotPublicationLike): {
+    readonly reason: string;
+    readonly message: string;
+} | undefined;
+/** Test/helper seam kept for the publication partition types. */
+export type { BlockedEntry, PublishableEntry };

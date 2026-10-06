@@ -5,17 +5,82 @@
  * model's metadata reliable enough to publish as a fully configured
  * model?" Covers completeness/publishability policy, false-vs-unknown
  * semantics, reasoning/levels decoupling, deterministic inheritance,
- * failure taxonomy, TTL-free Last Known Good, explicit degradation,
- * configuration states, and field-level provenance.
+ * failure taxonomy, TTL-free Last Known Good, evidence source
+ * authority, resolved discrepancies vs unresolved conflicts, and
+ * field-level provenance.
+ *
+ * The publication gate is never relaxed. There is no user confirmation,
+ * override, or degraded-publication path: a model that cannot be proven
+ * trustworthy is withheld, while every other model of the same endpoint
+ * is published normally.
  *
  * No I/O, no timers, no host SDK imports. Adapters consume the verdicts
  * without reimplementing policy.
  */
 import { mapCapabilities, } from "./capabilities.js";
-import { canonicalModelID, candidateModelIDs, aggregateTriState, resolveInheritedRecord, resolveReasoningLevels, resolveReasoningState, selectModelsDevRecordDetailed, modelsDevReasoning, groupIdentityEvidence, } from "./modelsdev.js";
+import { RUNTIME_CONSTRAINT_KEYS, deploymentConstraintValue, modalityDimensions, modelsDevNumeric, resolveBooleanField, resolveModalityField, resolveNumericField, } from "./evidence.js";
+import { candidateModelIDs, aggregateTriState, resolveInheritedRecord, resolveReasoningLevels, resolveReasoningState, modelsDevReasoning, canonicalModelID, selectModelsDevRecordDetailed, groupIdentityEvidence, } from "./modelsdev.js";
 import { isRecord, optionalBoolean, optionalNumber, groupLiteLLMDeployments, } from "./litellm.js";
 import { resolveProtocol } from "./protocol.js";
 import { buildModelSpecs } from "./build.js";
+/**
+ * Withheld reasons for one assessment. Publication state never depends on
+ * user acknowledgement; this list exists so the user can see *why* a
+ * model is not available and whether a retry can help.
+ */
+export function withheldReasons(assessment) {
+    if (assessment.publishable)
+        return [];
+    const reasons = [];
+    const gaps = [...assessment.missingFields, ...assessment.unknownFields, ...assessment.illegalFields];
+    const conflictFields = [
+        ...assessment.conflictFields,
+        ...assessment.conflicts.map((conflict) => conflict.field),
+    ];
+    if (assessment.status === "ambiguous" || assessment.identity.outcome === "ambiguous") {
+        reasons.push({
+            code: "identity-ambiguous",
+            message: "canonical model identity could not be resolved to exactly one trusted record",
+            fields: ["identity"],
+        });
+    }
+    if (assessment.status === "unmatched") {
+        reasons.push({
+            code: "identity-unmatched",
+            message: "no models.dev record matched this LiteLLM model identity",
+            fields: ["identity"],
+        });
+    }
+    if (assessment.status === "metadata-unavailable") {
+        reasons.push({
+            code: "metadata-unavailable",
+            message: `metadata source is temporarily unavailable (${assessment.failure?.kind ?? "unavailable"}) and no valid trusted snapshot exists`,
+            fields: ["metadata"],
+        });
+    }
+    if (assessment.status === "discovered-incomplete" || assessment.status === "unmatched") {
+        reasons.push({
+            code: "incomplete-metadata",
+            message: "metadata is not complete enough to prove a correct model configuration",
+            fields: gaps,
+        });
+    }
+    if (conflictFields.length > 0) {
+        reasons.push({
+            code: "authoritative-conflict",
+            message: "evidence conflicts and no authority can decide, so no safe configuration can be published",
+            fields: [...new Set(conflictFields)],
+        });
+    }
+    if (assessment.illegalFields.length > 0) {
+        reasons.push({
+            code: "illegal-metadata",
+            message: "declared metadata contains illegal values",
+            fields: [...assessment.illegalFields],
+        });
+    }
+    return reasons;
+}
 /** Pure classification of a metadata fetch/merge failure. Never emits defaults. */
 export function classifyMetadataFailure(error) {
     const code = ((isRecord(error) && typeof error.code === "string" ? error.code : undefined) ??
@@ -84,32 +149,6 @@ function toolProvenance(group, selected, inherited) {
     }
     return { source: "none", detail: "no trusted tool-call evidence" };
 }
-/**
- * Per-deployment explicit limit plus the trusted model-level fallback.
- * Values are never aggregated here; aggregation happens once, in one place.
- *
- * Context evidence is two different dimensions by design: LiteLLM
- * `max_input_tokens` is the deployment's input capacity, while models.dev
- * `limit.context` is the total context window. They never conflict across
- * dimensions; the model-level total wins when present (it is the more
- * precise fact), and deployment inputs fall back to being the group's
- * context evidence only when models.dev declares no total.
- */
-function deploymentLimitEvidence(group, selected, field) {
-    const liteLLMKeys = field === "context" ? ["max_input_tokens"] : ["max_output_tokens", "max_tokens"];
-    const deploymentValues = group.deployments.map((deployment) => {
-        for (const key of liteLLMKeys) {
-            const value = optionalNumber(deployment.modelInfo[key]);
-            if (value !== undefined)
-                return value;
-        }
-        return undefined;
-    });
-    const recordLimit = isRecord(selected?.record.limit)
-        ? optionalNumber(selected.record.limit[field])
-        : undefined;
-    return { deploymentValues, modelLevel: recordLimit };
-}
 function firstTierPoint(deployment) {
     const points = [];
     for (const [key, rawValue] of Object.entries(deployment.modelInfo)) {
@@ -130,199 +169,153 @@ function firstTierPoint(deployment) {
     }
     return points.length > 0 ? Math.min(...points) : undefined;
 }
-/**
- * Scalar group aggregation preserving unknown and conflict. Never drops
- * missing declarations: `value + unknown` stays unknown. Deployment
- * disagreement and same-dimension deployment-vs-model-level disagreement
- * are conflicts, not silently-minimum merges.
- *
- * `modelLevelAuthoritative` marks fields where the model-level value is a
- * distinct, more precise dimension (context): there it decides known on
- * its own and never conflicts with deployment inputs.
- */
-export function aggregateScalarEvidence(deploymentValues, modelLevel, modelLevelAuthoritative = false) {
-    const defined = deploymentValues.filter((value) => value !== undefined);
-    const hasUnknown = deploymentValues.length > defined.length;
-    const useModel = modelLevel !== undefined && modelLevel > 0;
-    const model = useModel ? modelLevel : undefined;
-    if (useModel && modelLevelAuthoritative) {
-        return { state: "known", value: model, conflict: false, source: "models.dev" };
-    }
-    if (defined.length === 0) {
-        if (useModel)
-            return { state: "known", value: model, conflict: false, source: "models.dev" };
-        return { state: "unknown", value: 0, conflict: false, source: "none" };
-    }
-    const deploymentConflict = !defined.every((value) => value === defined[0]);
-    // Model-level evidence must not turn `value + unknown` into known even
-    // when it happens to agree with the declared deployments; it may only
-    // fill a group where every deployment left the field undeclared. When
-    // every deployment declares and all agree, an agreeing model-level value
-    // corroborates; a contradicting one is a real conflict.
-    const everyDeclared = defined.length === deploymentValues.length;
-    const corroborates = useModel && everyDeclared && defined.every((value) => value === model);
-    const modelConflict = useModel && !corroborates && defined.some((value) => value !== model);
-    if (deploymentConflict || modelConflict) {
-        return { state: "conflict", value: 0, conflict: true, source: useModel ? "derived" : "litellm" };
-    }
-    if (hasUnknown)
-        return { state: "unknown", value: 0, conflict: false, source: "litellm" };
-    return { state: "known", value: defined[0], conflict: false, source: useModel && corroborates ? "derived" : "litellm" };
+/** Narrowest pricing-tier bound, used only when `contextTierCap` is enabled. */
+function contextTierBounds(group, contextTierCap) {
+    if (!contextTierCap)
+        return [];
+    const tierPoints = group.deployments
+        .map(firstTierPoint)
+        .filter((value) => value !== undefined);
+    return tierPoints.length > 0 ? [Math.min(...tierPoints)] : [];
 }
-/**
- * The group's agreed limit value, mirroring exactly what the published
- * spec carries (context capped when `contextTierCap` is enabled).
- * `undefined` when the group evidence is unknown or conflicting.
- */
-export function agreedLimitValue(group, selected, field, contextTierCap = false) {
-    const { deploymentValues, modelLevel } = deploymentLimitEvidence(group, selected, field);
-    const aggregate = aggregateScalarEvidence(deploymentValues, modelLevel, field === "context" && modelLevel !== undefined && modelLevel > 0);
-    if (aggregate.state !== "known" || !(aggregate.value > 0))
-        return undefined;
-    if (field === "context" && contextTierCap) {
-        const tierPoints = group.deployments
-            .map(firstTierPoint)
-            .filter((value) => value !== undefined);
-        const firstTier = tierPoints.length > 0 ? Math.min(...tierPoints) : undefined;
-        if (firstTier !== undefined)
-            return Math.min(aggregate.value, firstTier);
+function limitProvenance(field, resolution, selected, bounds) {
+    if (resolution.value === undefined) {
+        if (resolution.status === "missing")
+            return { source: "none", detail: resolution.resolution };
+        if (resolution.status === "illegal")
+            return { source: "litellm", detail: resdetail(resolution) };
+        return { source: resolution.status === "unresolved-conflict" ? "derived" : "litellm", detail: resolution.resolution };
     }
-    return aggregate.value;
-}
-/**
- * Group limit evidence with unknown/conflict semantics, then legality.
- *
- * Illegality is a declared fact: any explicitly declared non-positive
- * value — deployment or trusted model-level, context or output — is
- * illegal metadata regardless of the group decision. A declared `0` is
- * never treated as missing or unknown.
- */
-function assessGroupLimit(group, selected, field, options) {
-    const { deploymentValues, modelLevel } = deploymentLimitEvidence(group, selected, field);
-    const knownValue = agreedLimitValue(group, selected, field, options.contextTierCap);
-    const provenance = (detail, source) => {
-        if (source === "models.dev") {
-            return {
-                source,
-                detail: `limit.${field} -> provider ${selected?.providerID ?? "unknown-provider"} -> model ${selected?.modelID ?? "unknown-model"}`,
-            };
-        }
-        return { source, detail };
-    };
-    const knownSource = modelLevel !== undefined && modelLevel > 0 && field === "context" ? "models.dev" : "litellm";
-    const illegal = deploymentValues.some((value) => value !== undefined && !(value > 0)) ||
-        (modelLevel !== undefined && !(modelLevel > 0));
-    if (illegal) {
-        return {
-            value: 0, valid: false, missing: false, unknown: false, conflict: false, illegal: true,
-            provenance: { source: "litellm", detail: `illegal ${field} limit metadata` },
-        };
+    if (field === "context" && bounds.length > 0 && resolution.value === bounds[0]) {
+        return { source: "derived", detail: `LiteLLM pricing tier cap at ${bounds[0]} tokens` };
     }
-    if (knownValue !== undefined) {
+    if (resolution.selectedSource === "models.dev") {
         return {
-            value: Math.floor(knownValue), valid: true, missing: false, unknown: false, conflict: false, illegal: false,
-            provenance: provenance(`limit.${field} group evidence`, knownSource),
-        };
-    }
-    const defined = deploymentValues.filter((value) => value !== undefined);
-    const declaredConflict = defined.length > 0 && !defined.every((value) => value === defined[0]) ||
-        (defined.length > 0 && modelLevel !== undefined && modelLevel > 0 && field === "output" && defined[0] !== modelLevel);
-    if (declaredConflict) {
-        return {
-            value: 0, valid: false, missing: false, unknown: false, conflict: true, illegal: false,
-            provenance: provenance(`limit.${field} deployment or model-level conflict`, "derived"),
-        };
-    }
-    const everythingUndeclared = deploymentValues.every((value) => value === undefined) &&
-        !(modelLevel !== undefined && modelLevel > 0);
-    if (everythingUndeclared) {
-        return {
-            value: 0, valid: false, missing: true, unknown: false, conflict: false, illegal: false,
-            provenance: provenance(`no ${field} limit metadata`, "none"),
+            source: "models.dev",
+            detail: `limit.${field} -> provider ${selected?.providerID ?? "unknown-provider"} -> model ${selected?.modelID ?? "unknown-model"}`,
         };
     }
     return {
-        value: 0, valid: false, missing: false, unknown: true, conflict: false, illegal: false,
-        provenance: provenance(`partial ${field} limit evidence; unknown is not coerced`, "litellm"),
+        source: "litellm",
+        detail: `limit.${field} group evidence: ${resolution.resolution}`,
     };
 }
-const INPUT_MODALITY_FIELDS = [
-    ["supports_vision", "image"],
-    ["supports_pdf_input", "pdf"],
-    ["supports_audio_input", "audio"],
-    ["supports_video_input", "video"],
-];
-const OUTPUT_MODALITY_FIELDS = [
-    ["supports_audio_output", "audio"],
-];
+function resdetail(resolution) {
+    return resolution.resolution;
+}
 /**
- * Raw per-dimension evidence for one direction. Each dimension carries
- * every deployment's declaration so aggregation can distinguish
- * all-unknown, partially-declared, fully-declared-agreed, and conflicting.
+ * Resolve one gated limit dimension.
+ *
+ * Legality is checked first and independently of authority: an explicitly
+ * declared non-positive value (descriptive or constraint, deployment-level
+ * or trusted model-level) is illegal metadata, never a missing value or a
+ * default. After that, authoritative intrinsic metadata decides and proven
+ * endpoint runtime constraints narrow the effective value.
  */
-function modalityDimensionEvidence(group, direction) {
-    const fields = direction === "input" ? INPUT_MODALITY_FIELDS : OUTPUT_MODALITY_FIELDS;
-    return fields.map(([key, modality]) => ({
-        modality,
-        values: group.deployments.map((d) => optionalBoolean(d.modelInfo[key])),
-    }));
+function assessLimit(group, selected, field, options) {
+    const bounds = field === "context" ? contextTierBounds(group, options.contextTierCap) : [];
+    const rawIntrinsic = selected ? modelsDevNumeric(selected, field) : undefined;
+    const illegalIntrinsic = rawIntrinsic !== undefined && !(rawIntrinsic > 0);
+    const intrinsic = rawIntrinsic !== undefined && rawIntrinsic > 0 ? rawIntrinsic : undefined;
+    const resolved = resolveNumericField({
+        field,
+        group,
+        intrinsic,
+        intrinsicDetail: `limit.${field} -> provider ${selected?.providerID ?? "unknown-provider"} -> model ${selected?.modelID ?? "unknown-model"}`,
+        bounds,
+    });
+    const resolution = illegalIntrinsic
+        ? {
+            ...resolved.resolution,
+            status: "illegal",
+            value: undefined,
+            resolution: `trusted model-level ${field} limit is non-positive; illegal, not missing`,
+        }
+        : resolved.resolution;
+    const provenance = limitProvenance(field, resolution, selected, bounds);
+    if (illegalIntrinsic) {
+        return {
+            value: 0, valid: false, missing: false, unknown: false, conflict: false, illegal: true,
+            provenance: { source: "models.dev", detail: `illegal model-level ${field} limit metadata` },
+            resolution,
+            discrepancy: false,
+        };
+    }
+    if (resolved.value !== undefined) {
+        return {
+            value: Math.floor(resolved.value),
+            valid: true,
+            missing: false,
+            unknown: false,
+            conflict: false,
+            illegal: false,
+            provenance,
+            resolution,
+            discrepancy: resolved.discrepancy,
+            deploymentConstraint: deploymentConstraintValue(group, RUNTIME_CONSTRAINT_KEYS[field]),
+        };
+    }
+    return {
+        value: 0,
+        valid: false,
+        missing: resolved.missing,
+        unknown: resolved.unknown,
+        conflict: resolved.conflict,
+        illegal: resolved.illegal,
+        provenance,
+        resolution,
+        discrepancy: false,
+    };
 }
 /**
  * models.dev complete modality set: listed means supported, unlisted means
- * not in the declared set. Only consumed when trusted record-level metadata
- * exists for the direction.
+ * not in the declared set. Only consumed when the canonical identity is
+ * reliably resolved, which is exactly when `selected` is defined.
  */
-function modelsDevModalitySet(selected, direction) {
+function modelsDevModalityList(selected, direction) {
     const modalities = selected?.record.modalities;
     if (!isRecord(modalities) || !Array.isArray(modalities[direction]))
         return undefined;
     const list = modalities[direction].filter((value) => typeof value === "string");
-    if (list.length === 0)
-        return undefined;
-    return new Set(list);
+    return list.length > 0 ? list : undefined;
 }
+/**
+ * Resolve one modality direction. Authoritative intrinsic modalities decide
+ * the direction; contradicting LiteLLM flags are a retained discrepancy; a
+ * proven endpoint constraint (`litellm_params` flag explicitly `false`)
+ * narrows the effective set. Without authority the sparse-flag rules apply:
+ * an incompletely declared direction stays unknown.
+ */
 function assessModalities(values, group, selected, direction) {
-    const dimensions = modalityDimensionEvidence(group, direction);
-    const modelSet = modelsDevModalitySet(selected, direction);
-    let conflict = false;
-    const supported = new Set();
-    for (const dimension of dimensions) {
-        const defined = dimension.values.filter((value) => value !== undefined);
-        if (defined.length === 0) {
-            if (modelSet?.has(dimension.modality))
-                supported.add(dimension.modality);
-            continue;
-        }
-        if (!defined.every((value) => value === defined[0])) {
-            conflict = true;
-            continue;
-        }
-        const isSupported = defined[0] === true;
-        if (modelSet !== undefined && modelSet.has(dimension.modality) !== isSupported)
-            conflict = true;
-        if (isSupported)
-            supported.add(dimension.modality);
-    }
-    const known = !conflict && dimensions.every((dimension) => {
-        const defined = dimension.values.filter((value) => value !== undefined);
-        if (defined.length === 0)
-            return modelSet !== undefined;
-        return defined.length === dimension.values.length &&
-            defined.every((value) => value === defined[0]);
+    const intrinsic = modelsDevModalityList(selected, direction);
+    const resolved = resolveModalityField({
+        direction,
+        group,
+        intrinsic,
+        intrinsicDetail: `modalities.${direction} -> provider ${selected?.providerID ?? "unknown-provider"} -> model ${selected?.modelID ?? "unknown-model"}`,
     });
-    if (known && !supported.has("text"))
-        supported.add("text");
-    return {
-        values: known ? [...supported] : values,
-        known,
-        provenance: conflict
-            ? { source: "derived", detail: `${direction} modality evidence conflicts; not coerced to a set` }
-            : known
-                ? {
-                    source: modelSet !== undefined ? "models.dev" : "litellm",
-                    detail: `${direction} modality evidence covers every dimension`,
-                }
+    if (!resolved.known) {
+        return {
+            values,
+            known: false,
+            provenance: resolved.conflict
+                ? { source: "derived", detail: `${direction} modality evidence conflicts; not coerced to a set` }
                 : { source: "default", detail: `${direction} modality evidence incomplete; text baseline without full evidence` },
+            resolution: resolved.resolution,
+            discrepancy: false,
+        };
+    }
+    return {
+        values: [...resolved.values],
+        known: true,
+        provenance: intrinsic !== undefined
+            ? {
+                source: "models.dev",
+                detail: `modalities.${direction} -> provider ${selected?.providerID ?? "unknown-provider"} -> model ${selected?.modelID ?? "unknown-model"}`,
+            }
+            : { source: "litellm", detail: `${direction} modality evidence covers every dimension` },
+        resolution: resolved.resolution,
+        discrepancy: resolved.discrepancy,
     };
 }
 function catalogHasProviders(catalog) {
@@ -344,12 +337,32 @@ export function assessModelConfiguration(group, catalog, options, input = { cata
         : detailed.selected;
     const protocol = resolveProtocol(group, options.protocolOverrides);
     const mapped = mapCapabilities(group, effectiveSelected, options.contextTierCap);
-    const toolAggregation = aggregateTriState(group.deployments.map((d) => optionalBoolean(d.modelInfo.supports_function_calling)), optionalBoolean(effectiveSelected?.record.tool_call));
-    const toolState = toolAggregation.state;
+    const toolIntrinsic = optionalBoolean(effectiveSelected?.record.tool_call);
+    const toolAggregation = aggregateTriState(group.deployments.map((d) => optionalBoolean(d.modelInfo.supports_function_calling)), toolIntrinsic);
+    const toolResolved = resolveBooleanField({
+        field: "capabilities.tools",
+        descriptiveKey: "supports_function_calling",
+        group,
+        intrinsic: toolIntrinsic,
+        intrinsicDetail: `tool_call -> provider ${effectiveSelected?.providerID ?? "unknown-provider"} -> model ${effectiveSelected?.modelID ?? "unknown-model"}`,
+        fallbackState: toolAggregation.state,
+        fallbackConflict: toolAggregation.conflict,
+    });
+    const toolState = toolResolved.state;
     const reasoningState = resolveReasoningState(group, effectiveSelected);
+    const reasoningResolved = resolveBooleanField({
+        field: "reasoning",
+        descriptiveKey: "supports_reasoning",
+        group,
+        intrinsic: modelsDevReasoning(effectiveSelected),
+        intrinsicDetail: `reasoning -> provider ${effectiveSelected?.providerID ?? "unknown-provider"} -> model ${effectiveSelected?.modelID ?? "unknown-model"}`,
+        fallbackState: reasoningState.state,
+        fallbackConflict: reasoningState.conflict,
+    });
+    const reasoningVerdict = { state: reasoningResolved.state, conflict: reasoningResolved.conflict };
     const levels = resolveReasoningLevels(effectiveSelected, protocol);
-    const context = assessGroupLimit(group, effectiveSelected, "context", options);
-    const output = assessGroupLimit(group, effectiveSelected, "output", options);
+    const context = assessLimit(group, effectiveSelected, "context", options);
+    const output = assessLimit(group, effectiveSelected, "output", options);
     const inputModalities = assessModalities(mapped.capabilities.input, group, effectiveSelected, "input");
     const outputModalities = assessModalities(mapped.capabilities.output, group, effectiveSelected, "output");
     const missingFields = [];
@@ -370,19 +383,28 @@ export function assessModelConfiguration(group, catalog, options, input = { cata
         conflictFields.push("limit.output");
     if (toolState === "unknown")
         unknownFields.push("capabilities.tools");
-    if (reasoningState.state === "unknown")
+    if (reasoningVerdict.state === "unknown")
         unknownFields.push("reasoning");
     if (!inputModalities.known)
         unknownFields.push("capabilities.input");
     if (!outputModalities.known)
         unknownFields.push("capabilities.output");
-    if (context.unknown || output.unknown) {
-        // Unknown limits participate as unknowns, not missing values.
-        if (context.unknown)
-            unknownFields.push("limit.context");
-        if (output.unknown)
-            unknownFields.push("limit.output");
-    }
+    if (context.unknown)
+        unknownFields.push("limit.context");
+    if (output.unknown)
+        unknownFields.push("limit.output");
+    // Both buckets are first-class facts: a *resolved discrepancy* keeps the
+    // model publishable, an *unresolved conflict* withholds it with a reason.
+    const fieldResolutions = [
+        context.resolution,
+        output.resolution,
+        inputModalities.resolution,
+        outputModalities.resolution,
+        toolResolved.resolution,
+        reasoningResolved.resolution,
+    ];
+    const discrepancies = fieldResolutions.filter((resolution) => resolution.status === "resolved-discrepancy");
+    const conflicts = fieldResolutions.filter((resolution) => resolution.status === "unresolved-conflict");
     const catalogDown = !input.catalogAvailable;
     const litellmOnlyComplete = detailed.outcome === "unmatched" &&
         missingFields.length === 0 &&
@@ -416,25 +438,31 @@ export function assessModelConfiguration(group, catalog, options, input = { cata
         status,
         tools: {
             state: toolState,
-            provenance: toolAggregation.conflict
-                ? { source: "derived", detail: "deployment or model-level tool evidence conflicts; unknown is not coerced" }
-                : toolProvenance(group, effectiveSelected, inherited?.inheritedFields.includes("tool_call") ?? false),
+            provenance: toolResolved.resolution.selectedSource === "models.dev"
+                ? { source: "models.dev", detail: `tool_call -> provider ${effectiveSelected?.providerID} -> model ${effectiveSelected?.modelID}` }
+                : toolAggregation.conflict
+                    ? { source: "derived", detail: "deployment tool declarations conflict; unknown is not coerced" }
+                    : toolProvenance(group, effectiveSelected, inherited?.inheritedFields.includes("tool_call") ?? false),
+            resolution: toolResolved.resolution,
+            discrepancy: toolResolved.discrepancy,
         },
         reasoning: {
-            state: reasoningState.state,
+            state: reasoningVerdict.state,
             levelsKnown: levels.known,
             levels: levels.values,
-            provenance: reasoningState.source === "litellm"
-                ? { source: "litellm", detail: "supports_reasoning" }
-                : reasoningState.source === "models.dev"
-                    ? { source: "models.dev", detail: `reasoning -> provider ${effectiveSelected?.providerID} -> model ${effectiveSelected?.modelID}` }
+            provenance: reasoningResolved.resolution.selectedSource === "models.dev"
+                ? { source: "models.dev", detail: `reasoning -> provider ${effectiveSelected?.providerID} -> model ${effectiveSelected?.modelID}` }
+                : reasoningState.source === "litellm"
+                    ? { source: "litellm", detail: "supports_reasoning" }
                     : reasoningState.source === "derived"
                         ? { source: "derived", detail: "LiteLLM and models.dev reasoning evidence" }
                         : { source: "none", detail: "no reasoning support metadata" },
             levelsProvenance: levels.known
                 ? { source: "models.dev", detail: "reasoning_options" }
                 : { source: "none", detail: "no reasoning level metadata" },
-            conflict: reasoningState.conflict,
+            conflict: reasoningVerdict.conflict,
+            resolution: reasoningResolved.resolution,
+            discrepancy: reasoningResolved.discrepancy,
         },
         context: inherited && inherited.inheritedFields.includes("limit") && context.valid
             ? { ...context, provenance: { source: "canonical-inheritance", detail: inherited.chain.join("; ") } }
@@ -451,31 +479,29 @@ export function assessModelConfiguration(group, catalog, options, input = { cata
         unknownFields,
         illegalFields,
         conflictFields,
+        discrepancies,
+        conflicts,
         failure: input.failure,
         usingLKG: false,
     };
 }
-/** True only for `configured` and `configured-lkg`. Degraded needs its own path. */
+/** True only for `configured` and `configured-lkg`. This is the whole gate. */
 export function isNormallyPublishable(status) {
     return status === "configured" || status === "configured-lkg";
-}
-/** True for normally publishable states plus user-accepted `degraded`. */
-export function isPublishableWithDegradedAcceptance(status) {
-    return isNormallyPublishable(status) || status === "degraded";
 }
 // ---------------------------------------------------------------------------
 // Last Known Good (no fixed TTL)
 // ---------------------------------------------------------------------------
 /**
  * Bumped when publication completeness grows, captured facts change
- * meaning, or the LKG identity shape changes. An older number cannot
- * satisfy a newer policy; restoration also re-checks the captured verdict
- * against the stored spec and the stored stable identity against the
- * current group evidence, so a same-number entry with unknown
- * capabilities, inconsistent facts, or a route-stripped identity still
- * fails closed.
+ * meaning, the authority model changes, or the LKG identity shape changes.
+ * An older number cannot satisfy a newer policy; restoration also
+ * re-checks the captured verdict against the stored spec and the stored
+ * stable identity against the current group evidence, so a same-number
+ * entry with unknown capabilities, inconsistent facts, or a route-stripped
+ * identity still fails closed.
  */
-export const PUBLICATION_SCHEMA_VERSION = 4;
+export const PUBLICATION_SCHEMA_VERSION = 5;
 export function lastKnownGoodKey(modelName) {
     return modelName.trim().toLowerCase().replace(/[\s_]+/g, "-").replace(/-+/g, "-");
 }
@@ -665,42 +691,23 @@ export function validateLastKnownGood(entry, group, selected, now = Date.now(), 
     if (!Number.isFinite(Date.parse(entry.fetchedAt))) {
         return { valid: false, reason: "LKG fetch timestamp is not provable", ageMs };
     }
-    const liveConflict = liveCapabilityConflict(group, selected, entry, options);
+    const liveConflict = liveCapabilityConflict(group, selected, entry);
     if (liveConflict)
         return { valid: false, reason: liveConflict, ageMs };
     return { valid: true, reason: "identity, provider, schema, and live facts agree", ageMs };
 }
-function explicitBooleanConflict(values, captured) {
-    if (captured !== "supported" && captured !== "unsupported")
-        return false;
-    const expected = captured === "supported";
-    return values.some((value) => value !== undefined && value !== expected);
-}
 /**
- * Modality conflict over EVERY live explicit declaration, per dimension.
- * Any deployment's explicit flag contradicting the captured set fails the
- * whole entry; `undefined` is not a contradiction but can never mask a
- * sibling deployment's conflicting value. The verdict is a predicate over
- * the full value set, so deployment array order cannot change it.
- *
- * `LKG contains image` + any `live supports_vision=false` and
- * `LKG text-only` + any `live supports_vision=true` both reject.
+ * Illegal live deployment limit values are never hidden behind an LKG
+ * restore. Both descriptive (`model_info`) and constraint (`litellm_params`)
+ * declarations participate: an illegal declared value is illegal metadata.
  */
-function explicitModalityConflict(group, capturedSet, direction) {
-    const fields = direction === "input" ? INPUT_MODALITY_FIELDS : OUTPUT_MODALITY_FIELDS;
-    return fields.some(([key, modality]) => {
-        const expected = capturedSet.has(modality);
-        return group.deployments.some((deployment) => {
-            const live = optionalBoolean(deployment.modelInfo[key]);
-            return live !== undefined && live !== expected;
-        });
-    });
-}
-/** Illegal live deployment limit values are never hidden behind an LKG restore. */
 function illegalLiveLimit(group) {
-    return group.deployments.some((deployment) => ["max_input_tokens", "max_output_tokens", "max_tokens"].some((key) => {
-        const value = optionalNumber(deployment.modelInfo[key]);
-        return value !== undefined && !(value > 0);
+    return group.deployments.some((deployment) => ["max_input_tokens", "max_output_tokens", "max_tokens", "max_completion_tokens"].some((key) => {
+        const constraint = optionalNumber(deployment.litellmParams[key]);
+        if (constraint !== undefined && !(constraint > 0))
+            return true;
+        const descriptive = optionalNumber(deployment.modelInfo[key]);
+        return descriptive !== undefined && !(descriptive > 0);
     }));
 }
 /** Raw trusted model-level limit from the effective (possibly inherited) record. */
@@ -715,55 +722,104 @@ function modelLevelLimit(selected, field) {
  * a live models.dev set compares like-for-like with the captured set.
  */
 function modelsDevDerivedModalitySet(selected, direction) {
-    const set = modelsDevModalitySet(selected, direction);
-    if (set === undefined)
+    const list = modelsDevModalityList(selected, direction);
+    if (list === undefined)
         return undefined;
-    const fields = direction === "input" ? INPUT_MODALITY_FIELDS : OUTPUT_MODALITY_FIELDS;
+    const dimensions = modalityDimensions(direction);
     const derived = new Set(["text"]);
-    for (const [, modality] of fields) {
-        if (set.has(modality))
-            derived.add(modality);
+    for (const dimension of dimensions) {
+        if (list.includes(dimension.modality))
+            derived.add(dimension.modality);
     }
     return derived;
 }
 /**
- * Positive live declarations that contradict the captured capability
- * verdict. Deployment-level facts (tool/reasoning/modality flags, limit
- * values) and trusted current model-level facts (record modalities,
- * context/input/output, tool_call, reasoning) are both checked. Every
- * comparison is like-for-like inside one capability dimension:
+ * Proven endpoint runtime constraints that contradict the captured facts.
  *
+ * Only a fact the endpoint itself enforces may invalidate a stored
+ * snapshot on its own. Descriptive LiteLLM `model_info` values are
+ * secondary evidence: a difference there is a *resolved discrepancy*
+ * already recorded by the live assessment, and must not invalidate an
+ * otherwise trusted snapshot.
+ */
+function liveConstraintConflict(group, entry) {
+    const captured = entry.captured;
+    if (!isCapturedVerdict(captured))
+        return "LKG completeness verdict is missing";
+    const constrainedTools = group.deployments
+        .map((deployment) => optionalBoolean(deployment.litellmParams.supports_function_calling))
+        .filter((value) => value !== undefined);
+    if (captured.tools !== "unknown" &&
+        constrainedTools.some((value) => value !== (captured.tools === "supported"))) {
+        return "live runtime constraint on tool calling conflicts with captured LKG";
+    }
+    const constrainedReasoning = group.deployments
+        .map((deployment) => optionalBoolean(deployment.litellmParams.supports_reasoning))
+        .filter((value) => value !== undefined);
+    if (captured.reasoning !== "unknown" &&
+        constrainedReasoning.some((value) => value !== (captured.reasoning === "supported"))) {
+        return "live runtime constraint on reasoning conflicts with captured LKG";
+    }
+    const directions = [
+        ["input", new Set(captured.inputModalities)],
+        ["output", new Set(captured.outputModalities)],
+    ];
+    for (const [direction, capturedSet] of directions) {
+        for (const dimension of modalityDimensions(direction)) {
+            const declared = group.deployments
+                .map((deployment) => optionalBoolean(deployment.litellmParams[dimension.key]))
+                .filter((value) => value !== undefined);
+            // Only an explicitly enforced `false` narrows a captured set; a `true`
+            // declaration cannot prove the model has a modality the snapshot lacks.
+            if (declared.includes(false) && capturedSet.has(dimension.modality)) {
+                return `live runtime constraint removes ${dimension.modality} which the captured LKG declares`;
+            }
+        }
+    }
+    // A proven runtime constraint that no longer matches the snapshot is a new
+    // enforced fact. Restoring the stored spec would advertise a limit the
+    // endpoint does not honour, and patchwork merging is forbidden, so the
+    // entry fails closed and the model is withheld until fresh metadata exists.
+    const constraintOutput = deploymentConstraintValue(group, RUNTIME_CONSTRAINT_KEYS.output);
+    if (captured.output > 0 && constraintOutput !== undefined && constraintOutput !== captured.output) {
+        return `live runtime constraint output ${constraintOutput} does not match captured LKG output ${captured.output}`;
+    }
+    const constraintInput = deploymentConstraintValue(group, RUNTIME_CONSTRAINT_KEYS.input);
+    if (captured.input > 0 && constraintInput !== undefined && constraintInput !== captured.input) {
+        return `live runtime constraint input ${constraintInput} does not match captured LKG input ${captured.input}`;
+    }
+    return undefined;
+}
+/**
+ * Positive live *authoritative* declarations that contradict the captured
+ * capability verdict. Trusted current model-level facts (record modalities,
+ * context/input/output, tool_call, reasoning) are authoritative intrinsic
+ * metadata, so a changed value is a genuine new conflict and the whole
+ * entry fails closed — no field-level merge.
+ *
+ * Descriptive LiteLLM declarations never invalidate the entry here: the
+ * live assessment already compared them and records them as a resolved
+ * discrepancy whenever authority decided against them.
+ *
+ * Every comparison stays like-for-like inside one capability dimension:
  * - `context` (total context) compares only against the trusted
  *   model-level `limit.context`; a LiteLLM `max_input_tokens` is input
  *   capacity and never proves or contradicts total context.
- * - `output` compares every explicit output fact (deployment
- *   `max_output_tokens`/`max_tokens` and model-level `limit.output`).
- * - `input` compares the recomputed current input limit (same derivation
- *   as the published spec) against the captured input; absent live input
- *   evidence is unknown, not a contradiction.
- *
- * Any single conflict invalidates the whole entry (no field-level merge).
+ * - `output` compares the trusted model-level `limit.output`.
+ * - `input` compares the trusted model-level input capacity
+ *   (`limit.input`, else total context) against the captured input.
  */
-function liveCapabilityConflict(group, selected, entry, options) {
+function liveCapabilityConflict(group, selected, entry) {
     if (!isCapturedVerdict(entry.captured))
         return "LKG completeness verdict is missing";
     const captured = entry.captured;
-    if (explicitBooleanConflict(group.deployments.map((deployment) => optionalBoolean(deployment.modelInfo.supports_function_calling)), captured.tools))
-        return "live tool declaration conflicts with captured LKG";
-    if (explicitBooleanConflict(group.deployments.map((deployment) => optionalBoolean(deployment.modelInfo.supports_reasoning)), captured.reasoning))
-        return "live reasoning declaration conflicts with captured LKG";
-    if (explicitModalityConflict(group, new Set(captured.inputModalities), "input")) {
-        return "live input modality declaration conflicts with captured LKG";
-    }
-    if (explicitModalityConflict(group, new Set(captured.outputModalities), "output")) {
-        return "live output modality declaration conflicts with captured LKG";
-    }
     if (illegalLiveLimit(group))
         return "live limit metadata is illegal; LKG cannot mask invalid metadata";
-    // Trusted current model-level facts. These records (after canonical
-    // inheritance) participated in the captured verdict, so a changed
-    // model-level value is a contradiction even when deployments are silent.
+    const constraintConflict = liveConstraintConflict(group, entry);
+    if (constraintConflict)
+        return constraintConflict;
     const mdContext = modelLevelLimit(selected, "context");
+    const mdInput = modelLevelLimit(selected, "input");
     const mdOutput = modelLevelLimit(selected, "output");
     if (mdContext !== undefined && !(mdContext > 0)) {
         return "live model-level context limit is illegal; LKG cannot mask invalid metadata";
@@ -787,28 +843,20 @@ function liveCapabilityConflict(group, selected, entry, options) {
     if (mdOutputSet !== undefined && !sameModalitySet([...mdOutputSet], captured.outputModalities)) {
         return "live model-level output modalities conflict with captured LKG";
     }
-    // Total context: only a trusted total-context fact participates.
     if (captured.context > 0 && mdContext !== undefined && Math.floor(mdContext) !== captured.context) {
         return `live model-level context ${Math.floor(mdContext)} conflicts with captured LKG context ${captured.context}`;
     }
-    // Output: every explicit output fact in the output dimension.
-    if (captured.output > 0) {
-        if (mdOutput !== undefined && Math.floor(mdOutput) !== captured.output) {
-            return `live model-level output ${Math.floor(mdOutput)} conflicts with captured LKG output ${captured.output}`;
-        }
-        const outputValues = deploymentLimitEvidence(group, selected, "output").deploymentValues
-            .filter((value) => value !== undefined);
-        if (outputValues.some((value) => Math.floor(value) !== captured.output)) {
-            return `live output limit conflicts with captured LKG output ${captured.output}`;
-        }
+    if (captured.output > 0 && mdOutput !== undefined && Math.floor(mdOutput) !== captured.output) {
+        return `live model-level output ${Math.floor(mdOutput)} conflicts with captured LKG output ${captured.output}`;
     }
-    // Input: recompute the current input limit with the exact derivation the
-    // published spec uses (deployment max_input_tokens, models.dev
-    // limit.input, context/tier caps) and compare like-for-like.
     if (captured.input > 0) {
-        const liveInput = mapCapabilities(group, selected, options?.contextTierCap ?? false).limit.input;
-        if (liveInput > 0 && Math.floor(liveInput) !== captured.input) {
-            return `live input limit ${Math.floor(liveInput)} conflicts with captured LKG input ${captured.input}`;
+        const intrinsicInput = mdInput !== undefined && mdInput > 0
+            ? mdInput
+            : mdContext !== undefined && mdContext > 0
+                ? mdContext
+                : undefined;
+        if (intrinsicInput !== undefined && Math.floor(intrinsicInput) !== captured.input) {
+            return `live model-level input capacity ${Math.floor(intrinsicInput)} conflicts with captured LKG input ${captured.input}`;
         }
     }
     return undefined;
@@ -892,66 +940,6 @@ export function resolveConfigurationWithLKG(assessment, group, catalog, options,
     }
     return { assessment };
 }
-/**
- * Which blocked states a user may explicitly accept.
- *
- * Only known-identity incompleteness and a failed metadata source are
- * "the user knows what is missing". Ambiguous identity, illegal values,
- * and unmatched identity are different failures and stay blocked.
- */
-export function degradationEligibility(assessment) {
-    if (assessment.identity.outcome === "unmatched" &&
-        assessment.status !== "configured" &&
-        assessment.status !== "metadata-unavailable") {
-        return { eligible: false, reason: "unmatched identity is not ordinary incompleteness" };
-    }
-    if (assessment.status === "discovered-incomplete" || assessment.status === "metadata-unavailable") {
-        return { eligible: true };
-    }
-    const reason = assessment.status === "ambiguous"
-        ? "ambiguous identity cannot be accepted as a missing-field risk"
-        : assessment.status === "invalid-metadata"
-            ? "illegal metadata cannot be accepted as an unknown risk"
-            : assessment.status === "unmatched"
-                ? "unmatched identity is not ordinary incompleteness"
-                : assessment.status === "configured" || assessment.status === "configured-lkg"
-                    ? "fully configured models do not need degradation acceptance"
-                    : assessment.status === "degraded"
-                        ? "model is already degraded"
-                        : `status ${assessment.status} is not eligible for degradation`;
-    return { eligible: false, reason };
-}
-export function isDegradationEligible(assessment) {
-    return degradationEligibility(assessment).eligible;
-}
-/**
- * User-accepted degradation. The returned wrapper stays `degraded` and
- * keeps every missing/unknown/illegal field listed; it is publishable
- * only through the degraded path, never as `configured`.
- *
- * Ineligible states throw so adapters cannot report a successful accept
- * for ambiguous, invalid, unmatched, or already-configured models.
- */
-export function acceptDegradedConfiguration(assessment, acceptance) {
-    const eligibility = degradationEligibility(assessment);
-    if (!eligibility.eligible) {
-        throw new Error(eligibility.reason);
-    }
-    return {
-        status: "degraded",
-        assessment: {
-            ...assessment,
-            publishable: false,
-            status: "degraded",
-        },
-        acceptance: {
-            acceptedAt: acceptance.acceptedAt ?? new Date().toISOString(),
-            reason: acceptance.reason,
-            acceptedFields: [...assessment.missingFields, ...assessment.unknownFields, ...assessment.illegalFields],
-        },
-        remainingGaps: [...assessment.missingFields, ...assessment.unknownFields, ...assessment.illegalFields],
-    };
-}
 export function describeAssessment(assessment) {
     const gaps = [...assessment.missingFields, ...assessment.unknownFields, ...assessment.illegalFields];
     return gaps.length === 0
@@ -961,11 +949,15 @@ export function describeAssessment(assessment) {
 /**
  * Partition discovery output for adapters.
  *
- * Publishable entries are `configured`, `configured-lkg`, or
- * user-accepted `degraded` only. Everything else is blocked with its
- * assessment. Adapters must not reimplement this partition; they only
- * map entries to host shapes and still honor the operational-limits
- * guard before host registration.
+ * Publishable entries are `configured` and `configured-lkg` only, and
+ * nothing else. There is no user confirmation, override, or degraded
+ * publication path: a model that cannot be proven trustworthy is
+ * withheld with its reasons while every other model of the same
+ * endpoint is published normally.
+ *
+ * Adapters must not reimplement this partition; they only map entries to
+ * host shapes and still honor the operational-limits guard before host
+ * registration.
  */
 export function buildPublicationResult(litellmResponse, catalog, options, buildOptions = {}) {
     const now = buildOptions.now ?? Date.now();
@@ -1004,12 +996,6 @@ export function buildPublicationResult(litellmResponse, catalog, options, buildO
                 assessments.set(group.modelName, resolved.assessment);
                 continue;
             }
-        }
-        if (buildOptions.acceptedDegradedIDs?.has(group.modelName) && isDegradationEligible(live)) {
-            const degraded = acceptDegradedConfiguration(live, { reason: buildOptions.degradationReason });
-            publishable.push({ spec, assessment: degraded.assessment, degraded });
-            assessments.set(group.modelName, degraded.assessment);
-            continue;
         }
         blocked.push({ spec, assessment: live });
     }

@@ -196,7 +196,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "limit": {
       "context": 272000,
       "input": 272000,
-      "output": 64000,
+      "output": 128000,
     },
     "name": "gpt-5.5",
     "package": "@opencode/ai/providers/openai/responses",
@@ -257,7 +257,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "limit": {
       "context": 500000,
       "input": 500000,
-      "output": 131072,
+      "output": 64000,
     },
     "name": "minimax-m3",
     "package": "@opencode/ai/providers/openai-compatible",
@@ -301,6 +301,7 @@ exports[`模型构建 完整 fixture 输出稳定排序并形成快照 1`] = `
     "capabilities": {
       "input": [
         "text",
+        "image",
         "video",
       ],
       "output": [

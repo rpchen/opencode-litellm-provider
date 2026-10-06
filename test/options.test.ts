@@ -33,6 +33,21 @@ describe("parseOptions", () => {
     })
   })
 
+  test("modelsDevUrl 默认缺省，合法地址保留，非法值被忽略并警告", () => {
+    expect(parseOptions(undefined).modelsDevUrl).toBeUndefined()
+    expect(parseOptions({ pollInterval: 90 }).modelsDevUrl).toBeUndefined()
+    expect(parseOptions({ modelsDevUrl: "http://catalog.example:8080/api.json" }).modelsDevUrl).toBe(
+      "http://catalog.example:8080/api.json",
+    )
+
+    for (const invalid of ["", "not-a-url", "ftp://catalog.example/api.json", "https://user:pw@catalog.example/api.json", 42]) {
+      const log = logger()
+      const options = parseOptions({ modelsDevUrl: invalid as never }, log)
+      expect(options.modelsDevUrl).toBeUndefined()
+      expect(log.warnings).toHaveLength(1)
+    }
+  })
+
   test("conversationFeedback 默认关闭", () => {
     expect(parseOptions(undefined).conversationFeedback).toBe(false)
     expect(parseOptions({ pollInterval: 90 }).conversationFeedback).toBe(false)

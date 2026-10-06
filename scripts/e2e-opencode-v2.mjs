@@ -58,6 +58,72 @@ const opencodeConfig = path.join(config, "opencode")
 const opencodeConfigFile = path.join(opencodeConfig, "opencode.jsonc")
 for (const dir of [project, home, config, data, cache, state, opencodeConfig]) mkdirSync(dir, { recursive: true })
 
+/**
+ * Deterministic models.dev catalog. The real host stays real; only the metadata
+ * content is fixed, so the gate never depends on what the public service
+ * happens to return today. The plugin points at it through the documented
+ * `modelsDevUrl` option.
+ */
+const catalogueEntries = () => ({
+  vendora: {
+    models: {
+      "coding-model": {
+        id: "coding-model",
+        tool_call: true,
+        reasoning: false,
+        modalities: { input: ["text"], output: ["text"] },
+        limit: { context: 200_000, output: 64_000 },
+      },
+    },
+  },
+  vendorb: {
+    models: {
+      // Deliberately incomplete: the identity resolves reliably, but the record
+      // cannot make the model publishable on its own.
+      "coding-model": { id: "coding-model", tool_call: true },
+    },
+  },
+  resolved: {
+    models: {
+      "e2e-discrepancy-model": {
+        id: "e2e-discrepancy-model",
+        tool_call: true,
+        reasoning: false,
+        modalities: { input: ["text", "image"], output: ["text"] },
+        limit: { context: 400_000, output: 512_000 },
+      },
+    },
+  },
+})
+
+function startCatalogServer() {
+  const body = JSON.stringify(catalogueEntries())
+  let requests = 0
+  const server = createServer((req, res) => {
+    if (req.url === "/api.json") {
+      requests += 1
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(body)
+      return
+    }
+    res.writeHead(404, { "content-type": "application/json" })
+    res.end(JSON.stringify({ error: "not found" }))
+  })
+  return new Promise((resolve, reject) => {
+    server.once("error", reject)
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address()
+      if (!address || typeof address === "string") return reject(new Error("catalog server did not bind TCP"))
+      resolve({
+        server,
+        url: `http://127.0.0.1:${address.port}/api.json`,
+        requests: () => requests,
+        close: () => new Promise((done) => server.close(() => done())),
+      })
+    })
+  })
+}
+
 const secrets = ["sk-e2e-default", "sk-e2e-company"]
 const sanitize = (value) => secrets.reduce((text, secret) => text.replaceAll(secret, "***"), String(value))
 
@@ -130,27 +196,45 @@ const offlineEnv = {
 delete env.OPENCODE_SERVER
 env.OPENCODE_CONFIG = opencodeConfigFile
 
-function command(args, options = {}) {
-  const result = spawnSync("opencode", args, {
-    cwd: project,
-    env,
-    encoding: "utf8",
-    timeout: options.timeout ?? 120_000,
-    maxBuffer: 32 * 1024 * 1024,
-  })
-  const stdout = sanitize(result.stdout ?? "")
-  const stderr = sanitize(result.stderr ?? "")
-  if (options.echo !== false) {
-    process.stdout.write(`$ opencode ${args.join(" ")}\n`)
-    if (stdout) process.stdout.write(stdout)
-    if (stderr) process.stderr.write(stderr)
-  }
-  if (!options.allowFailure && (result.error || result.status !== 0)) {
-    throw new Error(`opencode exited ${result.status ?? "unknown"}: ${result.error?.message ?? (stderr || stdout)}`)
-  }
-  return { status: result.status, stdout, stderr }
+/** Synchronous sleep so the retry loop stays inside spawnSync-based helpers. */
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 }
 
+function command(args, options = {}) {
+  const attempts = options.retries ?? 1
+  for (let attempt = 1; ; attempt += 1) {
+    const result = spawnSync("opencode", args, {
+      cwd: project,
+      env,
+      encoding: "utf8",
+      timeout: options.timeout ?? 120_000,
+      maxBuffer: 33554432,
+    })
+    const stdout = sanitize(result.stdout ?? "")
+    const stderr = sanitize(result.stderr ?? "")
+    const transportFailure = (result.error || result.status !== 0) &&
+      /Could not reach server|timed out|Transport:/u.test(stdout + stderr)
+    if (attempt < attempts && transportFailure) {
+      // The real host's own CLI client uses a short HTTP timeout while the server
+      // is still starting its filesystem watchers: a transient transport failure
+      // is not a plugin failure.
+      if (options.echo !== false) process.stdout.write("$ opencode " + args.join(" ") + " (retry " + attempt + "/" + attempts + ")\n")
+      sleepSync(2_000)
+      continue
+    }
+    if (options.echo !== false) {
+      process.stdout.write("$ opencode " + args.join(" "))
+      process.stdout.write("\n")
+      if (stdout) process.stdout.write(stdout)
+      if (stderr) process.stderr.write(stderr)
+    }
+    if (!options.allowFailure && (result.error || result.status !== 0)) {
+      throw new Error("opencode exited " + (result.status ?? "unknown") + ": " + (result.error?.message ?? (stderr || stdout)))
+    }
+    return { status: result.status, stdout, stderr }
+  }
+}
 function jsonOutput(result, label) {
   const text = result.stdout.trim()
   try {
@@ -370,6 +454,7 @@ function payload(value) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
+let catalogServer
 const defaultMock = await startLiteLLM(secrets[0])
 const companyMock = await startLiteLLM(secrets[1])
 let openCodeServer
@@ -405,12 +490,15 @@ async function dumpFailureDiagnostics() {
 }
 
 try {
+  catalogServer = await startCatalogServer()
+  const catalogRequests = catalogServer.requests
   const e2eConfig = {
     $schema: "https://opencode.ai/config.json",
     plugins: [{
       package: packageSpec,
       options: {
         pollInterval: 30,
+        modelsDevUrl: catalogServer.url,
         endpoints: {
           default: { baseUrl: defaultMock.baseUrl },
           company: { baseUrl: companyMock.baseUrl },
@@ -432,7 +520,7 @@ try {
 
   openCodeServer = await startOpenCodeServer()
   env.OPENCODE_PASSWORD = openCodeServer.password
-  const api = (...args) => command(["api", "--server", openCodeServer.url, ...args])
+  const api = (...args) => command(["api", "--server", openCodeServer.url, ...args], { retries: 6 })
   const serverCommand = (name, ...args) => command([name, "--server", openCodeServer.url, ...args])
 
   // Server listen readiness precedes external plugin activation in OpenCode 2.0.16.
@@ -472,6 +560,14 @@ try {
   for (const name of ["litellm-endpoints", "litellm-diagnostics", "litellm-audit-export"]) {
     assert(commandNames.includes(name), `missing real host command ${name}: ${JSON.stringify(commandNames)}`)
   }
+  assert(
+    !commandNames.some((name) => String(name).includes("degraded")),
+    `no degraded-acceptance command may exist: ${JSON.stringify(commandNames)}`,
+  )
+  assert(
+    !commandNames.includes("litellm-acknowledge"),
+    `acknowledgement must not be exposed as a slash command: ${JSON.stringify(commandNames)}`,
+  )
 
   // Reproduce the user-visible startup order before any endpoint has a credential:
   // commands are executed while no TUI listener exists, and /models has no LiteLLM namespace yet.
@@ -611,7 +707,7 @@ try {
   mark = tui.mark()
   // PTY text normalization may collapse the full-width colon, so assert semantic spacing.
   await waitForTui(tui, /Endpoint\s+company/u, { from: mark })
-  await waitForTui(tui, /models\.dev\s+degraded/u, { from: mark })
+  await waitForTui(tui, /models\.dev\s+ok/u, { from: mark })
   await waitForTui(tui, /invalid-fields/u, { from: mark })
   const scopedDiagnostics = tui.output(mark)
   assert.doesNotMatch(scopedDiagnostics, /LiteLLM Endpoints · active \d+\/\d+/u,
@@ -695,7 +791,7 @@ try {
       runSessionCommand("litellm-diagnostics", "default")
       const diagTui = startAttachedTui(sessionID)
       try {
-        await waitForTui(diagTui, /Endpoint\s+default/u, { timeout: 20_000 })
+        await waitForTui(diagTui, /Endpoint[\s：:]+default/u, { timeout: 20_000 })
         last = diagTui.output()
         if (matches(last)) return last
       } catch (error) {
@@ -721,20 +817,22 @@ try {
     assert(!baselineIds.includes(blocked), `${blocked} must never enter the host model list: ${JSON.stringify(baselineIds)}`)
   }
 
-  // 2) Ineligible accept attempts never claim success (invalid / ambiguous groups).
-  runSessionCommand("litellm-accept-degraded", "default gpt-5.5")
-  runSessionCommand("litellm-accept-degraded", "default shared-route")
+  // 2) There is no user confirmation path at all, and every withheld model stays
+  //    withheld with its own reason visible in diagnostics.
   const afterRejections = defaultAuditReport(await exportAudit())
-  for (const rejected of ["gpt-5.5", "shared-route"]) {
+  for (const rejected of ["gpt-5.5", "shared-route", "invalid-fields"]) {
     assert(
       !afterRejections.models.some((model) => model.id === rejected),
-      `ineligible ${rejected} must not register through accept-degraded`,
+      `withheld ${rejected} must never register`,
     )
   }
-  // The rejected models stay visible as blocked states in diagnostics.
-  const rejectionDiagnostics = await diagnosticsThroughTui(/未完成[\s：:]*gpt-5\.5/u, "the rejected accepts")
-  assert(/未完成[\s：:]*shared-route/u.test(rejectionDiagnostics), `ambiguous group must stay blocked: ${rejectionDiagnostics}`)
-  assert(/未完成[\s：:]*invalid-fields/u.test(rejectionDiagnostics), `invalid metadata must stay blocked: ${rejectionDiagnostics}`)
+  const rejectionDiagnostics = await diagnosticsThroughTui(/withheld[\s：:]*invalid-fields/u, "the withheld reasons")
+  assert(/withheld[\s：:]*shared-route/u.test(rejectionDiagnostics), `ambiguous group must stay withheld: ${rejectionDiagnostics}`)
+  assert(/withheld[\s：:]*gpt-5\.5/u.test(rejectionDiagnostics), `conflicting group must stay withheld: ${rejectionDiagnostics}`)
+  assert(
+    /withheld/u.test(rejectionDiagnostics),
+    `partial availability must state the withheld section: ${rejectionDiagnostics}`,
+  )
 
   // 3) A previously configured LiteLLM-only model loses its capability evidence:
   // only a provably belonging LKG snapshot keeps it registered.
@@ -757,22 +855,220 @@ try {
     `LKG must keep the previously configured model registered: ${JSON.stringify(lkgReport.models.map((m) => m.id))}`,
   )
   assert(hostModels().includes("litellm/multi-endpoint-model"), "the LKG-backed model must stay visible in CLI models")
-  await diagnosticsThroughTui(/LKG[\s：:]*提供[\s：:]*multi-endpoint-model/u, "the valid LKG substitution")
+  await diagnosticsThroughTui(
+    /使用已信任的前次完整配置（LKG）：multi-endpoint-model/u,
+    "the valid LKG substitution",
+  )
 
-  // 4) An eligible blocked model registers only through the degraded path and
-  //    keeps the degraded label with its gaps.
-  const acceptStartedAt = Date.now()
-  runSessionCommand("litellm-accept-degraded", "default minimax-m3")
-  const degradedReport = await waitForRefreshAfter(acceptStartedAt, "the degraded acceptance")
+  // 4) A withheld model that becomes complete again is published automatically:
+  //    no user approval, no stored acceptance, no confirmation step.
+  const recoveryStartedAt = Date.now()
+  declare("minimax-m3", { supports_reasoning: true })
+  const recoveredWithheld = await waitForRefreshAfter(recoveryStartedAt, "the automatic recovery")
   assert(
-    degradedReport.models.some((model) => model.id === "minimax-m3"),
-    `the accepted degraded model must register: ${JSON.stringify(degradedReport.models.map((m) => m.id))}`,
+    recoveredWithheld.models.some((model) => model.id === "minimax-m3"),
+    `the recovered model must register automatically: ${JSON.stringify(recoveredWithheld.models.map((m) => m.id))}`,
   )
-  const degradedDiagnostics = await diagnosticsThroughTui(
-    /已接受降级[\s：:]*minimax-m3/u,
-    "the degraded acceptance",
+  assert(
+    hostModels().includes("litellm/minimax-m3"),
+    "the recovered model must be visible in the host CLI model list",
   )
-  assert(!/LKG[\s：:]*提供[\s：:]*minimax-m3/u.test(degradedDiagnostics), "a degraded model must never be reported as LKG")
+  const recoveryDiagnostics = await diagnosticsThroughTui(
+    /发现 \d+ · 可用 \d+ · withheld \d+/u,
+    "the recovered publication partition",
+  )
+  assert(
+    !/withheld[\s：:]*minimax-m3/u.test(recoveryDiagnostics),
+    `a recovered model must leave the withheld list: ${recoveryDiagnostics}`,
+  )
+  assert(
+    !/降级/u.test(recoveryDiagnostics),
+    `the degraded vocabulary must be gone from diagnostics: ${recoveryDiagnostics}`,
+  )
+
+  // 4b) Acknowledgement persistence across a real host restart. Suppression is
+  //     observable through diagnostics; the problem set itself stays visible.
+  const unusableModels = () =>
+    ["gap-a", "gap-b"].map((model_name) => ({
+      model_name,
+      litellm_params: { model: `custom/${model_name}` },
+      model_info: { mode: "chat" },
+    }))
+
+  servedModels = unusableModels()
+  await waitForRefreshAfter(Date.now(), "the unusable catalog state")
+  await diagnosticsThroughTui(/catalog 当前不可用/u, "the unusable catalog state")
+
+  // Restart the real host: a new plugin process restores the persisted memory.
+  openCodeServer.child.kill()
+  await sleep(1500)
+  openCodeServer = await startOpenCodeServer()
+  env.OPENCODE_PASSWORD = openCodeServer.password
+  await waitForRefreshAfter(Date.now(), "the post-restart discovery round")
+  // The suppression state is rendered in the same diagnostics card as the
+  // problem set, so assert both from one rendered snapshot.
+  const restoredDiagnostics = await diagnosticsThroughTui(
+    /catalog 当前不可用/u,
+    "the unusable catalog after restart",
+  )
+  assert(
+    /提醒状态：该问题集合已确认/u.test(restoredDiagnostics),
+    `the restored acknowledgement must suppress a repeated notice: ${restoredDiagnostics}`,
+  )
+  assert(/withheld[s：:]*gap-a/u.test(restoredDiagnostics), `the withheld reasons must survive the restart: ${restoredDiagnostics}`)
+  assert(/withheld[s：:]*gap-b/u.test(restoredDiagnostics), `the withheld reasons must survive the restart: ${restoredDiagnostics}`)
+
+  // Material change after the restart is surfaced again (no suppression line).
+  servedModels = [...unusableModels(), {
+    model_name: "gap-c",
+    litellm_params: { model: "custom/gap-c" },
+    model_info: { mode: "chat" },
+  }]
+  await waitForRefreshAfter(Date.now(), "the grown problem set")
+  const grownDiagnostics = await diagnosticsThroughTui(/withheld[s：:]*gap-c/u, "the grown problem set")
+  assert(
+    !/提醒状态：该问题集合已确认/u.test(grownDiagnostics),
+    `a materially bigger problem set must not stay suppressed: ${grownDiagnostics}`,
+  )
+  console.log("[ack persistence] surfaced -> restarted suppressed -> material change re-surfaced")
+
+  // 4c) Canonical identity change. Same visible model id, a different trusted
+  //     identity: the old snapshot must not carry over, and incomplete metadata
+  //     for the new identity must withdraw the model.
+  const codingModel = (provider, complete) => [{
+    model_name: "coding-model",
+    litellm_params: { model: `${provider}/coding-model` },
+    model_info: {
+      mode: "chat",
+      models_dev_provider: provider,
+      ...(complete
+        ? {
+          max_input_tokens: 200_000,
+          max_output_tokens: 64_000,
+          supports_function_calling: true,
+          supports_reasoning: false,
+          supports_vision: false,
+          supports_pdf_input: false,
+          supports_audio_input: false,
+          supports_video_input: false,
+          supports_audio_output: false,
+        }
+        : {}),
+    },
+  }]
+
+  servedModels = codingModel("vendora", true)
+  const identityStartedAt = Date.now()
+  const identityAPublication = await waitForRefreshAfter(identityStartedAt, "identity A publication")
+  assert(
+    identityAPublication.models.some((model) => model.id === "coding-model"),
+    `the model must publish under identity A: ${JSON.stringify(identityAPublication.models.map((m) => m.id))}`,
+  )
+  assert(hostModels().includes("litellm/coding-model"), "identity A must be visible in the host model list")
+  const identityADiagnostics = await diagnosticsThroughTui(
+    /Endpoint[\s：:]+default/u,
+    "the identity A publication",
+  )
+  assert(
+    !/withheld[\s：:]*coding-model/u.test(identityADiagnostics),
+    `identity A must not be withheld: ${identityADiagnostics}`,
+  )
+  assert(
+    !/使用已信任的前次完整配置（LKG）：coding-model/u.test(identityADiagnostics),
+    "identity A must be configured from fresh evidence",
+  )
+
+  // The trusted identity changes while the visible id stays the same, and the
+  // rebuilt metadata is incomplete.
+  servedModels = codingModel("vendorb", false)
+  const identityBPublication = await waitForRefreshAfter(Date.now(), "identity B publication")
+  assert(
+    !identityBPublication.models.some((model) => model.id === "coding-model"),
+    `the old snapshot must not carry the model across identities: ${JSON.stringify(identityBPublication.models.map((m) => m.id))}`,
+  )
+  assert(!hostModels().includes("litellm/coding-model"), "the withdrawn model must leave the host model list")
+  const identityBDiagnostics = await diagnosticsThroughTui(
+    /withheld[\s：:]*coding-model/u,
+    "the identity-change withholding",
+  )
+  assert(
+    /withheld[\s：:]*coding-model · discovered-incomplete/u.test(identityBDiagnostics),
+    `the identity change must withhold the model with its reason: ${identityBDiagnostics}`,
+  )
+  assert(
+    /此前可用、现已撤下：coding-model/u.test(identityBDiagnostics),
+    `the identity change must be reported as a regression: ${identityBDiagnostics}`,
+  )
+  assert(
+    !/使用已信任的前次完整配置（LKG）：coding-model/u.test(identityBDiagnostics),
+    `the identity A snapshot must not be reused for identity B: ${identityBDiagnostics}`,
+  )
+  console.log("[identity change] identity A published -> identity B withheld, old LKG not reused")
+
+  // 4d) Resolved discrepancy: LiteLLM descriptive metadata differs from the
+  //     authoritative models.dev intrinsic facts, and the deployment declares no
+  //     runtime constraint, so Core selects the authoritative values and keeps
+  //     the model publishable.
+  servedModels = [{
+    model_name: "e2e-discrepancy-model",
+    litellm_params: { model: "resolved/e2e-discrepancy-model" },
+    model_info: {
+      mode: "chat",
+      models_dev_provider: "resolved",
+      max_input_tokens: 400_000,
+      max_output_tokens: 131_072,
+      supports_function_calling: true,
+      supports_reasoning: false,
+      supports_vision: true,
+      supports_pdf_input: false,
+      supports_audio_input: true,
+      supports_video_input: false,
+      supports_audio_output: false,
+    },
+  }]
+  const discrepancyPublication = await waitForRefreshAfter(Date.now(), "the resolved discrepancy")
+  const discrepancyModel = discrepancyPublication.models.find((model) => model.id === "e2e-discrepancy-model")
+  assert(discrepancyModel, `the discrepancy model must be published: ${JSON.stringify(discrepancyPublication.models.map((m) => m.id))}`)
+  assert.equal(
+    discrepancyModel.limit.output,
+    512_000,
+    `the authoritative intrinsic output must be selected: ${JSON.stringify(discrepancyModel.limit)}`,
+  )
+  assert(
+    !discrepancyModel.capabilities.input.includes("audio"),
+    `the authoritative modality set must win: ${JSON.stringify(discrepancyModel.capabilities.input)}`,
+  )
+  assert(hostModels().includes("litellm/e2e-discrepancy-model"), "the discrepancy model must be visible in /models")
+  const discrepancyDiagnostics = await diagnosticsThroughTui(
+    /已裁决差异/u,
+    "the resolved discrepancy",
+  )
+  assert(
+    !/withheld[\s：:]*e2e-discrepancy-model/u.test(discrepancyDiagnostics),
+    `a resolved discrepancy must not withhold the model: ${discrepancyDiagnostics}`,
+  )
+  assert(
+    /e2e-discrepancy-model/u.test(discrepancyDiagnostics),
+    `diagnostics must name the model whose value was decided by authority: ${discrepancyDiagnostics}`,
+  )
+  assert(
+    !/未决冲突[\s：:]*e2e-discrepancy-model/u.test(discrepancyDiagnostics),
+    `a decidable difference must not be reported as an unresolved conflict: ${discrepancyDiagnostics}`,
+  )
+  assert(
+    !/invalid-metadata|discovered-incomplete[^+]*e2e-discrepancy-model/u.test(discrepancyDiagnostics),
+    `a resolved discrepancy must not be reported as incomplete or invalid: ${discrepancyDiagnostics}`,
+  )
+  assert(
+    catalogRequests() > 0,
+    "the real host must have fetched the configured deterministic models.dev catalog",
+  )
+  console.log("[resolved discrepancy] descriptive LiteLLM metadata resolved by authoritative models.dev facts")
+
+  servedModels = servedFixture.data
+
+  servedModels = servedFixture.data
+  await waitForRefreshAfter(Date.now(), "the restored fixture catalog")
 
   // 5) A real metadata outage is reported, never hidden.
   mockFailStatus = 500
@@ -794,7 +1090,7 @@ try {
   servedModels = servedFixture.data
   mockFailStatus = 0
   console.log(
-    "Real OpenCode publication E2E passed: partition, toggle reasoning, LKG substitution, degraded accept/reject and metadata-failure diagnostics are verified through the real host.",
+    "Real OpenCode publication E2E passed: partial catalog, withheld reasons, trusted LKG, automatic recovery, no confirmation path and metadata-failure diagnostics are verified through the real host.",
   )
 
   // ===== Phase 2: Endpoint Management UX over the real TUI (file-declared options, real PTY keys) =====
@@ -1303,6 +1599,9 @@ try {
   await Promise.all([
     new Promise((resolve) => defaultMock.server.close(resolve)),
     new Promise((resolve) => companyMock.server.close(resolve)),
+    // The deterministic catalog listener shares this lifecycle; leaving it open
+    // kept the E2E process alive after the final assertion.
+    catalogServer.close(),
   ])
   // A just-killed OpenCode may still be writing its cache: never let cleanup mask the real result.
   await sleep(1000)

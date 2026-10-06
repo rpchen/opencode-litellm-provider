@@ -21,7 +21,14 @@ export interface PluginOptions {
   contextTierCap: boolean
   protocolOverrides: Record<string, Protocol>
   conversationFeedback: boolean
-  /** Undefined means legacy single-endpoint mode using /connect URL configuration. */
+  /**
+   * Optional override for the models.dev catalog URL (default
+   * `https://models.dev/api.json`). Lets an operator point at a self-hosted or
+   * mirrored catalog; the fetched document goes through exactly the same
+   * evidence and publication policy as the default source.
+   */
+  modelsDevUrl?: string
+  /** Undefined means legacy single-endpoint mode using /connect URL caching. */
   endpoints?: Readonly<Record<string, EndpointDefinition>>
 }
 
@@ -152,6 +159,22 @@ export function parseOptions(input: unknown, logger: OptionLogger = console): Pl
     }
   }
 
-  const parsed = { pollInterval, contextTierCap, protocolOverrides, conversationFeedback }
+  let modelsDevUrl: string | undefined
+  if (input.modelsDevUrl !== undefined) {
+    const raw = typeof input.modelsDevUrl === "string" ? input.modelsDevUrl.trim() : ""
+    let valid = false
+    if (raw.length > 0) {
+      try {
+        const url = new URL(raw)
+        valid = (url.protocol === "http:" || url.protocol === "https:") && url.username === "" && url.password === ""
+      } catch {}
+    }
+    if (valid) modelsDevUrl = raw
+    else logger.warn("modelsDevUrl 必须是合法的 http(s) 地址且不含用户名/密码，已忽略（回退默认 models.dev）")
+  }
+
+  const parsed = modelsDevUrl === undefined
+    ? { pollInterval, contextTierCap, protocolOverrides, conversationFeedback }
+    : { pollInterval, contextTierCap, protocolOverrides, conversationFeedback, modelsDevUrl }
   return endpoints === undefined ? parsed : { ...parsed, endpoints }
 }

@@ -86,33 +86,53 @@ const STATUS_TEXT = {
   "cleared-notfound": "model/info 不可用，模型已清空",
 } as const
 
-/** Render the Core publication partition: states, gaps, LKG, degraded. */
-export function formatPublicationLines(summary: PublicationSummary | undefined, acceptedPending: readonly string[] = []): string[] {
-  if (!summary && acceptedPending.length === 0) return [];
-  const published = summary?.publishable.length ?? 0;
-  const blockedList = summary?.blocked ?? [];
-  const degradedIDs = summary?.degradedIDs ?? [];
-  const lkgIDs = summary?.lkgIDs ?? [];
+/** Render the Core publication partition: availability, withheld reasons, LKG, evidence. */
+export function formatPublicationLines(summary: PublicationSummary | undefined): string[] {
+  if (!summary) return [];
   const out = [
-    `可用 ${published} · 未完成 ${blockedList.length} · 降级 ${degradedIDs.length} · LKG ${lkgIDs.length}`,
+    `发现 ${summary.discovered} · 可用 ${summary.publishable.length} · withheld ${summary.withheld.length} · LKG ${summary.lkgIDs.length}`,
   ];
-  if (summary?.failureKind) out.push(`元数据获取失败：${summary.failureKind}`);
-  if (lkgIDs.length > 0) out.push(`LKG 提供：${lkgIDs.join("、")}`);
-  if (degradedIDs.length > 0) out.push(`已接受降级：${degradedIDs.join("、")}`);
-  if (acceptedPending.length > 0) out.push(`已接受、待下次刷新生效：${acceptedPending.join("、")}`);
-  for (const blocked of blockedList.slice(0, 5)) {
-    out.push(`未完成：${blocked.id} · ${blocked.status} · 缺失 ${blocked.gaps.join("、")}`);
+  if (summary.unusable) {
+    out.push(
+      "catalog 当前不可用：endpoint 连接成功，但本轮没有任何模型达到可信发布标准。",
+      "下一步：稍后刷新（Retry）重新发现，或运行 /litellm-diagnostics 查看每个模型的 withheld 原因。插件不会用默认值或确认动作强行发布模型。",
+    );
+  } else if (summary.partial) {
+    out.push(
+      `部分可用：${summary.publishable.length} 个模型正常发布，${summary.withheld.length} 个 withheld（其余模型不受影响，无需确认）。`,
+    );
   }
-  if (blockedList.length > 5) out.push(`另有 ${blockedList.length - 5} 个未完成模型`);
+  if (summary.failureKind) out.push(`元数据获取失败：${summary.failureKind}（未用默认值伪装完整配置）`);
+  // Notification state, not publication state: tells the user why the same
+  // problem set stays quiet across restarts.
+  if (summary.acknowledgement.reason === "unchanged") {
+    out.push("提醒状态：该问题集合已确认（跨重启保留），不重复提醒");
+  } else if (summary.acknowledgement.reason === "improved") {
+    out.push("提醒状态：问题集合较已确认状态减少，基线已更新");
+  }
+  if (summary.regressions.length > 0) {
+    out.push(
+      `此前可用、现已撤下：${summary.regressions.join("、")}（这些模型当前不可安全使用；插件不会自动切换到其他模型）`,
+    );
+  }
+  if (summary.lkgIDs.length > 0) {
+    out.push(`使用已信任的前次完整配置（LKG）：${summary.lkgIDs.join("、")}`);
+    if (summary.lkgDetail) out.push(`LKG 说明：${summary.lkgDetail}`);
+  }
+  for (const model of summary.withheld.slice(0, 5)) {
+    const reasons = model.reasons.map((item) => item.code).join("+") || "withheld";
+    out.push(
+      `withheld：${model.id} · ${model.status} · ${reasons}${model.retryable ? " · 可重试" : ""}${model.previouslyPublished ? " · 此前可用" : ""}`,
+    );
+  }
+  if (summary.withheld.length > 5) out.push(`……另有 ${summary.withheld.length - 5} 个 withheld 模型`);
+  for (const fact of summary.discrepancies.slice(0, 5)) {
+    out.push(`已裁决差异：${fact.model} · ${fact.field} · ${fact.resolution}`);
+  }
+  for (const fact of summary.conflicts.slice(0, 5)) {
+    out.push(`未决冲突：${fact.model} · ${fact.field} · ${fact.resolution}`);
+  }
   return out;
-}
-
-/** Accepted-but-not-yet-applied degraded ids (visible until the next refresh applies them). */
-export function pendingAcceptanceIDs(snapshot: ProviderSnapshot): string[] {
-  const accepted = snapshot.publicationState?.acceptedDegradedIDs
-  if (!accepted || accepted.size === 0) return [];
-  const applied = new Set(snapshot.diagnostics?.publication?.degradedIDs ?? []);
-  return [...accepted].filter((id) => !applied.has(id));
 }
 
 export function createDiagnosticsLines(
@@ -159,10 +179,7 @@ export function createDiagnosticsLines(
   }
 
   if (snapshot.diagnostics?.note) lines.push(`说明：${snapshot.diagnostics.note}`)
-  lines.push(...formatPublicationLines(
-    snapshot.diagnostics?.publication,
-    pendingAcceptanceIDs(snapshot),
-  ))
+  lines.push(...formatPublicationLines(snapshot.diagnostics?.publication))
   lines.push(`Core：${build.coreBranch}@${build.coreSHA}`)
   const identity = getRuntimeIdentity()
   lines.push(

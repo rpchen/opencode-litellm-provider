@@ -3,7 +3,6 @@ import { writeAuditFile } from "./audit-file.js";
 import { auditRpc } from "./audit-rpc.js";
 import { createDiagnosticsLines } from "./diagnostics.js";
 import { applyErrorLabel, credentialLabel, statusLabel, userVisibleStatus, } from "./endpoint-state.js";
-import { acceptDegradedForSnapshot, splitAcceptArgs, } from "./publication.js";
 import { publicationRpc } from "./publication-rpc.js";
 import { createFeedbackSubmitter, } from "./audit-feedback.js";
 import { endpointStateOf } from "./register.js";
@@ -78,33 +77,17 @@ export async function registerAudit(context, snapshot, dependencies = {}) {
     });
     const publication = await context.rpc.register(publicationRpc, {
         async state() {
-            return snapshot.diagnostics?.publication ?? { publishable: [], degradedIDs: [], lkgIDs: [], blocked: [] };
-        },
-        async accept(input) {
-            const { sessionID, modelId } = input;
-            const outcome = acceptDegradedForSnapshot(snapshot, modelId);
-            await publication.events.emit("accepted", {
-                sessionID,
-                modelId,
-                ok: outcome.accepted,
-                status: outcome.status ?? "",
-                gaps: [...(outcome.gaps ?? [])],
-                reason: outcome.reason ?? (outcome.accepted ? "degraded-accepted" : "rejected"),
-            });
-            latest = {
-                sequence: ++diagnosticSequence,
-                sessionID,
-                ok: outcome.accepted,
-                path: "",
-                error: outcome.accepted ? "" : (outcome.reason ?? "rejected"),
-                lines: createDiagnosticsLines(snapshot),
-            };
-            await rpc.events.emit("completed", latest);
-            return {
-                ok: outcome.accepted,
-                status: outcome.status ?? "",
-                gaps: [...(outcome.gaps ?? [])],
-                reason: outcome.reason ?? (outcome.accepted ? "degraded-accepted" : "rejected"),
+            return snapshot.diagnostics?.publication ?? {
+                discovered: 0,
+                publishable: [],
+                lkgIDs: [],
+                withheld: [],
+                partial: false,
+                unusable: false,
+                regressions: [],
+                discrepancies: [],
+                conflicts: [],
+                acknowledgement: { notify: false, reason: "unchanged", fingerprint: "sha256:none" },
             };
         },
     });
@@ -142,34 +125,6 @@ export async function registerAudit(context, snapshot, dependencies = {}) {
                     await submitFeedback(sessionID, outcome);
                 },
             });
-            editor.add({
-                name: "litellm-accept-degraded",
-                description: "显式接受某个未完成模型的降级配置（仍标记为降级，下次刷新生效）",
-                async execute(input) {
-                    const record = input;
-                    const [modelId] = splitAcceptArgs(readAcceptText(input)).slice(-1);
-                    const outcome = modelId
-                        ? acceptDegradedForSnapshot(snapshot, modelId)
-                        : { accepted: false, reason: "usage" };
-                    await publication.events.emit("accepted", {
-                        sessionID: record.sessionID,
-                        modelId: modelId ?? "",
-                        ok: outcome.accepted,
-                        status: outcome.status ?? "",
-                        gaps: [...(outcome.gaps ?? [])],
-                        reason: outcome.reason ?? (outcome.accepted ? "degraded-accepted" : "rejected"),
-                    });
-                    latest = {
-                        sequence: ++diagnosticSequence,
-                        sessionID: record.sessionID,
-                        ok: outcome.accepted,
-                        path: "",
-                        error: outcome.accepted ? "" : (outcome.reason ?? "rejected"),
-                        lines: createDiagnosticsLines(snapshot),
-                    };
-                    await rpc.events.emit("completed", latest);
-                },
-            });
         });
         return {
             async dispose() {
@@ -184,20 +139,4 @@ export async function registerAudit(context, snapshot, dependencies = {}) {
         await rpc.dispose();
         throw error;
     }
-}
-function readAcceptText(input) {
-    if (typeof input !== "object" || input === null)
-        return "";
-    const record = input;
-    const prompt = record.prompt;
-    if (typeof prompt === "object" && prompt !== null) {
-        const text = prompt.text;
-        if (typeof text === "string")
-            return text.trim();
-    }
-    for (const key of ["args", "arguments", "argument"]) {
-        if (typeof record[key] === "string")
-            return record[key].trim();
-    }
-    return "";
 }

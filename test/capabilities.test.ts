@@ -12,14 +12,17 @@ function mapped(modelName: string, contextTierCap = true) {
 }
 
 describe("能力映射", () => {
-  test("多部署按交集与最小上限保守合并", () => {
+  test("模态取交集；output 采用可信 intrinsic 值，而非描述性最小值", () => {
     const result = mapped("gpt-5.5")
     expect(result.capabilities).toEqual({
       tools: true,
       input: ["text", "image", "pdf"],
       output: ["text"],
     })
-    expect(result.limit.output).toBe(64000)
+    // models.dev is authoritative for the model's intrinsic output limit; the
+    // deployment descriptive declarations are retained as a resolved
+    // discrepancy by the publication assessment.
+    expect(result.limit.output).toBe(128000)
   })
 
   test("LiteLLM 值优先、价格换算为每百万 token", () => {
@@ -30,15 +33,21 @@ describe("能力映射", () => {
   test("272k 与 512k 阶梯截断，可关闭", () => {
     expect(mapped("gpt-5.5").limit.context).toBe(272000)
     expect(mapped("minimax-m3").limit.context).toBe(500000)
-    expect(mapped("gpt-5.5", false).limit).toMatchObject({ context: 1050000, input: 900000 })
+    // Input capacity is the trusted intrinsic value (no models.dev
+    // limit.input, so total context applies); descriptive deployments do not
+    // narrow an authoritative intrinsic value.
+    expect(mapped("gpt-5.5", false).limit).toMatchObject({ context: 1050000, input: 1050000, output: 128000 })
   })
 
   test("tiered_pricing 首个非零起点截断", () => {
     expect(mapped("qwen3.7-plus").limit.context).toBe(256000)
   })
 
-  test("显式 LiteLLM 模态声明优先于 models.dev（无 family 特判）", () => {
-    expect(mapped("qwen3.7-plus").capabilities.input).toEqual(["text", "video"])
+  test("canonical identity 可靠时以 models.dev intrinsic 模态为准（无 family 特判）", () => {
+    // The trusted record declares image input; the LiteLLM descriptive
+    // declarations are secondary evidence and are recorded as a resolved
+    // discrepancy by the publication assessment.
+    expect(mapped("qwen3.7-plus").capabilities.input).toEqual(["text", "image", "video"])
   })
 
   test("异常字段按缺失处理并回退默认值", () => {

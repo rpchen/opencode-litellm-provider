@@ -1,12 +1,6 @@
 # publication Specification
 
-## Purpose
-OpenCode consumes the Core trustworthy-publication verdicts without
-reimplementing policy: only configured, LKG-configured, or explicitly
-degraded models register; host tool flags stay conservative; failures
-never produce pseudo-complete models; acceptance stays labeled degraded.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Publication partition governs registration
 The plugin SHALL register only models Core reports as `configured` or
@@ -68,3 +62,9 @@ failure and SHALL NOT discard a trusted snapshot.
 #### Scenario: Descriptive discrepancy keeps the trusted snapshot
 - **WHEN** Core reports a resolved discrepancy for a model otherwise served from LKG
 - **THEN** the model stays registered from the trusted snapshot and diagnostics shows both the discrepancy and the LKG provenance
+
+## REMOVED Requirements
+
+### Requirement: Explicit degraded acceptance over RPC
+
+### Requirement: Group-wide evidence flows through the adapter unchanged
