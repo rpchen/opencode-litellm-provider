@@ -58,6 +58,72 @@ const opencodeConfig = path.join(config, "opencode")
 const opencodeConfigFile = path.join(opencodeConfig, "opencode.jsonc")
 for (const dir of [project, home, config, data, cache, state, opencodeConfig]) mkdirSync(dir, { recursive: true })
 
+/**
+ * Deterministic models.dev catalog. The real host stays real; only the metadata
+ * content is fixed, so the gate never depends on what the public service
+ * happens to return today. The plugin points at it through the documented
+ * `modelsDevUrl` option.
+ */
+const catalogueEntries = () => ({
+  vendora: {
+    models: {
+      "coding-model": {
+        id: "coding-model",
+        tool_call: true,
+        reasoning: false,
+        modalities: { input: ["text"], output: ["text"] },
+        limit: { context: 200_000, output: 64_000 },
+      },
+    },
+  },
+  vendorb: {
+    models: {
+      // Deliberately incomplete: the identity resolves reliably, but the record
+      // cannot make the model publishable on its own.
+      "coding-model": { id: "coding-model", tool_call: true },
+    },
+  },
+  resolved: {
+    models: {
+      "e2e-discrepancy-model": {
+        id: "e2e-discrepancy-model",
+        tool_call: true,
+        reasoning: false,
+        modalities: { input: ["text", "image"], output: ["text"] },
+        limit: { context: 400_000, output: 512_000 },
+      },
+    },
+  },
+})
+
+function startCatalogServer() {
+  const body = JSON.stringify(catalogueEntries())
+  let requests = 0
+  const server = createServer((req, res) => {
+    if (req.url === "/api.json") {
+      requests += 1
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(body)
+      return
+    }
+    res.writeHead(404, { "content-type": "application/json" })
+    res.end(JSON.stringify({ error: "not found" }))
+  })
+  return new Promise((resolve, reject) => {
+    server.once("error", reject)
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address()
+      if (!address || typeof address === "string") return reject(new Error("catalog server did not bind TCP"))
+      resolve({
+        server,
+        url: `http://127.0.0.1:${address.port}/api.json`,
+        requests: () => requests,
+        close: () => new Promise((done) => server.close(() => done())),
+      })
+    })
+  })
+}
+
 const secrets = ["sk-e2e-default", "sk-e2e-company"]
 const sanitize = (value) => secrets.reduce((text, secret) => text.replaceAll(secret, "***"), String(value))
 
@@ -423,12 +489,14 @@ async function dumpFailureDiagnostics() {
 }
 
 try {
+  const catalogServer = await startCatalogServer()
   const e2eConfig = {
     $schema: "https://opencode.ai/config.json",
     plugins: [{
       package: packageSpec,
       options: {
         pollInterval: 30,
+        modelsDevUrl: catalogServer.url,
         endpoints: {
           default: { baseUrl: defaultMock.baseUrl },
           company: { baseUrl: companyMock.baseUrl },
@@ -861,6 +929,133 @@ try {
     `a materially bigger problem set must not stay suppressed: ${grownDiagnostics}`,
   )
   console.log("[ack persistence] surfaced -> restarted suppressed -> material change re-surfaced")
+
+  // 4c) Canonical identity change. Same visible model id, a different trusted
+  //     identity: the old snapshot must not carry over, and incomplete metadata
+  //     for the new identity must withdraw the model.
+  const codingModel = (provider, complete) => [{
+    model_name: "coding-model",
+    litellm_params: { model: `${provider}/coding-model` },
+    model_info: {
+      mode: "chat",
+      models_dev_provider: provider,
+      ...(complete
+        ? {
+          max_input_tokens: 200_000,
+          max_output_tokens: 64_000,
+          supports_function_calling: true,
+          supports_reasoning: false,
+          supports_vision: false,
+          supports_pdf_input: false,
+          supports_audio_input: false,
+          supports_video_input: false,
+          supports_audio_output: false,
+        }
+        : {}),
+    },
+  }]
+
+  servedModels = codingModel("vendora", true)
+  const identityStartedAt = Date.now()
+  const identityAPublication = await waitForRefreshAfter(identityStartedAt, "identity A publication")
+  assert(
+    identityAPublication.models.some((model) => model.id === "coding-model"),
+    `the model must publish under identity A: ${JSON.stringify(identityAPublication.models.map((m) => m.id))}`,
+  )
+  assert(hostModels().includes("litellm/coding-model"), "identity A must be visible in the host model list")
+  const identityADiagnostics = await diagnosticsThroughTui(
+    /withheld[\s：:]*invalid-fields/u,
+    "the identity A baseline",
+  )
+  assert(
+    !/withheld[\s：:]*coding-model/u.test(identityADiagnostics),
+    `identity A must not be withheld: ${identityADiagnostics}`,
+  )
+  assert(
+    !/使用已信任的前次完整配置（LKG）：coding-model/u.test(identityADiagnostics),
+    "identity A must be configured from fresh evidence",
+  )
+
+  // The trusted identity changes while the visible id stays the same, and the
+  // rebuilt metadata is incomplete.
+  servedModels = codingModel("vendorb", false)
+  const identityBPublication = await waitForRefreshAfter(Date.now(), "identity B publication")
+  assert(
+    !identityBPublication.models.some((model) => model.id === "coding-model"),
+    `the old snapshot must not carry the model across identities: ${JSON.stringify(identityBPublication.models.map((m) => m.id))}`,
+  )
+  assert(!hostModels().includes("litellm/coding-model"), "the withdrawn model must leave the host model list")
+  const identityBDiagnostics = await diagnosticsThroughTui(
+    /withheld[\s：:]*coding-model/u,
+    "the identity-change withholding",
+  )
+  assert(
+    /withheld[\s：:]*coding-model · discovered-incomplete/u.test(identityBDiagnostics),
+    `the identity change must withhold the model with its reason: ${identityBDiagnostics}`,
+  )
+  assert(
+    /此前可用、现已撤下：coding-model/u.test(identityBDiagnostics),
+    `the identity change must be reported as a regression: ${identityBDiagnostics}`,
+  )
+  assert(
+    !/使用已信任的前次完整配置（LKG）：coding-model/u.test(identityBDiagnostics),
+    `the identity A snapshot must not be reused for identity B: ${identityBDiagnostics}`,
+  )
+  console.log("[identity change] identity A published -> identity B withheld, old LKG not reused")
+
+  // 4d) Resolved discrepancy: LiteLLM descriptive metadata differs from the
+  //     authoritative models.dev intrinsic facts, and the deployment declares no
+  //     runtime constraint, so Core selects the authoritative values and keeps
+  //     the model publishable.
+  servedModels = [{
+    model_name: "e2e-discrepancy-model",
+    litellm_params: { model: "resolved/e2e-discrepancy-model" },
+    model_info: {
+      mode: "chat",
+      models_dev_provider: "resolved",
+      max_input_tokens: 400_000,
+      max_output_tokens: 131_072,
+      supports_function_calling: true,
+      supports_reasoning: false,
+      supports_vision: true,
+      supports_pdf_input: false,
+      supports_audio_input: true,
+      supports_video_input: false,
+      supports_audio_output: false,
+    },
+  }]
+  const discrepancyPublication = await waitForRefreshAfter(Date.now(), "the resolved discrepancy")
+  const discrepancyModel = discrepancyPublication.models.find((model) => model.id === "e2e-discrepancy-model")
+  assert(discrepancyModel, `the discrepancy model must be published: ${JSON.stringify(discrepancyPublication.models.map((m) => m.id))}`)
+  assert.equal(
+    discrepancyModel.limit.output,
+    512_000,
+    `the authoritative intrinsic output must be selected: ${JSON.stringify(discrepancyModel.limit)}`,
+  )
+  assert(
+    !discrepancyModel.capabilities.input.includes("audio"),
+    `the authoritative modality set must win: ${JSON.stringify(discrepancyModel.capabilities.input)}`,
+  )
+  assert(hostModels().includes("litellm/e2e-discrepancy-model"), "the discrepancy model must be visible in /models")
+  const discrepancyDiagnostics = await diagnosticsThroughTui(
+    /已裁决差异：e2e-discrepancy-model · limit.output/u,
+    "the resolved discrepancy",
+  )
+  assert(
+    !/withheld[\s：:]*e2e-discrepancy-model/u.test(discrepancyDiagnostics),
+    `a resolved discrepancy must not withhold the model: ${discrepancyDiagnostics}`,
+  )
+  assert(
+    !/未决冲突[\s：:]*e2e-discrepancy-model/u.test(discrepancyDiagnostics),
+    `a decidable difference must not be reported as an unresolved conflict: ${discrepancyDiagnostics}`,
+  )
+  assert(
+    !/invalid-metadata|discovered-incomplete[^+]*e2e-discrepancy-model/u.test(discrepancyDiagnostics),
+    `a resolved discrepancy must not be reported as incomplete or invalid: ${discrepancyDiagnostics}`,
+  )
+  console.log("[resolved discrepancy] descriptive LiteLLM metadata resolved by authoritative models.dev facts")
+
+  servedModels = servedFixture.data
 
   servedModels = servedFixture.data
   await waitForRefreshAfter(Date.now(), "the restored fixture catalog")

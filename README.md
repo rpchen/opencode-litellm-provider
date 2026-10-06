@@ -302,6 +302,7 @@ Core Commit      649bc84f
 | `protocolOverrides` | `{}` | legacy 单 endpoint 模式按 LiteLLM `model_name` 覆盖协议；显式模式放到各 endpoint 内 |
 | `endpoints` | 未设置 | 启用显式多 endpoint 模式；对象 key 为 endpoint id，每项至少包含 `baseUrl` |
 | `conversationFeedback` | `false` | 为 audit export 向会话提交反馈；开启后会触发一次会话/模型处理 |
+| `modelsDevUrl` | `https://models.dev/api.json` | 覆盖 models.dev catalog 地址（自托管/镜像）；抓取到的元数据仍走同一套证据与 publication 规则 |
 
 示例：
 

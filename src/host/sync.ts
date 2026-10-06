@@ -543,6 +543,7 @@ export function createDiscoveryLoop(
             catalog = await fetchCatalog({
               fetchImpl: dependencies.fetchImpl,
               logger,
+              ...(options.modelsDevUrl === undefined ? {} : { url: options.modelsDevUrl }),
             })
           } catch (error) {
             catalog = {}

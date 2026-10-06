@@ -31,15 +31,23 @@ function modelsDevCost(selected, key) {
 }
 function deploymentModalities(deployment, selected, direction) {
     const result = new Set(["text"]);
-    const fallback = new Set(modelsDevModalities(selected, direction));
+    const authoritative = modelsDevModalities(selected, direction);
+    const hasAuthoritativeSet = authoritative.length > 0;
     const mappings = direction === "input" ? INPUT_MODALITIES : OUTPUT_MODALITIES;
     for (const [field, modality] of mappings) {
         // A proven endpoint constraint (`litellm_params`) is the only LiteLLM
         // declaration that can remove a modality the intrinsic record declares.
         if (optionalBoolean(deployment.litellmParams[field]) === false)
             continue;
-        const value = optionalBoolean(deployment.modelInfo[field]);
-        if (value === true || fallback.has(modality))
+        if (hasAuthoritativeSet) {
+            // The authoritative intrinsic list decides the direction: a descriptive
+            // `true` can never add a modality the trusted record does not declare,
+            // exactly as the publication assessment reports it.
+            if (authoritative.includes(modality))
+                result.add(modality);
+            continue;
+        }
+        if (optionalBoolean(deployment.modelInfo[field]) === true)
             result.add(modality);
     }
     return result;

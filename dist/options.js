@@ -122,6 +122,24 @@ export function parseOptions(input, logger = console) {
             };
         }
     }
-    const parsed = { pollInterval, contextTierCap, protocolOverrides, conversationFeedback };
+    let modelsDevUrl;
+    if (input.modelsDevUrl !== undefined) {
+        const raw = typeof input.modelsDevUrl === "string" ? input.modelsDevUrl.trim() : "";
+        let valid = false;
+        if (raw.length > 0) {
+            try {
+                const url = new URL(raw);
+                valid = (url.protocol === "http:" || url.protocol === "https:") && url.username === "" && url.password === "";
+            }
+            catch { }
+        }
+        if (valid)
+            modelsDevUrl = raw;
+        else
+            logger.warn("modelsDevUrl 必须是合法的 http(s) 地址且不含用户名/密码，已忽略（回退默认 models.dev）");
+    }
+    const parsed = modelsDevUrl === undefined
+        ? { pollInterval, contextTierCap, protocolOverrides, conversationFeedback }
+        : { pollInterval, contextTierCap, protocolOverrides, conversationFeedback, modelsDevUrl };
     return endpoints === undefined ? parsed : { ...parsed, endpoints };
 }

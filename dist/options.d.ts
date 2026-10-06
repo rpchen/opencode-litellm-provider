@@ -18,7 +18,14 @@ export interface PluginOptions {
     contextTierCap: boolean;
     protocolOverrides: Record<string, Protocol>;
     conversationFeedback: boolean;
-    /** Undefined means legacy single-endpoint mode using /connect URL configuration. */
+    /**
+     * Optional override for the models.dev catalog URL (default
+     * `https://models.dev/api.json`). Lets an operator point at a self-hosted or
+     * mirrored catalog; the fetched document goes through exactly the same
+     * evidence and publication policy as the default source.
+     */
+    modelsDevUrl?: string;
+    /** Undefined means legacy single-endpoint mode using /connect URL caching. */
     endpoints?: Readonly<Record<string, EndpointDefinition>>;
 }
 export interface OptionLogger {
