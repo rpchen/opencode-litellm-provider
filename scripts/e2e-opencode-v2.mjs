@@ -490,6 +490,7 @@ async function dumpFailureDiagnostics() {
 
 try {
   const catalogServer = await startCatalogServer()
+  const catalogRequests = catalogServer.requests
   const e2eConfig = {
     $schema: "https://opencode.ai/config.json",
     plugins: [{
@@ -705,7 +706,7 @@ try {
   mark = tui.mark()
   // PTY text normalization may collapse the full-width colon, so assert semantic spacing.
   await waitForTui(tui, /Endpoint\s+company/u, { from: mark })
-  await waitForTui(tui, /models\.dev\s+degraded/u, { from: mark })
+  await waitForTui(tui, /models\.dev\s+ok/u, { from: mark })
   await waitForTui(tui, /invalid-fields/u, { from: mark })
   const scopedDiagnostics = tui.output(mark)
   assert.doesNotMatch(scopedDiagnostics, /LiteLLM Endpoints · active \d+\/\d+/u,
@@ -1052,6 +1053,10 @@ try {
   assert(
     !/invalid-metadata|discovered-incomplete[^+]*e2e-discrepancy-model/u.test(discrepancyDiagnostics),
     `a resolved discrepancy must not be reported as incomplete or invalid: ${discrepancyDiagnostics}`,
+  )
+  assert(
+    catalogRequests() > 0,
+    "the real host must have fetched the configured deterministic models.dev catalog",
   )
   console.log("[resolved discrepancy] descriptive LiteLLM metadata resolved by authoritative models.dev facts")
 
