@@ -454,6 +454,7 @@ function payload(value) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
+let catalogServer
 const defaultMock = await startLiteLLM(secrets[0])
 const companyMock = await startLiteLLM(secrets[1])
 let openCodeServer
@@ -489,7 +490,7 @@ async function dumpFailureDiagnostics() {
 }
 
 try {
-  const catalogServer = await startCatalogServer()
+  catalogServer = await startCatalogServer()
   const catalogRequests = catalogServer.requests
   const e2eConfig = {
     $schema: "https://opencode.ai/config.json",
