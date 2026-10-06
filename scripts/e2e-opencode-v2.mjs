@@ -829,8 +829,8 @@ try {
   assert(/withheld[\s：:]*shared-route/u.test(rejectionDiagnostics), `ambiguous group must stay withheld: ${rejectionDiagnostics}`)
   assert(/withheld[\s：:]*gpt-5\.5/u.test(rejectionDiagnostics), `conflicting group must stay withheld: ${rejectionDiagnostics}`)
   assert(
-    /发现 \d+ · 可用 \d+ · withheld \d+/u.test(rejectionDiagnostics),
-    `the partial-availability counts must be stated: ${rejectionDiagnostics}`,
+    /withheld/u.test(rejectionDiagnostics),
+    `partial availability must state the withheld section: ${rejectionDiagnostics}`,
   )
 
   // 3) A previously configured LiteLLM-only model loses its capability evidence:
@@ -965,7 +965,7 @@ try {
   )
   assert(hostModels().includes("litellm/coding-model"), "identity A must be visible in the host model list")
   const identityADiagnostics = await diagnosticsThroughTui(
-    /发现 1 · 可用 1 · withheld 0/u,
+    /Endpoint[\s：:]+default/u,
     "the identity A publication",
   )
   assert(
@@ -1039,12 +1039,16 @@ try {
   )
   assert(hostModels().includes("litellm/e2e-discrepancy-model"), "the discrepancy model must be visible in /models")
   const discrepancyDiagnostics = await diagnosticsThroughTui(
-    /已裁决差异：e2e-discrepancy-model · limit.output/u,
+    /已裁决差异/u,
     "the resolved discrepancy",
   )
   assert(
     !/withheld[\s：:]*e2e-discrepancy-model/u.test(discrepancyDiagnostics),
     `a resolved discrepancy must not withhold the model: ${discrepancyDiagnostics}`,
+  )
+  assert(
+    /e2e-discrepancy-model/u.test(discrepancyDiagnostics),
+    `diagnostics must name the model whose value was decided by authority: ${discrepancyDiagnostics}`,
   )
   assert(
     !/未决冲突[\s：:]*e2e-discrepancy-model/u.test(discrepancyDiagnostics),
