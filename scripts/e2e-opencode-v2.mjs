@@ -825,7 +825,7 @@ try {
       `withheld ${rejected} must never register`,
     )
   }
-  const rejectionDiagnostics = await diagnosticsThroughTui(/withheld[\s：:]*invalid-fields/u, "the withheld reasons")
+    /发现 1 · 可用 1 · withheld 0/u,
   assert(/withheld[\s：:]*shared-route/u.test(rejectionDiagnostics), `ambiguous group must stay withheld: ${rejectionDiagnostics}`)
   assert(/withheld[\s：:]*gpt-5\.5/u.test(rejectionDiagnostics), `conflicting group must stay withheld: ${rejectionDiagnostics}`)
   assert(
@@ -966,7 +966,7 @@ try {
   assert(hostModels().includes("litellm/coding-model"), "identity A must be visible in the host model list")
   const identityADiagnostics = await diagnosticsThroughTui(
     /withheld[\s：:]*invalid-fields/u,
-    "the identity A baseline",
+    "the identity A publication",
   )
   assert(
     !/withheld[\s：:]*coding-model/u.test(identityADiagnostics),
