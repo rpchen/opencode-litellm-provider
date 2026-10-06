@@ -1598,6 +1598,9 @@ try {
   await Promise.all([
     new Promise((resolve) => defaultMock.server.close(resolve)),
     new Promise((resolve) => companyMock.server.close(resolve)),
+    // The deterministic catalog listener shares this lifecycle; leaving it open
+    // kept the E2E process alive after the final assertion.
+    catalogServer.close(),
   ])
   // A just-killed OpenCode may still be writing its cache: never let cleanup mask the real result.
   await sleep(1000)
