@@ -24,8 +24,14 @@ export interface MetadataConflictDiagnostic {
 export interface ModelQualityDiagnostic {
     readonly identity: {
         readonly canonicalCandidates: readonly string[];
-        readonly matchKind?: "exact" | "canonical" | "alias";
+        readonly matchKind?: "exact" | "canonical" | "alias" | "relation";
         readonly matchedCandidate?: string;
+        /**
+         * Where the canonical identity evidence comes from: a provider-declared
+         * canonical relation, the deployments' own declarations, or nothing
+         * provable. Observational only.
+         */
+        readonly identityProvenance?: "provider-relation" | "deployment-declaration" | "unknown";
     };
     readonly reasoning: ReasoningSupportResolution;
     readonly protocolSupport: ProtocolSupport;
@@ -40,6 +46,8 @@ export interface ModelDiagnostic {
         readonly matched: boolean;
         readonly providerID?: string;
         readonly modelID?: string;
+        /** Which precedence step selected this record (observational). */
+        readonly selectionSource?: string;
     };
     readonly protocol: {
         readonly value: ModelSpec["protocol"];

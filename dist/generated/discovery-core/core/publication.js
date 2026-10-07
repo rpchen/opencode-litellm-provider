@@ -137,6 +137,38 @@ export function metadataFailureFor(kind, detail) {
         detail,
     };
 }
+/**
+ * Whether the selected models.dev record carries authoritative intrinsic
+ * authority.
+ *
+ * Canonical-original records (and explicit-provider records proved by their
+ * own canonical relation) do; fallback records (OpenCode, OpenRouter,
+ * unique leftover) only serve descriptive metadata for a reseller's
+ * offering, which fills gaps but never outranks the endpoint's own
+ * declarations. This implements §13: canonical/original evidence and
+ * fallback provider serving metadata stay distinguishable.
+ */
+function isAuthoritativeIntrinsic(selected) {
+    if (!selected)
+        return false;
+    // Undefined selectionSource keeps the legacy hand-built-record behavior.
+    if (selected.selectionSource === undefined)
+        return true;
+    // Authoritative intrinsic authority requires a proven canonical relation:
+    // canonical-original, or an explicit-provider record whose own metadata
+    // carries the deterministic canonical relation. Unique trusted matches and
+    // reseller fallback records only serve that provider's offering -- they
+    // fill gaps but never outrank the endpoint's own declarations (frozen
+    // design: unique-match and legacy-family-compatibility are fallback
+    // sources; explicit-provider without a canonical relation proof proves the
+    // serving provider choice only).
+    if (selected.selectionSource === "canonical-original")
+        return true;
+    if (selected.selectionSource === "explicit-provider") {
+        return selected.recordCanonicalID !== undefined;
+    }
+    return false;
+}
 function toolProvenance(group, selected, inherited) {
     if (group.deployments.some((d) => optionalBoolean(d.modelInfo.supports_function_calling) !== undefined)) {
         return { source: "litellm", detail: "supports_function_calling" };
@@ -223,6 +255,7 @@ function assessLimit(group, selected, field, options) {
         intrinsic,
         intrinsicDetail: `limit.${field} -> provider ${selected?.providerID ?? "unknown-provider"} -> model ${selected?.modelID ?? "unknown-model"}`,
         bounds,
+        intrinsicAuthority: isAuthoritativeIntrinsic(selected) ? "authoritative" : "fallback-serving",
     });
     const resolution = illegalIntrinsic
         ? {
@@ -293,6 +326,7 @@ function assessModalities(values, group, selected, direction) {
         group,
         intrinsic,
         intrinsicDetail: `modalities.${direction} -> provider ${selected?.providerID ?? "unknown-provider"} -> model ${selected?.modelID ?? "unknown-model"}`,
+        intrinsicAuthority: isAuthoritativeIntrinsic(selected) ? "authoritative" : "fallback-serving",
     });
     if (!resolved.known) {
         return {
@@ -342,9 +376,11 @@ export function assessModelConfiguration(group, catalog, options, input = { cata
     const toolResolved = resolveBooleanField({
         field: "capabilities.tools",
         descriptiveKey: "supports_function_calling",
+        constraintKey: "supports_function_calling",
         group,
         intrinsic: toolIntrinsic,
         intrinsicDetail: `tool_call -> provider ${effectiveSelected?.providerID ?? "unknown-provider"} -> model ${effectiveSelected?.modelID ?? "unknown-model"}`,
+        intrinsicAuthority: isAuthoritativeIntrinsic(effectiveSelected) ? "authoritative" : "fallback-serving",
         fallbackState: toolAggregation.state,
         fallbackConflict: toolAggregation.conflict,
     });
@@ -353,9 +389,11 @@ export function assessModelConfiguration(group, catalog, options, input = { cata
     const reasoningResolved = resolveBooleanField({
         field: "reasoning",
         descriptiveKey: "supports_reasoning",
+        constraintKey: "supports_reasoning",
         group,
         intrinsic: modelsDevReasoning(effectiveSelected),
         intrinsicDetail: `reasoning -> provider ${effectiveSelected?.providerID ?? "unknown-provider"} -> model ${effectiveSelected?.modelID ?? "unknown-model"}`,
+        intrinsicAuthority: isAuthoritativeIntrinsic(effectiveSelected) ? "authoritative" : "fallback-serving",
         fallbackState: reasoningState.state,
         fallbackConflict: reasoningState.conflict,
     });
@@ -489,6 +527,31 @@ export function assessModelConfiguration(group, catalog, options, input = { cata
 export function isNormallyPublishable(status) {
     return status === "configured" || status === "configured-lkg";
 }
+/**
+ * The only accepted persisted values of `LastKnownGoodEntry.evidenceAuthority`.
+ * Schema 7 makes the field semantically critical: a missing or unknown value
+ * must never fall back to `authoritative-intrinsic`, or a corrupted
+ * fallback-serving snapshot could dodge the outage fail-closed policy.
+ */
+export function isPublicationEvidenceAuthority(value) {
+    return value === "authoritative-intrinsic" || value === "fallback-serving";
+}
+/**
+ * Grade the evidence of a selection. Live assessment, LKG capture, price
+ * fallback eligibility, and diagnostics all read this single gate, so no
+ * caller can drift into re-deriving the authority table.
+ */
+export function evidenceAuthorityOf(selected) {
+    // No selected record means the snapshot's facts came from the endpoint's
+    // own LiteLLM declarations (provider id `litellm-only`): the operator's
+    // own previously-proven configuration, exactly what LKG exists to carry
+    // across outages. Fallback-serving grading applies to snapshots whose
+    // facts came from a selected models.dev record without authoritative
+    // intrinsic authority.
+    if (selected === undefined)
+        return "authoritative-intrinsic";
+    return isAuthoritativeIntrinsic(selected) ? "authoritative-intrinsic" : "fallback-serving";
+}
 // ---------------------------------------------------------------------------
 // Last Known Good (no fixed TTL)
 // ---------------------------------------------------------------------------
@@ -501,7 +564,7 @@ export function isNormallyPublishable(status) {
  * entry with unknown capabilities, inconsistent facts, or a route-stripped
  * identity still fails closed.
  */
-export const PUBLICATION_SCHEMA_VERSION = 5;
+export const PUBLICATION_SCHEMA_VERSION = 7;
 export function lastKnownGoodKey(modelName) {
     return modelName.trim().toLowerCase().replace(/[\s_]+/g, "-").replace(/-+/g, "-");
 }
@@ -558,6 +621,8 @@ export function createLastKnownGoodEntry(group, selected, spec, now = Date.now()
         canonicalID: canonicals[0] ?? group.modelName.toLowerCase(),
         providerID: selected?.providerID ?? "litellm-only",
         matchKind: selected?.matchKind,
+        selectionSource: selected?.selectionSource,
+        evidenceAuthority: evidenceAuthorityOf(selected),
         fetchedAt: new Date(now).toISOString(),
         fetchedAtEpochMs: now,
         spec: structuredClone(spec),
@@ -658,6 +723,12 @@ export function validateLastKnownGood(entry, group, selected, now = Date.now(), 
     if (entry.schemaVersion !== PUBLICATION_SCHEMA_VERSION) {
         return { valid: false, reason: "schema-incompatible LKG entry", ageMs };
     }
+    // Defensive re-check independent of the compatibility guard: a corrupted
+    // or hand-built entry whose persisted authority is missing/unknown must
+    // fail closed and must never default to authoritative-intrinsic.
+    if (!isPublicationEvidenceAuthority(entry.evidenceAuthority)) {
+        return { valid: false, reason: "LKG evidence authority is missing or unknown", ageMs };
+    }
     if (typeof entry.modelName !== "string" || entry.modelName.length === 0) {
         return { valid: false, reason: "LKG entry has no provable model identity", ageMs };
     }
@@ -679,6 +750,22 @@ export function validateLastKnownGood(entry, group, selected, now = Date.now(), 
     const currentCanonical = canonicals[0] ?? group.modelName.toLowerCase();
     if (currentCanonical.toLowerCase() !== entry.canonicalID.toLowerCase()) {
         return { valid: false, reason: `canonical identity changed (${entry.canonicalID} != ${currentCanonical})`, ageMs };
+    }
+    // Authority is graded on the entry itself (persisted at capture from the
+    // same helper as the live assessment). A fallback-serving snapshot --
+    // reseller serving metadata or an explicit provider record without a
+    // canonical relation proof -- restores only while the same live selection
+    // is provable; during a metadata outage nothing live re-proves those
+    // numbers, so it fails closed instead of resurrecting stale serving
+    // limits the next real refresh would immediately reject.
+    if (entry.evidenceAuthority === "fallback-serving") {
+        if (selected === undefined || selected.selectionSource === undefined) {
+            return { valid: false, reason: "LKG captured with fallback-serving evidence authority; it must be re-proven by a live selection, not restored from memory", ageMs };
+        }
+        const currentSource = selected.selectionSource;
+        if (currentSource !== entry.selectionSource) {
+            return { valid: false, reason: `LKG captured from a fallback provider record (${entry.selectionSource ?? "unknown"}); it must be re-proven live`, ageMs };
+        }
     }
     // Additional cross-check only: when the live catalog is unavailable
     // there is no current provider mapping to compare against; the stored
@@ -872,6 +959,7 @@ export function isLKGEntryCompatible(value) {
         typeof value.providerID === "string" &&
         typeof value.fetchedAt === "string" &&
         typeof value.fetchedAtEpochMs === "number" &&
+        isPublicationEvidenceAuthority(value.evidenceAuthority) &&
         isCapturedVerdict(value.captured);
 }
 /** In-memory LKG store. Persistence belongs to adapters; validity belongs here. */

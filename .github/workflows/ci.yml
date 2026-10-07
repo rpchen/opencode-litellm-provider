@@ -61,6 +61,11 @@ jobs:
       - name: Build in a clean external workspace and reject altered distributions
         run: npm run test:distribution
 
+      - name: Validate the required merge gate (ruleset drift guard)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: npm run test:merge-gate
+
       - name: Validate OpenSpec
         run: npm run validate:spec
 

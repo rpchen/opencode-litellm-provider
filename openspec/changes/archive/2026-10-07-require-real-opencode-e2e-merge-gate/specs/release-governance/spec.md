@@ -1,16 +1,6 @@
-# release-governance Specification
+# Delta: release-governance
 
-## Purpose
-Defines release metadata and completion checks that keep OpenCode package versions, README current-release instructions, release notes, OpenSpec archive state, and published release inputs consistent.
-
-## Requirements
-
-### Requirement: release metadata stays aligned
-OpenCode CI SHALL verify that package and lockfile versions match the README current-release fixed-tag example and release-notes reference.
-
-#### Scenario: repository release metadata is consistent
-- **WHEN** a release or normal CI candidate is verified
-- **THEN** the metadata check succeeds only when manifest, lockfile, README fixed version, README release-notes link, and release-notes file refer to the same version
+## MODIFIED Requirements
 
 ### Requirement: completed OpenSpec changes are archived
 OpenCode CI SHALL reject an active OpenSpec change whose tasks are fully complete.
@@ -18,6 +8,8 @@ OpenCode CI SHALL reject an active OpenSpec change whose tasks are fully complet
 #### Scenario: completed change remains active
 - **WHEN** an active OpenSpec change contains completed tasks and no unchecked tasks
 - **THEN** the OpenSpec closure check fails until the change is archived through the OpenSpec workflow
+
+## ADDED Requirements
 
 ### Requirement: main merge gate requires both CI and the real host E2E
 The `Protect main` ruleset SHALL require both the `CI` and the `Real OpenCode 2.0.16 E2E` status checks as merge conditions, and OpenCode CI SHALL verify the live ruleset against this frozen baseline so a future drift fails the pipeline instead of silently weakening the gate.
