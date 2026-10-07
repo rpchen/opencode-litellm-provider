@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process"
 import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join, isAbsolute, basename } from "node:path"
+import { join, isAbsolute, basename, sep } from "node:path"
 import { auditDirectory, writeAuditFile } from "../src/host/audit-file.js"
 
 const directories: string[] = []
@@ -27,7 +27,9 @@ describe("审查报告文件", () => {
     if (process.platform !== "win32") {
       expect((await stat(path)).mode & 0o777).toBe(0o600)
     } else {
-      const sid = execFileSync("whoami", ["/user", "/fo", "csv", "/nh"], { encoding: "utf8" })
+      // A Git-for-MinGW `whoami.exe` earlier in PATH would shadow the
+      // Windows System32 tool and reject `/user`; resolve the real one.
+      const sid = execFileSync("C:" + sep + "Windows" + sep + "System32" + sep + "whoami.exe", ["/user", "/fo", "csv", "/nh"], { encoding: "utf8" })
         .match(/S-1-(?:\d+-)+\d+/)?.[0]
       expect(sid).toBeTruthy()
       for (const target of [join(home, "nested"), path]) {

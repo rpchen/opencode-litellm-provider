@@ -1,5 +1,5 @@
 import { buildModelSpecs, hasOperationalLimits } from "./build.js";
-import { groupLiteLLMDeployments, isRecord, optionalBoolean, optionalNumber, positiveInteger, } from "./litellm.js";
+import { groupLiteLLMDeployments, isRecord, optionalBoolean, optionalNumber, optionalString, positiveInteger, } from "./litellm.js";
 import { buildVariants, canUseSelectedModelsDevPrice, candidateModelIDs, canonicalModelID, resolveReasoningSupport, selectModelsDevRecord, } from "./modelsdev.js";
 import { assessModelConfiguration } from "./publication.js";
 import { resolveProtocolResolution, resolveProtocolSupport, } from "./protocol.js";
@@ -194,6 +194,14 @@ function protocolProvenance(reason) {
             return field("default", "no stronger protocol evidence; chat fallback");
     }
 }
+/**
+ * Whether every deployment of the group declares its own identity evidence
+ * (base model or route). Pure observation for diagnostics.
+ */
+function identityProvenanceFromDeployment(group) {
+    return group.deployments.every((deployment) => optionalString(deployment.modelInfo.base_model) !== undefined ||
+        optionalString(deployment.litellmParams.model) !== undefined);
+}
 function modelDiagnostic(group, spec, catalog, options) {
     const selected = selectModelsDevRecord(group, catalog);
     const protocol = resolveProtocolResolution(group, options.protocolOverrides);
@@ -301,7 +309,7 @@ function modelDiagnostic(group, spec, catalog, options) {
             deploymentCount: group.deployments.length,
             candidates: candidateModelIDs(group),
             modelsDev: selected
-                ? { matched: true, providerID: selected.providerID, modelID: selected.modelID }
+                ? { matched: true, providerID: selected.providerID, modelID: selected.modelID, selectionSource: selected.selectionSource }
                 : { matched: false },
             protocol: {
                 value: spec.protocol,
@@ -314,6 +322,11 @@ function modelDiagnostic(group, spec, catalog, options) {
                     canonicalCandidates: [...new Set(candidateModelIDs(group).map(canonicalModelID))],
                     matchKind: selected?.matchKind,
                     matchedCandidate: selected?.matchedCandidate,
+                    identityProvenance: selected?.recordCanonicalID !== undefined
+                        ? "provider-relation"
+                        : selected !== undefined || identityProvenanceFromDeployment(group)
+                            ? "deployment-declaration"
+                            : "unknown",
                 },
                 reasoning,
                 protocolSupport: resolveProtocolSupport(group),

@@ -82,7 +82,9 @@ test("hy4-preview 通过 OpenRouter 能力 fallback 保持可用限制", () => {
   }, options)
   const adapted = neutral.map(toOpenCodeModelSpec)
   const hy4 = adapted[0]!
-  expect(hy4.limit).toEqual({ context: 1024000, input: 1024000, output: 64000 })
+  // Frozen precedence: OpenCode ranks before OpenRouter when the original
+  // provider record is absent, so the OpenCode record supplies the limits.
+  expect(hy4.limit).toEqual({ context: 1000000, input: 1000000, output: 32000 })
   expect(hy4.limit.context).toBeGreaterThan(0)
   expect(hy4.limit.output).toBeGreaterThan(0)
   expect(hy4.cost.input).toBeCloseTo(0.834)

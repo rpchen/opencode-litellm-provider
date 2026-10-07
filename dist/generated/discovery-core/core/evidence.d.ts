@@ -30,7 +30,7 @@ export type EvidenceSource = "litellm" | "models.dev" | "derived" | "none";
  * `deployment-constraint` is the only origin allowed to narrow an
  * effective value against authoritative intrinsic metadata.
  */
-export type EvidenceOrigin = "authoritative-intrinsic" | "descriptive-metadata" | "deployment-constraint" | "unknown-provenance";
+export type EvidenceOrigin = "authoritative-intrinsic" | "fallback-serving" | "descriptive-metadata" | "deployment-constraint" | "unknown-provenance";
 export type FieldEvidenceValue = string | number | boolean | readonly string[];
 export interface FieldEvidence {
     readonly source: EvidenceSource;
@@ -110,9 +110,18 @@ export interface NumericFieldInput {
      */
     readonly intrinsic?: number;
     readonly intrinsicDetail?: string;
+    /**
+     * Authority of the intrinsic value. `authoritative` (default) decides
+     * against lower-authority LiteLLM declarations; `fallback-serving` is
+     * reseller serving metadata of a fallback-selected record: it fills gaps
+     * like descriptive metadata and conflicts with it as an unresolved
+     * conflict instead of overruling it.
+     */
+    readonly intrinsicAuthority?: IntrinsicAuthority;
     /** Extra narrowing bounds that are not resolution evidence (context tier cap). */
     readonly bounds?: readonly number[];
 }
+export type IntrinsicAuthority = "authoritative" | "fallback-serving";
 export interface NumericFieldResolution {
     readonly resolution: FieldResolution;
     /** Effective value to publish; `undefined` when the field is not usable. */
@@ -146,6 +155,8 @@ export interface BooleanFieldInput {
     /** Trusted models.dev verdict; only pass when identity is reliably resolved. */
     readonly intrinsic?: boolean;
     readonly intrinsicDetail?: string;
+    /** Authority of the intrinsic verdict (see `resolveNumericField`). */
+    readonly intrinsicAuthority?: IntrinsicAuthority;
     /** Legacy tri-state verdict used when no authority exists. */
     readonly fallbackState: "supported" | "unsupported" | "unknown";
     readonly fallbackConflict: boolean;
@@ -178,6 +189,8 @@ export interface ModalityFieldInput {
     /** Authoritative intrinsic modality list; only pass with a trusted identity. */
     readonly intrinsic?: readonly string[];
     readonly intrinsicDetail?: string;
+    /** Authority of the intrinsic list (see `resolveNumericField`). */
+    readonly intrinsicAuthority?: IntrinsicAuthority;
 }
 export interface ModalityFieldResolution {
     readonly resolution: FieldResolution;

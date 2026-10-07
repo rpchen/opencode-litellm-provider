@@ -10,9 +10,20 @@ import { isRecord, optionalBoolean, optionalNumber, optionalString, stripRoutePr
 export function canUseSelectedModelsDevPrice(selected) {
     // Undefined is kept for backwards-compatible direct callers/tests that
     // construct SelectedModelRecord manually without going through the selector.
-    return selected?.selectionSource === undefined ||
-        selected.selectionSource === "explicit-provider" ||
-        selected.selectionSource === "canonical-original";
+    if (selected?.selectionSource === undefined)
+        return true;
+    // Canonical-original records, and explicit-provider records whose own
+    // metadata carries the deterministic canonical relation, may serve as a
+    // plausible price fallback. Unique trusted matches and reseller fallbacks
+    // must never masquerade as the LiteLLM route price; an explicit provider
+    // choice without a canonical relation proof proves only which record was
+    // selected, not that its price describes the deployed model's own origin.
+    if (selected.selectionSource === "canonical-original")
+        return true;
+    if (selected.selectionSource === "explicit-provider") {
+        return selected.recordCanonicalID !== undefined;
+    }
+    return false;
 }
 /**
  * Name-prefix provider guesses. Isolated from trusted publication: neither
@@ -81,6 +92,76 @@ function findMatch(models, candidate) {
     }
     return undefined;
 }
+/**
+ * Relation-kind for a metadata-declared identity link between a record and
+ * the candidate it serves. `relation` entries carry the record's declared
+ * canonical identity so precedence can prove an original provider.
+ */
+const RELATION_KIND = "relation";
+/**
+ * All provider-scoped records that serve the candidate: direct key/id/alias
+ * matches plus records whose deterministic relation (`canonical_model_id` /
+ * `base_model`) points at the candidate. Relation matching compares declared
+ * metadata values only — never name prefixes, families, or catalog order.
+ *
+ * `kind: "relation"` results carry `recordCanonicalID` (the declared
+ * relation value) so selection can prove namespace identity.
+ */
+function findMatchesByRelation(models, candidate) {
+    const results = [];
+    const candidateName = identityNodeID(stripRoutePrefix(candidate.trim()));
+    if (!candidateName)
+        return results;
+    const raw = stripRoutePrefix(candidate.trim()).toLowerCase();
+    const canonicalCandidate = canonicalModelID(candidate);
+    const seen = new Set();
+    for (const [key, value] of Object.entries(models)) {
+        if (!isRecord(value))
+            continue;
+        const record = value;
+        const targets = relationTargets(record);
+        const canonical = targets.canonical;
+        const id = optionalString(record.id) ?? key;
+        // Direct match: key, declared id, or alias equals the candidate. Every
+        // matching record is collected (review finding 4: a provider may hold
+        // several serving records for one candidate; object order never picks).
+        const aliases = recordAliases(key, record);
+        const primary = optionalString(record.id) ?? key;
+        const rawAlias = aliases.find((alias) => stripRoutePrefix(alias.trim()).toLowerCase() === raw);
+        const canonicalAlias = rawAlias ?? aliases.find((alias) => canonicalModelID(alias) === canonicalCandidate);
+        if (canonicalAlias !== undefined && !seen.has(record)) {
+            seen.add(record);
+            const isPrimary = canonicalAlias === key || canonicalAlias === primary;
+            const kind = rawAlias !== undefined
+                ? isPrimary ? "exact" : "alias"
+                : isPrimary ? "canonical" : "alias";
+            // A direct match whose record itself declares a canonical relation
+            // keeps that declaration: the record serving the candidate under its
+            // own name is itself proof of the canonical identity it names.
+            results.push(canonical ? [id, record, RELATION_KIND, canonical] : [id, record, kind]);
+            continue;
+        }
+        if (!canonical)
+            continue;
+        // Relation match: the declared relation names the candidate identity.
+        const slash = canonical.indexOf("/");
+        // A namespaced declaration qualifies by its model part; the record's own
+        // provider namespace is expressed by the providerID, not by this value.
+        const declaredName = identityNodeID(stripRoutePrefix((slash > 0 ? canonical.slice(slash + 1) : canonical).trim()));
+        if (!declaredName || declaredName !== candidateName)
+            continue;
+        if (seen.has(record))
+            continue;
+        seen.add(record);
+        results.push([id, record, RELATION_KIND, canonical]);
+    }
+    return results;
+}
+export function relationTargets(record) {
+    const canonical = optionalString(record.canonical_model_id) ??
+        optionalString(record.base_model);
+    return { canonical, other: inheritanceTargets(record) };
+}
 export function candidateModelIDs(group) {
     const result = [];
     const seen = new Set();
@@ -142,9 +223,10 @@ function canonicalProviderCandidates(matches) {
 }
 /**
  * Trusted identity resolution. Provider choice uses only verifiable
- * relations: explicit `models_dev_provider`, `canonical_model_id`,
- * alias / equivalent / inherits metadata consumed by matching, OpenRouter,
- * OpenCode, or a genuinely unique remaining record.
+ * relations: explicit `models_dev_provider`, deterministic canonical
+ * relations (`canonical_model_id` / `base_model`) with a namespace proof,
+ * alias / equivalent / inherits metadata consumed by matching, OpenCode,
+ * OpenRouter, or a genuinely unique remaining record.
  *
  * Model-name prefixes and family substrings never select a provider.
  * Multiple remaining records stay unresolved (`undefined`) so publication
@@ -449,9 +531,23 @@ export function groupIdentityConflict(group, catalog) {
  * Detailed models.dev selection outcome.
  *
  * Trusted precedence is explicit provider > canonical-original >
- * OpenRouter > OpenCode > unique match. Name/family heuristics are not a
+ * OpenCode > OpenRouter > unique match. Name/family heuristics are not a
  * step. Multiple remaining records stay `ambiguous` instead of collapsing
  * into an arbitrary reseller or a name-prefix provider.
+ *
+ * Canonical Model Identity and Metadata Provider Selection are separate
+ * concerns: the identity of the deployment group comes from the
+ * deployments' own deterministic evidence (see `groupIdentityEvidence`),
+ * while this function only chooses which provider-scoped record serves as
+ * the enrichment source. A fallback record never rewrites the canonical
+ * identity.
+ *
+ * Canonical-original proof = a deterministic canonical relation
+ * (`canonical_model_id` / `base_model`) pointing at the canonical identity
+ * AND the record's provider namespace equal to the canonical namespace. A
+ * reseller (OpenRouter, OpenCode, ...) may relation-point at the canonical
+ * model - that proves which canonical model it serves, never that it is
+ * the original provider.
  *
  * Group consistency: distinct explicit `models_dev_provider` values,
  * deployment identities that metadata cannot prove equivalent, or any
@@ -462,6 +558,16 @@ export function groupIdentityConflict(group, catalog) {
 export function selectModelsDevRecordDetailed(group, catalog) {
     const candidates = candidateModelIDs(group);
     const allProviders = providers(catalog);
+    const decided = decideTrustedSelection(group, candidates, allProviders, catalog);
+    if (decided)
+        return decided;
+    return { outcome: "unmatched", selected: undefined, candidates, matchCount: 0, ambiguousProviders: [] };
+}
+/**
+ * Walk the deterministic candidate order and select one trusted record.
+ * `undefined` means no candidate produced any provider match (`unmatched`).
+ */
+function decideTrustedSelection(group, candidates, allProviders, catalog) {
     const identityEvidence = groupIdentityEvidence(group, catalog);
     if (identityEvidence.status !== "known") {
         // Identity-incomplete groups (`unknown`) and unprovable/conflicting
@@ -479,41 +585,272 @@ export function selectModelsDevRecordDetailed(group, catalog) {
         };
     }
     for (const candidate of candidates) {
-        const matches = allProviders.flatMap(([providerID, models]) => {
-            const match = findMatch(models, candidate);
-            return match ? [selected(providerID, candidate, match)] : [];
-        });
+        const matches = allProviders.flatMap(([providerID, models]) => findMatchesByRelation(models, candidate).map(([modelID, record, matchKind, recordCanonicalID]) => ({
+            providerID,
+            candidate,
+            modelID,
+            record,
+            matchKind,
+            recordCanonicalID,
+        })));
         if (matches.length === 0)
             continue;
-        const explicitProvider = explicitModelsDevProvider(group);
-        if (explicitProvider) {
-            const explicit = matches.find((match) => match.providerID.toLowerCase() === explicitProvider);
-            if (explicit)
-                return { outcome: "matched", selected: { ...explicit, selectionSource: "explicit-provider" }, candidates, matchCount: matches.length, ambiguousProviders: [] };
-        }
-        const canonicalProviders = canonicalProviderCandidates(matches);
-        if (canonicalProviders.length === 1) {
-            const original = matches.find((match) => match.providerID.toLowerCase() === canonicalProviders[0]);
-            if (original)
-                return { outcome: "matched", selected: { ...original, selectionSource: "canonical-original" }, candidates, matchCount: matches.length, ambiguousProviders: [] };
-        }
-        const openRouter = matches.find((match) => match.providerID.toLowerCase() === "openrouter");
-        if (openRouter)
-            return { outcome: "matched", selected: { ...openRouter, selectionSource: "openrouter-fallback" }, candidates, matchCount: matches.length, ambiguousProviders: [] };
-        const openCode = matches.find((match) => match.providerID.toLowerCase() === "opencode");
-        if (openCode)
-            return { outcome: "matched", selected: { ...openCode, selectionSource: "opencode-fallback" }, candidates, matchCount: matches.length, ambiguousProviders: [] };
-        if (matches.length === 1)
-            return { outcome: "matched", selected: { ...matches[0], selectionSource: "unique-match" }, candidates, matchCount: matches.length, ambiguousProviders: [] };
+        const decision = selectTrustedRecord(group, candidate, matches);
         return {
-            outcome: "ambiguous",
-            selected: undefined,
+            outcome: decision.outcome,
+            selected: decision.selection,
             candidates,
             matchCount: matches.length,
-            ambiguousProviders: [...new Set(matches.map((match) => match.providerID))].sort(),
+            ambiguousProviders: decision.ambiguousProviders ?? [],
         };
     }
-    return { outcome: "unmatched", selected: undefined, candidates, matchCount: 0, ambiguousProviders: [] };
+    return undefined;
+}
+/**
+ * Deterministically pick the trusted record for one candidate match set.
+ *
+ * Every step compares record-intrinsic facts or metadata proofs - never
+ * catalog iteration order. The final tie-break (`localeCompare` on ids)
+ * exists to keep the result total and reproducible; the candidates it
+ * disambiguates are provably equivalent enrichment records.
+ */
+function selectTrustedRecord(group, candidate, matches) {
+    // 1. Explicit provider proof always wins.
+    const explicitProvider = explicitModelsDevProvider(group);
+    if (explicitProvider) {
+        const explicit = resolveSingleProviderMatches(matches.filter((match) => match.providerID.toLowerCase() === explicitProvider));
+        // An explicitly proven provider whose own records conflict stays
+        // unresolved: the explicit proof picks a provider, never a winner among
+        // materially different records.
+        if (explicit === undefined) {
+            return { outcome: "ambiguous", ambiguousProviders: [explicitProvider] };
+        }
+        return { outcome: "matched", selection: toSelected(explicit, "explicit-provider") };
+    }
+    // 2. Canonical/original provider: deterministic relation pointing at the
+    // canonical identity plus provider namespace == canonical namespace.
+    const original = canonicalOriginalRecord(candidate, matches, deploymentQualifiedNamespaces(group));
+    if (original === "conflict") {
+        // Original-provider candidates exist but their publication-critical
+        // facts conflict with no rule to rank them: fail closed for this
+        // candidate instead of letting a lower-precedence reseller record win.
+        return { outcome: "ambiguous", ambiguousProviders: [canonicalNamespaceFor(candidate, matches, deploymentQualifiedNamespaces(group)) ?? "canonical-original"] };
+    }
+    if (original) {
+        return { outcome: "matched", selection: toSelected(original, "canonical-original") };
+    }
+    // 3./4. Reseller fallback: OpenCode before OpenRouter.
+    const openCode = resolveSingleProviderMatches(matches.filter((match) => match.providerID.toLowerCase() === "opencode"));
+    const openRouter = resolveSingleProviderMatches(matches.filter((match) => match.providerID.toLowerCase() === "openrouter"));
+    if (openCode !== undefined) {
+        return { outcome: "matched", selection: toSelected(openCode, "opencode-fallback") };
+    }
+    if (openRouter !== undefined) {
+        return { outcome: "matched", selection: toSelected(openRouter, "openrouter-fallback") };
+    }
+    // 5. A genuinely unique remaining trusted provider.
+    const distinctProviders = [...new Set(matches.map((match) => match.providerID))];
+    if (distinctProviders.length === 1) {
+        const sole = resolveSingleProviderMatches(matches);
+        // The provider is unique, but its records must still agree; a solo
+        // provider with materially different records stays unresolved instead
+        // of letting object iteration order pick one (review finding 4).
+        if (sole === undefined) {
+            return { outcome: "ambiguous", ambiguousProviders: distinctProviders.sort() };
+        }
+        return { outcome: "matched", selection: toSelected(sole, "unique-match") };
+    }
+    // 6. Multiple providers nobody can rank: stay unresolved.
+    return { outcome: "ambiguous", ambiguousProviders: distinctProviders.sort() };
+}
+/**
+ * Deterministically pick one record from a single provider's matches, or
+ * `undefined` when the records cannot be ranked.
+ *
+ * Records whose publication-critical facts are provably identical are
+ * equivalent enrichment sources; the deterministic tie (deprecated count ->
+ * shortest model id -> localeCompare) stays total and independent of
+ * `models` object order. Records that materially differ in serving
+ * metadata have no rule proving which one describes the host's usage, so
+ * the whole set fails closed (`undefined`) instead of picking arbitrarily.
+ */
+function resolveSingleProviderMatches(providerMatches) {
+    if (providerMatches.length === 0)
+        return undefined;
+    if (providerMatches.length === 1)
+        return providerMatches[0];
+    const equivalents = providerMatches.filter((match) => providerMatches.every((other) => publicationEquivalent(match, other)));
+    if (equivalents.length !== providerMatches.length)
+        return undefined;
+    const [best] = providerMatches
+        .map((match, index) => ({ match, index, status: optionalString(match.record.status) }))
+        .map((item) => ({ ...item, deprecated: item.status === "deprecated" ? 1 : 0 }))
+        .sort((left, right) => {
+        if (left.deprecated !== right.deprecated)
+            return left.deprecated - right.deprecated;
+        const byLength = left.match.modelID.length - right.match.modelID.length;
+        if (byLength !== 0)
+            return byLength;
+        if (left.match.modelID !== right.match.modelID) {
+            return left.match.modelID.localeCompare(right.match.modelID, "en");
+        }
+        return left.index - right.index;
+    });
+    return best?.match;
+}
+/**
+ * Whether two records declare the same publication-critical facts. Cost,
+ * release dates, and presentation-only fields never participate: they do
+ * not reach the published capability facts.
+ */
+function publicationEquivalent(left, right) {
+    return JSON.stringify(publicationCriticalFacts(left)) === JSON.stringify(publicationCriticalFacts(right));
+}
+function publicationCriticalFacts(match) {
+    const record = match.record;
+    return {
+        limit: record.limit ?? null,
+        modalities: record.modalities ?? null,
+        tool_call: record.tool_call ?? null,
+        reasoning: record.reasoning ?? null,
+        reasoning_options: record.reasoning_options ?? null,
+        canonical: match.recordCanonicalID ?? null,
+    };
+}
+function toSelected(match, selectionSource) {
+    const result = {
+        providerID: match.providerID,
+        modelID: match.modelID,
+        record: match.record,
+        matchedCandidate: match.candidate,
+        matchKind: match.matchKind,
+        selectionSource,
+    };
+    if (match.recordCanonicalID !== undefined)
+        result.recordCanonicalID = match.recordCanonicalID;
+    return result;
+}
+/**
+ * Prove the original provider for one candidate match set.
+ *
+ * Namespace-first: the canonical namespace comes from the candidate's own
+ * `namespace/model` form when available (e.g. the routed
+ * `deepseek/deepseek-v4.1-flash`); a bare `base_model: deepseek-v4.1-flash`
+ * declaration has no embedded namespace and never proves a namespace by
+ * itself. When no qualified candidate exists, a relation declaration
+ * written `namespace/model` may prove the namespace only if every
+ * relation-match in the set agrees on that one namespace.
+ *
+ * The record's provider ID must equal the canonical namespace. This also
+ * rejects resellers: their provider ID differs from the canonical
+ * namespace even when their relation points at the same canonical model.
+ *
+ * Several official records may legitimately serve one canonical model
+ * (serving SKUs, deprecated forms). They are ranked deterministically:
+ * fewer `status: deprecated` records first, then the shortest model id,
+ * then `localeCompare`. Every step compares record-intrinsic facts, so
+ * catalog object order never matters.
+ */
+/**
+ * The namespaces provable from the deployments' own identity declarations
+ * (`openai/foo` routed identity, explicit `models_dev_provider`). A
+ * relation-less record may be the original only when the canonical namespace
+ * is one of these -- never when the namespace was borrowed from another
+ * provider's relation (review finding 6).
+ */
+function deploymentQualifiedNamespaces(group) {
+    const namespaces = new Set();
+    for (const deployment of group.deployments) {
+        const declaredProvider = optionalString(deployment.modelInfo.models_dev_provider);
+        if (declaredProvider)
+            namespaces.add(identityNodeID(declaredProvider));
+        for (const id of deploymentIdentityIDs(deployment)) {
+            const slash = id.indexOf("/");
+            if (slash > 0)
+                namespaces.add(identityNodeID(id.slice(0, slash)));
+        }
+    }
+    return namespaces;
+}
+function canonicalOriginalRecord(candidate, matches, deploymentQualifiedNamespaces) {
+    const canonicalNamespace = canonicalNamespaceFor(candidate, matches, deploymentQualifiedNamespaces);
+    if (!canonicalNamespace)
+        return undefined;
+    // A relation-less record qualifies as the original only when the canonical
+    // namespace is proven by the deployment's own evidence, never from another
+    // provider's declared relation: a reseller's relation speaks for the
+    // reseller's record only (review finding 6).
+    const originals = matches.filter((match) => match.providerID.toLowerCase() === canonicalNamespace &&
+        (match.recordCanonicalID !== undefined || deploymentQualifiedNamespaces.has(canonicalNamespace)));
+    // Same provider + multiple matching records follows the frozen rule for
+    // every selection path: publication-critical facts provably equivalent ->
+    // deterministic tie-break (deprecated count -> modelID length ->
+    // localeCompare); materially different serving facts -> fail closed
+    // (review blocker 2). The tie-break below runs on equivalent records only,
+    // so catalog object order never decides between different serving facts.
+    const equivalents = originals.filter((match) => originals.every((other) => publicationEquivalent(match, other)));
+    if (equivalents.length !== originals.length)
+        return "conflict";
+    const [best] = originals
+        .map((match, index) => ({
+        match,
+        index,
+        status: optionalString(match.record.status),
+        deprecated: 0,
+    }))
+        .map((item) => ({ ...item, deprecated: item.status === "deprecated" ? 1 : 0 }))
+        .sort((left, right) => {
+        if (left.deprecated !== right.deprecated)
+            return left.deprecated - right.deprecated;
+        const byLength = left.match.modelID.length - right.match.modelID.length;
+        if (byLength !== 0)
+            return byLength;
+        if (left.match.modelID !== right.match.modelID) {
+            return left.match.modelID.localeCompare(right.match.modelID, "en");
+        }
+        return left.index - right.index;
+    });
+    return best?.match;
+}
+/**
+ * The canonical namespace for one candidate match set.
+ *
+ * Proven from the candidate's own `namespace/model` form when available
+ * (e.g. routed `deepseek/deepseek-v4.1-flash`); otherwise from the
+ * declared relation values when they agree on a single namespace.
+ */
+function canonicalNamespaceFor(candidate, matches, deploymentQualifiedNamespaces) {
+    const slash = candidate.indexOf("/");
+    if (slash > 0) {
+        const namespace = identityNodeID(candidate.slice(0, slash));
+        if (namespace)
+            return namespace;
+    }
+    const declaredNamespaces = new Set();
+    for (const match of matches) {
+        if (match.matchKind !== "relation" || match.recordCanonicalID === undefined)
+            continue;
+        const declared = match.recordCanonicalID.indexOf("/");
+        if (declared > 0)
+            declaredNamespaces.add(identityNodeID(match.recordCanonicalID.slice(0, declared)));
+    }
+    if (declaredNamespaces.size === 1)
+        return [...declaredNamespaces][0];
+    // Rule B fallback (frozen design): the candidate id stripped its route,
+    // so the deployment's own qualified identity declarations must prove the
+    // namespace. One single agreed namespace across every deployment is a
+    // positive deployment proof; disagreement or silence proves nothing.
+    // The reseller fallback namespaces never qualify as a canonical namespace:
+    // routing `openrouter/...` or `opencode/...` states the serving choice
+    // (that record then reaches this selector through the explicit fallback
+    // precedence steps as a fallback-serving source), never that the reseller
+    // is the model's origin.
+    if (deploymentQualifiedNamespaces.size === 1) {
+        const [single] = deploymentQualifiedNamespaces;
+        if (single !== "openrouter" && single !== "opencode")
+            return single;
+    }
+    return undefined;
 }
 /**
  * Tri-state aggregation for one capability across deployments.

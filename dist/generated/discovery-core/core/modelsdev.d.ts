@@ -16,7 +16,9 @@ export interface ModelsDevRecord extends Record<string, unknown> {
     tool_call?: unknown;
     reasoning_options?: unknown;
 }
-export type ModelsDevMatchKind = "exact" | "canonical" | "alias";
+export type ModelsDevMatchKind = "exact" | "canonical" | "alias"
+/** Matched through a deterministic metadata relation (canonical_model_id / base_model). */
+ | "relation";
 export type ModelsDevSelectionSource = "explicit-provider" | "canonical-original" | "openrouter-fallback" | "opencode-fallback" | "unique-match"
 /**
  * Isolated non-publication compatibility only. Never produced by
@@ -31,6 +33,12 @@ export interface SelectedModelRecord {
     matchedCandidate?: string;
     matchKind?: ModelsDevMatchKind;
     selectionSource?: ModelsDevSelectionSource;
+    /**
+     * Canonical identity the matched record declares via a deterministic
+     * relation (`canonical_model_id` ?? `base_model`), when present. Used to
+     * prove canonical-original selection; never a name heuristic.
+     */
+    recordCanonicalID?: string;
 }
 /**
  * Whether provider-scoped models.dev pricing can be treated as a plausible
@@ -53,6 +61,24 @@ export interface ReasoningSupportResolution {
  * not strip semantic suffixes such as "-free", dates, sizes, or provider tiers.
  */
 export declare function canonicalModelID(value: string): string;
+/**
+ * Deterministic canonical relations a provider-scoped record may declare to
+ * point at the canonical model it serves.
+ *
+ * `canonical_model_id` is the canonical namespace proof (`deepseek/deepseek-v4.1-flash`
+ * names both the provider namespace and the canonical model). `base_model` is the
+ * same family of relation ("this record serves that upstream model") without
+ * encoding the namespace; matching compares its model part only.
+ * `inherits` / `equivalent_to` / `equivalents` are identity relations without a
+ * canonical-namespace meaning and never prove an original provider by themselves.
+ */
+export interface RecordRelationTargets {
+    /** Preferred canonical identity the record declares, route prefix kept. */
+    readonly canonical?: string;
+    /** Additional identity relation targets, route-prefixed values only. */
+    readonly other: readonly string[];
+}
+export declare function relationTargets(record: ModelsDevRecord): RecordRelationTargets;
 export declare function candidateModelIDs(group: DeploymentGroup): string[];
 /**
  * Non-publication compatibility helper. Returns a name-prefix provider guess
@@ -64,9 +90,10 @@ export declare function candidateModelIDs(group: DeploymentGroup): string[];
 export declare function legacyFamilyCompatibilityProvider(group: DeploymentGroup): string | undefined;
 /**
  * Trusted identity resolution. Provider choice uses only verifiable
- * relations: explicit `models_dev_provider`, `canonical_model_id`,
- * alias / equivalent / inherits metadata consumed by matching, OpenRouter,
- * OpenCode, or a genuinely unique remaining record.
+ * relations: explicit `models_dev_provider`, deterministic canonical
+ * relations (`canonical_model_id` / `base_model`) with a namespace proof,
+ * alias / equivalent / inherits metadata consumed by matching, OpenCode,
+ * OpenRouter, or a genuinely unique remaining record.
  *
  * Model-name prefixes and family substrings never select a provider.
  * Multiple remaining records stay unresolved (`undefined`) so publication
@@ -190,9 +217,23 @@ export declare function groupIdentityConflict(group: DeploymentGroup, catalog: u
  * Detailed models.dev selection outcome.
  *
  * Trusted precedence is explicit provider > canonical-original >
- * OpenRouter > OpenCode > unique match. Name/family heuristics are not a
+ * OpenCode > OpenRouter > unique match. Name/family heuristics are not a
  * step. Multiple remaining records stay `ambiguous` instead of collapsing
  * into an arbitrary reseller or a name-prefix provider.
+ *
+ * Canonical Model Identity and Metadata Provider Selection are separate
+ * concerns: the identity of the deployment group comes from the
+ * deployments' own deterministic evidence (see `groupIdentityEvidence`),
+ * while this function only chooses which provider-scoped record serves as
+ * the enrichment source. A fallback record never rewrites the canonical
+ * identity.
+ *
+ * Canonical-original proof = a deterministic canonical relation
+ * (`canonical_model_id` / `base_model`) pointing at the canonical identity
+ * AND the record's provider namespace equal to the canonical namespace. A
+ * reseller (OpenRouter, OpenCode, ...) may relation-point at the canonical
+ * model - that proves which canonical model it serves, never that it is
+ * the original provider.
  *
  * Group consistency: distinct explicit `models_dev_provider` values,
  * deployment identities that metadata cannot prove equivalent, or any

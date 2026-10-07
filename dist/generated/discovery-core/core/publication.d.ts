@@ -136,6 +136,21 @@ export interface AssessInput {
 export declare function assessModelConfiguration(group: DeploymentGroup, catalog: unknown, options: BuildOptions, input?: AssessInput): CompletenessAssessment;
 /** True only for `configured` and `configured-lkg`. This is the whole gate. */
 export declare function isNormallyPublishable(status: ModelConfigurationStatus): boolean;
+/** The persisted grading of a captured snapshot's evidence authority. */
+export type PublicationEvidenceAuthority = "authoritative-intrinsic" | "fallback-serving";
+/**
+ * The only accepted persisted values of `LastKnownGoodEntry.evidenceAuthority`.
+ * Schema 7 makes the field semantically critical: a missing or unknown value
+ * must never fall back to `authoritative-intrinsic`, or a corrupted
+ * fallback-serving snapshot could dodge the outage fail-closed policy.
+ */
+export declare function isPublicationEvidenceAuthority(value: unknown): value is PublicationEvidenceAuthority;
+/**
+ * Grade the evidence of a selection. Live assessment, LKG capture, price
+ * fallback eligibility, and diagnostics all read this single gate, so no
+ * caller can drift into re-deriving the authority table.
+ */
+export declare function evidenceAuthorityOf(selected: SelectedModelRecord | undefined): PublicationEvidenceAuthority;
 /**
  * Bumped when publication completeness grows, captured facts change
  * meaning, the authority model changes, or the LKG identity shape changes.
@@ -145,7 +160,7 @@ export declare function isNormallyPublishable(status: ModelConfigurationStatus):
  * entry with unknown capabilities, inconsistent facts, or a route-stripped
  * identity still fails closed.
  */
-export declare const PUBLICATION_SCHEMA_VERSION: 5;
+export declare const PUBLICATION_SCHEMA_VERSION: 7;
 export interface LastKnownGoodCapabilityVerdict {
     readonly tools: CapabilityState;
     readonly reasoning: CapabilityState;
@@ -181,6 +196,18 @@ export interface LastKnownGoodEntry {
     readonly canonicalID: string;
     readonly providerID: string;
     readonly matchKind?: string;
+    /** Selection source provenance captured with the snapshot. */
+    readonly selectionSource?: string;
+    /**
+     * The evidence authority the captured facts carried, graded by the same
+     * helper as the live assessment (`isAuthoritativeIntrinsic`). Entries
+     * whose facts are only `fallback-serving` (OpenCode/OpenRouter fallback,
+     * unique-match, legacy compatibility, or an explicit provider record
+     * without a canonical relation proof) never restore across a metadata
+     * outage: they must be re-proven by a live selection in the same round
+     * instead of resurrected from memory.
+     */
+    readonly evidenceAuthority: PublicationEvidenceAuthority;
     readonly fetchedAt: string;
     readonly fetchedAtEpochMs: number;
     readonly spec: ModelSpec;
