@@ -87,6 +87,10 @@ const catalogueEntries = () => ({
     models: {
       "e2e-discrepancy-model": {
         id: "e2e-discrepancy-model",
+        // The authoritative-intrinsic grading the scenario depends on
+        // requires a canonical relation proof (frozen fallback-authority
+        // semantics); the deployment routes this namespace explicitly.
+        canonical_model_id: "resolved/e2e-discrepancy-model",
         tool_call: true,
         reasoning: false,
         modalities: { input: ["text", "image"], output: ["text"] },
