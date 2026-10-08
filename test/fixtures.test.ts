@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import litellmFixture from "./fixtures/litellm-model-info.json" with { type: "json" }
 import modelsDevFixture from "./fixtures/models-dev.json" with { type: "json" }
+import catalogShapeFixture from "./fixtures/models-dev-catalog-shape.json" with { type: "json" }
 
 const FORBIDDEN_KEYS = new Set([
   "api_base",
@@ -51,5 +52,14 @@ describe("fixtures", () => {
     expect(modelsDevFixture.minimax.models["MiniMax-M3"].id).toBe("MiniMax-M3")
     expect(modelsDevFixture["reseller-a"].models["shared-model"]).toBeDefined()
     expect(modelsDevFixture["reseller-b"].models["shared-model"]).toBeDefined()
+  })
+
+  test("catalog 形状样本含 registry 与 serving 参考且无敏感信息", () => {
+    const text = JSON.stringify(catalogShapeFixture)
+    expect(text).not.toMatch(/sk-[A-Za-z0-9_-]{8,}/)
+    const doc = catalogShapeFixture as { models: Record<string, unknown>; providers: Record<string, { models: Record<string, any> }> }
+    expect(Object.keys(doc.models)).toEqual(["labA/alpha", "labB/beta"])
+    expect(doc.providers.labA!.models.alpha.reasoning_options[0]?.type).toBe("effort")
+    expect(doc.providers.gatewayX!.models["beta-free"].canonical_model_id).toBe("labB/beta")
   })
 })

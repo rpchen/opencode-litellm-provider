@@ -96,6 +96,16 @@ describe("fetchLiteLLMModelInfo", () => {
 describe("models.dev 缓存", () => {
   afterEach(resetModelsDevCacheForTest)
 
+  test("默认拉取 catalog 快照（同 snapshot 形状）", async () => {
+    const urls: string[] = []
+    const fetchImpl: FetchLike = async (input) => {
+      urls.push(String(input))
+      return response(200, '{"models":{},"providers":{}}')
+    }
+    expect(await getModelsDevCatalog({ fetchImpl })).toEqual({ models: {}, providers: {} })
+    expect(urls).toEqual(["https://models.dev/catalog.json"])
+  })
+
   test("成功结果缓存 6 小时", async () => {
     let calls = 0
     let now = 1_000

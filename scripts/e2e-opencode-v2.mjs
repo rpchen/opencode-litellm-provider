@@ -65,36 +65,54 @@ for (const dir of [project, home, config, data, cache, state, opencodeConfig]) m
  * `modelsDevUrl` option.
  */
 const catalogueEntries = () => ({
-  vendora: {
-    models: {
-      "coding-model": {
-        id: "coding-model",
-        tool_call: true,
-        reasoning: false,
-        modalities: { input: ["text"], output: ["text"] },
-        limit: { context: 200_000, output: 64_000 },
+  // Catalog shape (adopt-modelsdev-canonical-catalog): canonical registry +
+  // provider records. vendorb/resolved entries exist only for enrichment
+  // documentation; the E2E focuses on the served LiteLLM declarations plus
+  // the declared-serving vendorb path.
+  models: {
+    "vendora/coding-model": {
+      tool_call: true,
+      reasoning: false,
+      modalities: { input: ["text"], output: ["text"] },
+      limit: { context: 200_000, output: 64_000 },
+    },
+    "resolved/e2e-discrepancy-model": {
+      tool_call: true,
+      reasoning: false,
+      modalities: { input: ["text", "image"], output: ["text"] },
+      limit: { context: 400_000, output: 512_000 },
+    },
+  },
+  providers: {
+    vendora: {
+      models: {
+        "coding-model": {
+          id: "coding-model",
+          canonical_model_id: "vendora/coding-model",
+          tool_call: true,
+          reasoning: false,
+          modalities: { input: ["text"], output: ["text"] },
+          limit: { context: 200_000, output: 64_000 },
+        },
       },
     },
-  },
-  vendorb: {
-    models: {
-      // Deliberately incomplete: the identity resolves reliably, but the record
-      // cannot make the model publishable on its own.
-      "coding-model": { id: "coding-model", tool_call: true },
+    vendorb: {
+      models: {
+        // Deliberately incomplete: the identity resolves reliably, but the record
+        // cannot make the model publishable on its own.
+        "coding-model": { id: "coding-model", tool_call: true },
+      },
     },
-  },
-  resolved: {
-    models: {
-      "e2e-discrepancy-model": {
-        id: "e2e-discrepancy-model",
-        // The authoritative-intrinsic grading the scenario depends on
-        // requires a canonical relation proof (frozen fallback-authority
-        // semantics); the deployment routes this namespace explicitly.
-        canonical_model_id: "resolved/e2e-discrepancy-model",
-        tool_call: true,
-        reasoning: false,
-        modalities: { input: ["text", "image"], output: ["text"] },
-        limit: { context: 400_000, output: 512_000 },
+    resolved: {
+      models: {
+        "e2e-discrepancy-model": {
+          id: "e2e-discrepancy-model",
+          canonical_model_id: "resolved/e2e-discrepancy-model",
+          tool_call: true,
+          reasoning: false,
+          modalities: { input: ["text", "image"], output: ["text"] },
+          limit: { context: 400_000, output: 512_000 },
+        },
       },
     },
   },
@@ -104,7 +122,7 @@ function startCatalogServer() {
   const body = JSON.stringify(catalogueEntries())
   let requests = 0
   const server = createServer((req, res) => {
-    if (req.url === "/api.json") {
+    if (req.url === "/catalog.json" || req.url === "/api.json") {
       requests += 1
       res.writeHead(200, { "content-type": "application/json" })
       res.end(body)
@@ -120,7 +138,7 @@ function startCatalogServer() {
       if (!address || typeof address === "string") return reject(new Error("catalog server did not bind TCP"))
       resolve({
         server,
-        url: `http://127.0.0.1:${address.port}/api.json`,
+        url: `http://127.0.0.1:${address.port}/catalog.json`,
         requests: () => requests,
         close: () => new Promise((done) => server.close(() => done())),
       })

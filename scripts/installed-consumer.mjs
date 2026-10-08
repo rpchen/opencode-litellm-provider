@@ -63,7 +63,7 @@ globalThis.fetch = async (request, init) => {
     modelRequests++
     return Response.json(input.litellm)
   }
-  if (url === "https://models.dev/api.json") {
+  if (url === "https://models.dev/api.json" || url === "https://models.dev/catalog.json") {
     assert.equal(headers.has("authorization"), false)
     catalogRequests++
     return Response.json(input.modelsDev)

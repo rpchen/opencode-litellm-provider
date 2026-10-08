@@ -132,6 +132,8 @@ const defaultScheduler: Scheduler = {
 function seedPublicationLKG(
   store: LastKnownGoodStore,
   litellmResponse: unknown,
+  catalog: unknown,
+  options: PluginOptions,
   publishable: readonly PublishableEntry[],
   now: number,
 ): void {
@@ -148,7 +150,9 @@ function seedPublicationLKG(
           entry.assessment.identity.selected,
           entry.spec,
           now,
-          capturedPublicationVerdict(entry.assessment),
+          capturedPublicationVerdict(entry.assessment, entry.spec),
+          catalog,
+          { contextTierCap: options.contextTierCap, protocolOverrides: options.protocolOverrides },
         ),
       )
     } catch {
@@ -564,7 +568,7 @@ export function createDiscoveryLoop(
             failure: catalogFailure,
             now,
           })
-          seedPublicationLKG(controller.store, response, result.publishable, now)
+          seedPublicationLKG(controller.store, response, catalog, options, result.publishable, now)
           // Published specs are the only persisted specs: a withheld model
           // never survives into a snapshot, and no user confirmation adds one.
           const snapshotSpecs = result.publishable

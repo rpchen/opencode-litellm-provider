@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { buildModelSpecs } from "../src/core/build.js"
+import { PUBLICATION_SCHEMA_VERSION } from "../src/generated/discovery-core/index.js"
 import { createAuditReport } from "../src/host/audit.js"
 import { applyProvider, createRegistrationView, type ProviderEditorLike, type ProviderSnapshot } from "../src/host/register.js"
 import liteLLM from "./fixtures/litellm-model-info.json" with { type: "json" }
@@ -72,12 +73,15 @@ describe("发布日期单位及 allowlist", () => {
     const view = createRegistrationView(specs, "https://private.example/v1")
     const output = createAuditReport({ status: "ready", view }) as { models: Array<{ id: string; time: { released: number; unit: string }; variants: Array<{ id: string; settings: object }> }> }
     const byID = Object.fromEntries(output.models.map((model) => [model.id, model]))
-    expect(byID["date-text"]?.time).toEqual({ released: Date.parse("2026-01-02"), unit: "unix-ms" })
-    expect(byID["date-number"]?.time).toEqual({ released: 1234567890, unit: "unknown" })
+    // v7: provider-map records supplied dates/levels. v8: unproven provider
+    // records supply nothing; only proven serving records carry them.
+    const CORE_V8 = (PUBLICATION_SCHEMA_VERSION as number) === 8
+    expect(byID["date-text"]?.time).toEqual(CORE_V8 ? { released: 0, unit: "none" } : { released: Date.parse("2026-01-02"), unit: "unix-ms" })
+    expect(byID["date-number"]?.time).toEqual(CORE_V8 ? { released: 0, unit: "none" } : { released: 1234567890, unit: "unknown" })
     expect(byID["date-missing"]?.time).toEqual({ released: 0, unit: "none" })
     expect(byID["date-invalid"]?.time).toEqual({ released: 0, unit: "none" })
-    expect(byID["date-epoch"]?.time).toEqual({ released: 0, unit: "unix-ms" })
-    expect(byID["date-text"]?.variants).toEqual([{ id: "high", settings: { reasoningEffort: "high" } }])
+    expect(byID["date-epoch"]?.time).toEqual(CORE_V8 ? { released: 0, unit: "none" } : { released: 0, unit: "unix-ms" })
+    expect(byID["date-text"]?.variants).toEqual(CORE_V8 ? [] : [{ id: "high", settings: { reasoningEffort: "high" } }])
   })
 
   test("凭据、连接、上游原文和扩展设置不进入报告，允许字段不被改写", () => {
