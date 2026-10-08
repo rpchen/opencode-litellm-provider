@@ -345,7 +345,25 @@ describe("publication sync partition", () => {
 
   test("a withheld model recovering is published automatically without user approval", async () => {
     let complete = false
-    const h = loopHarness(async () => COMPLETE_CATALOG, async () => ({
+    // v8: recovery is the canonical registry gaining a complete entry for the
+    // previously-withheld model (identity was unproven before; LiteLLM-only
+    // declarations alone can never publish — G30). v7: the LiteLLM-only
+    // branch published from complete declarations directly.
+    const catalogFor = () => ((PUBLICATION_SCHEMA_VERSION as number) === 8 && complete
+      ? {
+        ...COMPLETE_CATALOG,
+        models: {
+          ...(COMPLETE_CATALOG as { models: Record<string, unknown> }).models,
+          "openai/pub-incomplete": {
+            limit: { context: 100000, output: 10000 },
+            tool_call: true,
+            reasoning: false,
+            modalities: { input: ["text"], output: ["text"] },
+          },
+        },
+      }
+      : COMPLETE_CATALOG)
+    const h = loopHarness(async () => catalogFor(), async () => ({
       data: [
         { model_name: "pub-complete", litellm_params: { model: "openai/pub-complete" }, model_info: { ...COMPLETE_INFO } },
         {
@@ -372,8 +390,13 @@ describe("publication sync partition", () => {
     // The canonical route changes while enrichment is unavailable: the old
     // trusted snapshot no longer describes this model, so it is withheld and
     // reported as a regression instead of silently disappearing.
+    // v8 note: with a complete catalog the fresh phase captures from the
+    // registry; the changed phase both renames the route AND takes the
+    // catalog down, so the model is withheld as a regression (no valid LKG
+    // can re-prove renamed evidence).
     let phase: "fresh" | "changed" = "fresh"
-    const h = loopHarness(async () => ({}), async () => ({
+    const catalogFor = () => ((PUBLICATION_SCHEMA_VERSION as number) === 8 && phase === "fresh" ? COMPLETE_CATALOG : {})
+    const h = loopHarness(async () => catalogFor(), async () => ({
       data: [{
         model_name: "pub-complete",
         litellm_params: { model: phase === "fresh" ? "openai/pub-complete" : "openai/pub-complete-renamed" },

@@ -139,6 +139,20 @@ test("通用 operational-limit guard 不向 OpenCode 发布 context/output 非�
   expect(hasOperationalLimits(invalidOutput)).toBeFalse()
   expect(hasOperationalLimits(valid)).toBeTrue()
 
+  // v8: dimension isolation (G30) means a private model without a canonical
+  // identity cannot publish at all — so the guard test needs a registry entry
+  // for `valid` to stay publishable; the zero-context/zero-output entries
+  // stay absent so their illegal limits surface as withheld specs. In v7 the
+  // LiteLLM-only branch published from the declarations directly.
+  const CORE_V8 = (PUBLICATION_SCHEMA_VERSION as number) === 8
+  const catalog = CORE_V8
+    ? {
+      models: {
+        "custom/valid": { limit: { context: 1000, output: 100 }, tool_call: true, reasoning: false, modalities: { input: ["text"], output: ["text"] } },
+      },
+      providers: {},
+    }
+    : {}
   const adapted = buildModelSpecs({
     data: [
       {
@@ -157,7 +171,7 @@ test("通用 operational-limit guard 不向 OpenCode 发布 context/output 非�
         model_info: { mode: "chat", max_input_tokens: 1000, max_output_tokens: 100 },
       },
     ],
-  }, {}, options)
+  }, catalog, options)
   expect(adapted.map((model) => model.id)).toEqual(["valid"])
   expect(adapted[0]!.limit.context).toBeGreaterThan(0)
   expect(adapted[0]!.limit.output).toBeGreaterThan(0)

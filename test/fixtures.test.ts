@@ -43,15 +43,16 @@ describe("fixtures", () => {
   })
 
   test("models.dev 样本可解析并覆盖选择与档位来源", () => {
-    expect(modelsDevFixture.openai.models["gpt-5.5"].reasoning_options[0]?.type).toBe("effort")
-    expect(modelsDevFixture.anthropic.models["claude-sonnet-4-5"].reasoning_options[0]?.max).toBe(64000)
-    expect(modelsDevFixture.anthropic.models["claude-opus-4-1"].reasoning_options[0]).toEqual({
+    const providers = modelsDevFixture.providers as Record<string, { models: Record<string, any> }>
+    expect(providers.openai!.models["gpt-5.5"].reasoning_options[0]?.type).toBe("effort")
+    expect(providers.anthropic!.models["claude-sonnet-4-5"].reasoning_options[0]?.max).toBe(64000)
+    expect(providers.anthropic!.models["claude-opus-4-1"].reasoning_options[0]).toEqual({
       type: "budget_tokens",
     })
-    expect(modelsDevFixture.zai.models["glm-5.3"].reasoning_options[0]?.type).toBe("toggle")
-    expect(modelsDevFixture.minimax.models["MiniMax-M3"].id).toBe("MiniMax-M3")
-    expect(modelsDevFixture["reseller-a"].models["shared-model"]).toBeDefined()
-    expect(modelsDevFixture["reseller-b"].models["shared-model"]).toBeDefined()
+    expect(providers.zai!.models["glm-5.3"].reasoning_options[0]?.type).toBe("toggle")
+    expect(providers.minimax!.models["MiniMax-M3"].id).toBe("MiniMax-M3")
+    expect(providers["reseller-a"]!.models["shared-model"]).toBeDefined()
+    expect(providers["reseller-b"]!.models["shared-model"]).toBeDefined()
   })
 
   test("catalog 形状样本含 registry 与 serving 参考且无敏感信息", () => {

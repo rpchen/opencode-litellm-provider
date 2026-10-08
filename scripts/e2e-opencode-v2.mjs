@@ -63,6 +63,14 @@ for (const dir of [project, home, config, data, cache, state, opencodeConfig]) m
  * content is fixed, so the gate never depends on what the public service
  * happens to return today. The plugin points at it through the documented
  * `modelsDevUrl` option.
+ *
+ * Era-aware serving: the committed dist pins one discovery-core era. A Core
+ * v8 dist consumes the catalog shape ({ models, providers }); the legacy v7
+ * dist consumes the provider map. Both shapes are served under their canonical
+ * paths so the INSTALLED dist always meets the fixture of its own era — the
+ * failure mode under review was a catalog shape hitting a v7 dist
+ * (`catalogAvailable` false → "models.dev：degraded"), which tests a shape
+ * mismatch instead of the publication gate.
  */
 const catalogueEntries = () => ({
   // Catalog shape (adopt-modelsdev-canonical-catalog): canonical registry +
@@ -118,11 +126,30 @@ const catalogueEntries = () => ({
   },
 })
 
+/** Legacy v7 provider-map shape served to dists pinned before the catalog era. */
+const legacyProviderMap = () => ({
+  vendora: {
+    models: {
+      "coding-model": {
+        id: "coding-model",
+        tool_call: true,
+        reasoning: false,
+        modalities: { input: ["text"], output: ["text"] },
+        limit: { context: 200_000, output: 64_000 },
+      },
+    },
+  },
+})
+
 function startCatalogServer() {
-  const body = JSON.stringify(catalogueEntries())
+  const bodies = new Map([
+    ["/catalog.json", JSON.stringify(catalogueEntries())],
+    ["/api.json", JSON.stringify(legacyProviderMap())],
+  ])
   let requests = 0
   const server = createServer((req, res) => {
-    if (req.url === "/catalog.json" || req.url === "/api.json") {
+    const body = bodies.get(req.url ?? "")
+    if (body) {
       requests += 1
       res.writeHead(200, { "content-type": "application/json" })
       res.end(body)
@@ -138,7 +165,9 @@ function startCatalogServer() {
       if (!address || typeof address === "string") return reject(new Error("catalog server did not bind TCP"))
       resolve({
         server,
+        // v8 dists request /catalog.json; v7 dists still request /api.json.
         url: `http://127.0.0.1:${address.port}/catalog.json`,
+        legacyUrl: `http://127.0.0.1:${address.port}/api.json`,
         requests: () => requests,
         close: () => new Promise((done) => server.close(() => done())),
       })
@@ -514,13 +543,26 @@ async function dumpFailureDiagnostics() {
 try {
   catalogServer = await startCatalogServer()
   const catalogRequests = catalogServer.requests
+  // Era-aware modelsDevUrl: a Core v8 dist fetches /catalog.json, while a
+  // v7-era dist fetches /api.json. Point the option at the catalog path; if
+  // the committed dist is still pre-catalog, the v7 fetcher will hit its
+  // compiled-in default instead — so serve BOTH paths and let the era pick.
+  const distCoreEra = (() => {
+    try {
+      const publication = readFileSync(path.join(root, "dist", "generated", "discovery-core", "core", "publication.js"), "utf8")
+      const match = /PUBLICATION_SCHEMA_VERSION\s*=\s*(\d+)/u.exec(publication)
+      return match ? Number(match[1]) : 7
+    } catch {
+      return 7
+    }
+  })()
   const e2eConfig = {
     $schema: "https://opencode.ai/config.json",
     plugins: [{
       package: packageSpec,
       options: {
         pollInterval: 30,
-        modelsDevUrl: catalogServer.url,
+        modelsDevUrl: distCoreEra >= 8 ? catalogServer.url : catalogServer.legacyUrl,
         endpoints: {
           default: { baseUrl: defaultMock.baseUrl },
           company: { baseUrl: companyMock.baseUrl },

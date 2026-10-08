@@ -11,6 +11,15 @@ const consumerManifest = JSON.parse(readFileSync(path.join(consumer, "package.js
 assert.equal(consumerManifest.name, "isolated-opencode-provider-consumer", "probe must execute from the external consumer")
 const input = JSON.parse(readFileSync(path.join(consumer, "verification-input.json"), "utf8"))
 const installed = realpathSync(path.join(consumer, "node_modules", input.name))
+// Era-aware catalog fixture: the committed dist pins one discovery-core era.
+// Core v8 (adopt-modelsdev-canonical-catalog) consumes the catalog shape
+// ({ models, providers }); the legacy v7 dist consumes the provider map.
+// The probe must exercise the INSTALLED dist with the fixture of ITS era —
+// feeding a catalog shape to a v7 dist (or vice versa) would test shape
+// mismatches instead of the publication contract.
+const corePublication = await installedModule("dist/generated/discovery-core/core/publication.js").catch(() => undefined)
+const coreSchemaVersion = Number(corePublication?.PUBLICATION_SCHEMA_VERSION ?? 0)
+const modelsDev = coreSchemaVersion >= 8 ? input.modelsDev : (input.modelsDevLegacy ?? input.modelsDev)
 function assertInside(parent, child) {
   const relative = path.relative(parent, child)
   assert(relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative), "module resolved outside the isolated consumer")
@@ -66,7 +75,7 @@ globalThis.fetch = async (request, init) => {
   if (url === "https://models.dev/api.json" || url === "https://models.dev/catalog.json") {
     assert.equal(headers.has("authorization"), false)
     catalogRequests++
-    return Response.json(input.modelsDev)
+    return Response.json(modelsDev)
   }
   throw new Error("Unexpected network access in the installed-entry probe")
 }
@@ -263,7 +272,7 @@ assert.deepEqual(multi.state.disposed.sort(), ["command", "command", "integratio
 assert.equal(modelRequests + catalogRequests, 2, "explicit disconnected endpoints must not add network discovery")
 
 const { buildModelSpecs } = await installedModule("dist/generated/discovery-core/index.js")
-assert(buildModelSpecs(input.litellm, input.modelsDev, { contextTierCap: true, protocolOverrides: {} })
+assert(buildModelSpecs(input.litellm, modelsDev, { contextTierCap: true, protocolOverrides: {} })
   .every((model) => !Object.hasOwn(model, "package")))
 const { createAuditResultStore } = await installedModule("dist/tui-card.js")
 const store = createAuditResultStore()
