@@ -139,6 +139,28 @@ const legacyProviderMap = () => ({
       },
     },
   },
+  vendorb: {
+    models: {
+      // Deliberately incomplete: the identity resolves reliably, but the record
+      // cannot make the model publishable on its own.
+      "coding-model": { id: "coding-model", tool_call: true },
+    },
+  },
+  resolved: {
+    models: {
+      "e2e-discrepancy-model": {
+        id: "e2e-discrepancy-model",
+        // The authoritative-intrinsic grading the scenario depends on
+        // requires a canonical relation proof (frozen fallback-authority
+        // semantics); the deployment routes this namespace explicitly.
+        canonical_model_id: "resolved/e2e-discrepancy-model",
+        tool_call: true,
+        reasoning: false,
+        modalities: { input: ["text", "image"], output: ["text"] },
+        limit: { context: 400_000, output: 512_000 },
+      },
+    },
+  },
 })
 
 function startCatalogServer() {
