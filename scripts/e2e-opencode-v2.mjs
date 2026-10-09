@@ -1251,6 +1251,7 @@ try {
       "package": "${packageSpec}",
       "options": {
         "pollInterval": 30,
+        "modelsDevUrl": ${JSON.stringify(distCoreEra >= 8 ? catalogServer.url : catalogServer.legacyUrl)},
         "futureOption": { "keep": ["me"] },
         "endpoints": {
           // the company endpoint is untouched by this test
@@ -1487,6 +1488,7 @@ try {
       "package": "${packageSpec}",
       "options": {
         "pollInterval": 30,
+        "modelsDevUrl": ${JSON.stringify(distCoreEra >= 8 ? catalogServer.url : catalogServer.legacyUrl)},
         "futureOption": { "keep": ["legacy"] },
         "protocolOverrides": { "demo-model": "chat" }
       }
@@ -1649,7 +1651,8 @@ try {
     {
       "package": "${packageSpec}",
       "options": {
-        "pollInterval": 30
+        "pollInterval": 30,
+        "modelsDevUrl": ${JSON.stringify(distCoreEra >= 8 ? catalogServer.url : catalogServer.legacyUrl)}
       }
     }
   ]
