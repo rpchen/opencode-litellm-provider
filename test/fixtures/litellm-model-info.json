@@ -63,6 +63,7 @@
       "model_info": {
         "mode": "chat",
         "base_model": "claude-sonnet-4-5",
+        "models_dev_provider": "anthropic",
         "max_input_tokens": 200000,
         "max_output_tokens": 64000,
         "supports_function_calling": true,

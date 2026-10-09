@@ -29,21 +29,17 @@ export function isUnresolvedConflict(resolution) {
     return resolution.status === "unresolved-conflict";
 }
 export const RUNTIME_CONSTRAINT_KEYS = {
-    context: ["max_input_tokens"],
-    input: ["max_input_tokens"],
-    output: ["max_tokens", "max_output_tokens", "max_completion_tokens"],
-    modalityFlags: [
-        "supports_vision",
-        "supports_pdf_input",
-        "supports_audio_input",
-        "supports_video_input",
-        "supports_audio_output",
-    ],
+    context: [],
+    input: [],
+    output: [],
+    modalityFlags: [],
 };
 export const NUMERIC_FIELD_DESCRIPTORS = {
     context: {
         field: "limit.context",
-        descriptiveKeys: ["max_input_tokens"],
+        // Dimension isolation (D6): max_input_tokens is input capacity and NEVER
+        // becomes limit.context. No LiteLLM key declares total context.
+        descriptiveKeys: [],
         constraintKeys: RUNTIME_CONSTRAINT_KEYS.context,
         intrinsicPointer: "limit.context",
     },

@@ -1,18 +1,30 @@
 import { buildModelSpecs, hasOperationalLimits } from "./build.js";
 import { groupLiteLLMDeployments, isRecord, optionalBoolean, optionalNumber, optionalString, positiveInteger, } from "./litellm.js";
-import { buildVariants, canUseSelectedModelsDevPrice, candidateModelIDs, canonicalModelID, resolveReasoningSupport, selectModelsDevRecord, } from "./modelsdev.js";
-import { assessModelConfiguration } from "./publication.js";
+import { canUseSelectedModelsDevPrice, candidateModelIDs, canonicalModelID, resolveReasoningSupport, selectModelsDevRecord, } from "./modelsdev.js";
+import { assessmentFromResolved } from "./publication.js";
+import { normalizeModelsDevCatalog } from "./catalog-input.js";
+import { resolveModel } from "./resolve.js";
 import { resolveProtocolResolution, resolveProtocolSupport, } from "./protocol.js";
 export const DISCOVERY_DIAGNOSTICS_SCHEMA_VERSION = 1;
 function field(source, detail) {
     return detail ? { source, detail } : { source };
 }
-function catalogAvailable(catalog) {
-    if (!isRecord(catalog))
+function catalogHasRecords(catalog) {
+    const normalized = normalizeModelsDevCatalog(catalog);
+    if (normalized.kind !== "complete")
         return false;
-    return Object.values(catalog).some((provider) => isRecord(provider) &&
+    return Object.values(normalized.providers).some((provider) => isRecord(provider) &&
         isRecord(provider.models) &&
         Object.keys(provider.models).length > 0);
+}
+function basisProvenance(basis, modelDevDetail, litellmDetail) {
+    if (basis === "serving" || basis === "canonical")
+        return field("models.dev", modelDevDetail);
+    if (basis === "litellm-declared")
+        return field("litellm", litellmDetail);
+    if (basis === "enforcement-narrowed")
+        return field("override", "promoted runtime-enforcement key");
+    return field("default", "no trusted evidence");
 }
 function modelsDevBoolean(selected, key) {
     return optionalBoolean(selected?.record[key]) !== undefined;
@@ -77,30 +89,13 @@ function firstTierPoint(deployment) {
     }
     return points.length > 0 ? Math.min(...points) : undefined;
 }
-function contextProvenance(group, selected, options, spec) {
-    const liteLLMDeclared = anyDeploymentPositiveInteger(group, ["max_input_tokens"]);
-    const modelsDevDeclared = modelsDevObjectNumber(selected, "limit", "context");
-    const tierPoints = group.deployments
-        .map(firstTierPoint)
-        .filter((value) => value !== undefined);
-    const firstTier = tierPoints.length > 0 ? Math.min(...tierPoints) : undefined;
-    if (options.contextTierCap && firstTier !== undefined && spec.limit.context === firstTier) {
-        return field("derived", `LiteLLM pricing tier cap at ${firstTier} tokens`);
-    }
-    if (modelsDevDeclared)
-        return field("models.dev", "limit.context");
-    if (liteLLMDeclared)
-        return field("litellm", "max_input_tokens used as conservative context fallback");
-    return field("default", "no context limit metadata");
+function contextProvenance(resolved) {
+    return basisProvenance(resolved.fields["limit.context"]?.basis, "limit.context", "LiteLLM context declaration");
 }
-function outputLimitProvenance(group, selected) {
-    if (anyDeploymentPositiveInteger(group, ["max_output_tokens", "max_tokens"]))
-        return field("litellm");
-    if (modelsDevObjectNumber(selected, "limit", "output"))
-        return field("models.dev");
-    return field("default", "no output limit metadata");
+function outputLimitProvenance(resolved) {
+    return basisProvenance(resolved.fields["limit.output"]?.basis, "limit.output", "max_output_tokens");
 }
-function pricingProvenance(group, selected, deploymentFields, modelsDevKey) {
+function pricingProvenance(group, selected, deploymentFields, modelsDevKey, resolvedBasis) {
     if (anyDeploymentNonNegativeNumber(group, deploymentFields))
         return field("litellm");
     if (modelsDevObjectNumber(selected, "cost", modelsDevKey)) {
@@ -108,6 +103,10 @@ function pricingProvenance(group, selected, deploymentFields, modelsDevKey) {
             return field("models.dev");
         return field("default", `models.dev ${selected?.selectionSource ?? "fallback"} price ignored; capability fallback is not deployment pricing`);
     }
+    if (resolvedBasis === "litellm-declared")
+        return field("litellm", "operator-declared pricing");
+    if (resolvedBasis === "serving")
+        return field("models.dev", "proven serving record cost");
     return field("default", "missing price metadata maps to zero");
 }
 function metadataConflicts(group, selected, reasoning) {
@@ -129,53 +128,12 @@ function metadataConflicts(group, selected, reasoning) {
             resolution: "explicit LiteLLM supports_reasoning wins per deployment before models.dev fallback",
         });
     }
-    const limitChecks = [
-        ["limit.input", ["max_input_tokens"], "input"],
-        ["limit.output", ["max_output_tokens", "max_tokens"], "output"],
-    ];
-    for (const [fieldName, liteLLMFields, modelsDevKey] of limitChecks) {
-        const md = modelsDevNumber(selected, "limit", modelsDevKey);
-        if (md === undefined)
-            continue;
-        const differs = group.deployments.some((deployment) => liteLLMFields.some((key) => {
-            const value = positiveInteger(deployment.modelInfo[key]);
-            return value !== undefined && value !== md;
-        }));
-        if (differs) {
-            conflicts.push({
-                field: fieldName,
-                resolution: "explicit LiteLLM deployment limit wins; models.dev is used only when LiteLLM omits the field",
-            });
-        }
-    }
-    const priceChecks = [
-        ["pricing.input", ["input_cost_per_token"], "input"],
-        ["pricing.output", ["output_cost_per_token"], "output"],
-        ["pricing.cacheRead", ["cache_read_input_token_cost", "cache_read_cost_per_token"], "cache_read"],
-        ["pricing.cacheWrite", ["cache_creation_input_token_cost", "cache_write_input_token_cost"], "cache_write"],
-    ];
-    for (const [fieldName, liteLLMFields, modelsDevKey] of priceChecks) {
-        const md = modelsDevNumber(selected, "cost", modelsDevKey);
-        if (md === undefined)
-            continue;
-        const differs = group.deployments.some((deployment) => liteLLMFields.some((key) => {
-            const value = optionalNumber(deployment.modelInfo[key]);
-            return value !== undefined && value >= 0 && value * 1_000_000 !== md;
-        }));
-        if (differs) {
-            conflicts.push({
-                field: fieldName,
-                resolution: "LiteLLM deployment pricing wins; multiple deployments use the highest declared price",
-            });
-        }
-    }
     return conflicts;
 }
-function releaseProvenance(selected) {
-    const value = selected?.record.release_date;
-    if (typeof value === "string" || (typeof value === "number" && Number.isFinite(value))) {
+function releaseProvenance(resolved) {
+    const basis = resolved.fields["releaseDate"]?.basis;
+    if (basis === "serving" || basis === "canonical")
         return field("models.dev");
-    }
     return field("none");
 }
 function protocolProvenance(reason) {
@@ -203,12 +161,17 @@ function identityProvenanceFromDeployment(group) {
         optionalString(deployment.litellmParams.model) !== undefined);
 }
 function modelDiagnostic(group, spec, catalog, options) {
+    // Single-resolver derivation: one resolution feeds the spec-equality
+    // invariant, the publication assessment, and every diagnostic field.
+    const resolved = resolveModel(group, catalog, {
+        protocolOverrides: options.protocolOverrides,
+        contextTierCap: options.contextTierCap,
+    });
     const selected = selectModelsDevRecord(group, catalog);
     const protocol = resolveProtocolResolution(group, options.protocolOverrides);
-    const variants = buildVariants(selected, spec.protocol);
     const reasoning = resolveReasoningSupport(group, selected);
     const conflicts = metadataConflicts(group, selected, reasoning);
-    const publication = assessModelConfiguration(group, catalog, options);
+    const publication = assessmentFromResolved(resolved);
     const issues = [];
     if (!selected) {
         if (publication.identity.outcome === "ambiguous") {
@@ -220,6 +183,15 @@ function modelDiagnostic(group, spec, catalog, options) {
                 message: `Multiple models.dev providers match this LiteLLM model (${publication.identity.ambiguousProviders.join(", ")}); enrichment stays unresolved instead of guessing.`,
             });
         }
+        else if (resolved.identity.status === "proven") {
+            issues.push({
+                severity: "info",
+                stage: "models-dev",
+                code: "models-dev-canonical-only",
+                modelId: group.modelName,
+                message: `Canonical identity ${resolved.identity.canonicalModelID} proven from the registry; no serving provider declared, so intrinsic facts apply without serving overrides.`,
+            });
+        }
         else {
             issues.push({
                 severity: "warning",
@@ -229,6 +201,65 @@ function modelDiagnostic(group, spec, catalog, options) {
                 message: "No models.dev record matched this LiteLLM model.",
             });
         }
+    }
+    if (resolved.serving.status === "serving-record-unresolved") {
+        issues.push({
+            severity: "warning",
+            stage: "models-dev",
+            code: "serving-record-unresolved",
+            modelId: group.modelName,
+            message: `Provider ${resolved.serving.providerID} is declared but holds no record matching the wire id; relation-only records never resolve the SKU. Declare an exact wire id or change the provider declaration.`,
+        });
+    }
+    if (resolved.serving.status === "declared-unmatched") {
+        issues.push({
+            severity: "warning",
+            stage: "models-dev",
+            code: "serving-declared-unmatched",
+            modelId: group.modelName,
+            message: `Declared provider is absent or holds no matching record; resolving as serving-unproven.`,
+        });
+    }
+    if (resolved.serving.status === "serving-ambiguous") {
+        issues.push({
+            severity: "warning",
+            stage: "models-dev",
+            code: "serving-ambiguous",
+            modelId: group.modelName,
+            message: `Provider holds materially different exact records for the wire id; withheld instead of guessing.`,
+        });
+    }
+    if (resolved.identity.routeDiffers) {
+        issues.push({
+            severity: "info",
+            stage: "models-dev",
+            code: "identity-route-differs",
+            modelId: group.modelName,
+            message: `base_model decides the deployment identity; the route resolves differently (diagnostic only).`,
+        });
+    }
+    for (const key of resolved.operatorConfigurationKeys) {
+        issues.push({
+            severity: "info",
+            stage: "mapping",
+            code: "operator-configuration",
+            modelId: group.modelName,
+            message: `${key} is operator configuration (no proven enforcement): it narrows nothing and enters no fingerprint.`,
+        });
+    }
+    // Configuration-validity diagnostics (D7a/G20d): a non-positive operator-
+    // configuration limit is reported so the operator can fix the deployment
+    // configuration, but it is NOT capability evidence — it never withholds
+    // the model, never marks a field illegal, and never invalidates an LKG
+    // entry. The publication gate stays untouched by these keys.
+    for (const key of resolved.operatorConfigurationIssueKeys) {
+        issues.push({
+            severity: "warning",
+            stage: "mapping",
+            code: "operator-configuration-invalid-value",
+            modelId: group.modelName,
+            message: `${key} declares a non-positive limit; the operator configuration is invalid, but unproven keys never gate publication — fix the deployment configuration.`,
+        });
     }
     if (!hasOperationalLimits(spec)) {
         issues.push({
@@ -247,15 +278,6 @@ function modelDiagnostic(group, spec, catalog, options) {
             code: `publication-${publication.status}`,
             modelId: group.modelName,
             message: `Model is not normally publishable (status ${publication.status})${gaps.length > 0 ? `: ${gaps.join(", ")}` : ""}.`,
-        });
-    }
-    if (publication.inheritedFields.length > 0) {
-        issues.push({
-            severity: "info",
-            stage: "mapping",
-            code: "metadata-inheritance",
-            modelId: group.modelName,
-            message: `Deterministic inheritance for ${publication.inheritedFields.join(", ")}: ${publication.inheritanceChain.join("; ")}.`,
         });
     }
     for (const conflict of publication.conflicts) {
@@ -303,6 +325,7 @@ function modelDiagnostic(group, spec, catalog, options) {
             message: "No explicit protocol evidence was found; chat fallback is used.",
         });
     }
+    const fieldBasis = Object.fromEntries(Object.entries(resolved.fields).map(([name, item]) => [name, item.basis]));
     return {
         diagnostic: {
             id: group.modelName,
@@ -327,11 +350,26 @@ function modelDiagnostic(group, spec, catalog, options) {
                         : selected !== undefined || identityProvenanceFromDeployment(group)
                             ? "deployment-declaration"
                             : "unknown",
+                    canonicalModelID: resolved.identity.canonicalModelID,
+                    canonicalEvidence: resolved.identity.evidence,
+                    canonicalStatus: resolved.identity.status,
+                    adapterSegment: resolved.identity.parse.adapterSegment,
+                    customLLMProvider: resolved.identity.parse.customLLMProvider,
                 },
                 reasoning,
                 protocolSupport: resolveProtocolSupport(group),
                 fallback: selected ? "enriched" : "litellm-only",
                 conflicts,
+                serving: {
+                    status: resolved.serving.status,
+                    providerID: resolved.serving.providerID,
+                    recordID: resolved.serving.recordID,
+                },
+                fieldBasis,
+                reasoningLevelsState: resolved.reasoningLevels.state,
+                operatorConfigurationKeys: [...resolved.operatorConfigurationKeys],
+                diagnosticCandidates: resolved.diagnosticCandidates.map((item) => ({ ...item })),
+                catalogKind: resolved.catalogKind,
             },
             publication: {
                 status: publication.status,
@@ -348,20 +386,13 @@ function modelDiagnostic(group, spec, catalog, options) {
                 inheritanceChain: [...publication.inheritanceChain],
                 discrepancies: publication.discrepancies.map((resolution) => ({ ...resolution })),
                 conflicts: publication.conflicts.map((resolution) => ({ ...resolution })),
-                deploymentConstraints: [
-                    publication.context.deploymentConstraint !== undefined
-                        ? { field: "limit.context", value: publication.context.deploymentConstraint }
-                        : undefined,
-                    publication.output.deploymentConstraint !== undefined
-                        ? { field: "limit.output", value: publication.output.deploymentConstraint }
-                        : undefined,
-                ].filter((item) => item !== undefined),
+                deploymentConstraints: [],
                 usingLKG: publication.usingLKG,
                 lkgDetail: publication.lkgDetail,
             },
             provenance: {
                 protocol: protocolProvenance(protocol.reason),
-                reasoning: variants.length > 0
+                reasoning: resolved.reasoningLevels.values.length > 0
                     ? field("models.dev", "reasoning_options")
                     : reasoning.source === "litellm"
                         ? field("litellm", "supports_reasoning")
@@ -375,20 +406,24 @@ function modelDiagnostic(group, spec, catalog, options) {
                     input: capabilitySource(group, selected, "input"),
                     output: capabilitySource(group, selected, "output"),
                 },
-                context: contextProvenance(group, selected, options, spec),
-                outputLimit: outputLimitProvenance(group, selected),
+                context: contextProvenance(resolved),
+                outputLimit: outputLimitProvenance(resolved),
                 pricing: {
-                    input: pricingProvenance(group, selected, ["input_cost_per_token"], "input"),
-                    output: pricingProvenance(group, selected, ["output_cost_per_token"], "output"),
-                    cacheRead: pricingProvenance(group, selected, ["cache_read_input_token_cost", "cache_read_cost_per_token"], "cache_read"),
-                    cacheWrite: pricingProvenance(group, selected, ["cache_creation_input_token_cost", "cache_write_input_token_cost"], "cache_write"),
+                    input: pricingProvenance(group, selected, ["input_cost_per_token"], "input", resolved.fields["price.input"]?.basis),
+                    output: pricingProvenance(group, selected, ["output_cost_per_token"], "output", resolved.fields["price.output"]?.basis),
+                    cacheRead: pricingProvenance(group, selected, ["cache_read_input_token_cost", "cache_read_cost_per_token"], "cache_read", resolved.fields["price.cacheRead"]?.basis),
+                    cacheWrite: pricingProvenance(group, selected, ["cache_creation_input_token_cost", "cache_write_input_token_cost"], "cache_write", resolved.fields["price.cacheWrite"]?.basis),
                 },
-                release: releaseProvenance(selected),
+                release: releaseProvenance(resolved),
             },
         },
         issues,
     };
 }
+/**
+ * Diagnose discovery. `buildModelSpecs` models equal the diagnostics models
+ * (single-resolver invariant G22): both project the same resolutions.
+ */
 export function diagnoseModelSpecs(litellmResponse, modelsDevCatalog, options) {
     const models = buildModelSpecs(litellmResponse, modelsDevCatalog, options);
     const groups = groupLiteLLMDeployments(litellmResponse);
@@ -408,13 +443,16 @@ export function diagnoseModelSpecs(litellmResponse, modelsDevCatalog, options) {
             message: "LiteLLM model-info response does not contain a data array.",
         });
     }
-    const hasCatalog = catalogAvailable(modelsDevCatalog);
+    const hasCatalog = catalogHasRecords(modelsDevCatalog);
+    const catalogKind = normalizeModelsDevCatalog(modelsDevCatalog).kind;
     if (!hasCatalog) {
         issues.push({
             severity: "warning",
             stage: "models-dev",
-            code: "models-dev-degraded",
-            message: "models.dev metadata is unavailable or empty; LiteLLM-only metadata is used.",
+            code: catalogKind === "providers-only" ? "models-dev-providers-only" : "models-dev-degraded",
+            message: catalogKind === "providers-only"
+                ? "models.dev payload is a legacy provider map without a canonical registry; canonical identity is unavailable, LiteLLM-only metadata is used."
+                : "models.dev metadata is unavailable or empty; LiteLLM-only metadata is used.",
         });
     }
     issues.push({

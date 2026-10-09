@@ -4,10 +4,13 @@
  * Single business source of truth for answering: "is this discovered
  * model's metadata reliable enough to publish as a fully configured
  * model?" Covers completeness/publishability policy, false-vs-unknown
- * semantics, reasoning/levels decoupling, deterministic inheritance,
- * failure taxonomy, TTL-free Last Known Good, evidence source
+ * semantics, deterministic single-resolver derivation, failure taxonomy,
+ * TTL-free Last Known Good (schema 8 proof composition), evidence source
  * authority, resolved discrepancies vs unresolved conflicts, and
  * field-level provenance.
+ *
+ * D9 invariant: the publication assessment is derived from the single
+ * `ResolvedModel`. There is no independent parsing here.
  *
  * The publication gate is never relaxed. There is no user confirmation,
  * override, or degraded-publication path: a model that cannot be proven
@@ -17,11 +20,11 @@
  * No I/O, no timers, no host SDK imports. Adapters consume the verdicts
  * without reimplementing policy.
  */
-import { type ModelLimits } from "./capabilities.js";
-import { type FieldResolution } from "./evidence.js";
-import { type CapabilityState, type DetailedSelection, type SelectedModelRecord } from "./modelsdev.js";
 import { type DeploymentGroup } from "./litellm.js";
+import { aggregateTriState, type CapabilityState, type DetailedSelection, type SelectedModelRecord } from "./modelsdev.js";
+import { resolveModel, toModelSpec, type FieldBasis, type ResolvedModel } from "./resolve.js";
 import { type BuildOptions, type ModelSpec } from "./build.js";
+import type { FieldResolution } from "./evidence.js";
 export type { CapabilityState };
 /** Per-model configuration state. Names are domain semantics, not wire enums. */
 export type ModelConfigurationStatus = "configured" | "configured-lkg" | "discovered-incomplete" | "unmatched" | "ambiguous" | "metadata-unavailable" | "invalid-metadata";
@@ -122,6 +125,30 @@ export interface CompletenessAssessment {
     readonly failure?: MetadataFailure;
     readonly usingLKG: boolean;
     readonly lkgDetail?: string;
+    /** Canonical identity, parse metadata, and serving status from the resolver. */
+    readonly resolvedIdentity?: {
+        readonly status: ResolvedModel["identity"]["status"];
+        readonly canonicalModelID?: string;
+        readonly evidence: ResolvedModel["identity"]["evidence"];
+        readonly adapterSegment?: string;
+        readonly customLLMProvider?: string;
+    };
+    readonly resolvedServing?: {
+        readonly status: ResolvedModel["serving"]["status"];
+        readonly providerID?: string;
+        readonly recordID?: string;
+    };
+    /** Per-field basis for every resolved field. */
+    readonly fieldBasis?: Readonly<Record<string, FieldBasis>>;
+    /** Non-pricing litellm_params keys, listed as operator configuration. */
+    readonly operatorConfigurationKeys?: readonly string[];
+    readonly diagnosticCandidates?: ReadonlyArray<{
+        providerID: string;
+        recordID: string;
+        why: string;
+    }>;
+    readonly catalogKind?: ResolvedModel["catalogKind"];
+    readonly reasoningLevelsState?: "unknown" | "known";
 }
 export interface AssessInput {
     readonly catalogAvailable: boolean;
@@ -130,37 +157,19 @@ export interface AssessInput {
 /**
  * Assess one deployment group for normal publication.
  *
- * Pure function of already-fetched inputs: it never fills defaults to
+ * Pure derivation of the single `ResolvedModel`: it never fills defaults to
  * hide gaps and never guesses from names or families.
  */
 export declare function assessModelConfiguration(group: DeploymentGroup, catalog: unknown, options: BuildOptions, input?: AssessInput): CompletenessAssessment;
+export declare function assessmentFromResolved(resolved: ResolvedModel, failure?: MetadataFailure): CompletenessAssessment;
 /** True only for `configured` and `configured-lkg`. This is the whole gate. */
 export declare function isNormallyPublishable(status: ModelConfigurationStatus): boolean;
-/** The persisted grading of a captured snapshot's evidence authority. */
-export type PublicationEvidenceAuthority = "authoritative-intrinsic" | "fallback-serving";
 /**
- * The only accepted persisted values of `LastKnownGoodEntry.evidenceAuthority`.
- * Schema 7 makes the field semantically critical: a missing or unknown value
- * must never fall back to `authoritative-intrinsic`, or a corrupted
- * fallback-serving snapshot could dodge the outage fail-closed policy.
+ * Schema 8: proof records the composition that produced the stored spec,
+ * group-wide. Whole-spec restore or nothing; never per-field merges.
+ * v7 and older entries fail closed without migration.
  */
-export declare function isPublicationEvidenceAuthority(value: unknown): value is PublicationEvidenceAuthority;
-/**
- * Grade the evidence of a selection. Live assessment, LKG capture, price
- * fallback eligibility, and diagnostics all read this single gate, so no
- * caller can drift into re-deriving the authority table.
- */
-export declare function evidenceAuthorityOf(selected: SelectedModelRecord | undefined): PublicationEvidenceAuthority;
-/**
- * Bumped when publication completeness grows, captured facts change
- * meaning, the authority model changes, or the LKG identity shape changes.
- * An older number cannot satisfy a newer policy; restoration also
- * re-checks the captured verdict against the stored spec and the stored
- * stable identity against the current group evidence, so a same-number
- * entry with unknown capabilities, inconsistent facts, or a route-stripped
- * identity still fails closed.
- */
-export declare const PUBLICATION_SCHEMA_VERSION: 7;
+export declare const PUBLICATION_SCHEMA_VERSION: 8;
 export interface LastKnownGoodCapabilityVerdict {
     readonly tools: CapabilityState;
     readonly reasoning: CapabilityState;
@@ -172,8 +181,8 @@ export interface LastKnownGoodCapabilityVerdict {
     /**
      * Captured limit facts used for live conflict detection. Each value is
      * compared only against the same dimension: `context` is total context
-     * (models.dev `limit.context`), `input` is input capacity (LiteLLM
-     * `max_input_tokens` / models.dev `limit.input`), `output` is the
+     * (models.dev `limit.context`), `input` is input capacity
+     * (`limit.input` / LiteLLM `max_input_tokens`), `output` is the
      * output limit. Never compared across dimensions.
      */
     readonly context: number;
@@ -186,28 +195,12 @@ export interface LastKnownGoodEntry {
     readonly modelName: string;
     /**
      * Provider-aware stable identity of the captured group (sorted union
-     * of every deployment's identity ids, `|`-joined). This is the field
-     * LKG validity compares — it keeps provider namespaces and works with
-     * no enrichment source available. `canonicalID` stays as the legacy
-     * route-stripped name for provenance/compatibility only.
+     * of every deployment's identity ids, `|`-joined). LKG validity compares
+     * this first; the proof multiset re-proves the per-deployment evidence.
      */
     readonly stableIdentity: string;
-    /** Legacy route-stripped canonical name; provenance/compatibility only. */
-    readonly canonicalID: string;
-    readonly providerID: string;
-    readonly matchKind?: string;
-    /** Selection source provenance captured with the snapshot. */
-    readonly selectionSource?: string;
-    /**
-     * The evidence authority the captured facts carried, graded by the same
-     * helper as the live assessment (`isAuthoritativeIntrinsic`). Entries
-     * whose facts are only `fallback-serving` (OpenCode/OpenRouter fallback,
-     * unique-match, legacy compatibility, or an explicit provider record
-     * without a canonical relation proof) never restore across a metadata
-     * outage: they must be re-proven by a live selection in the same round
-     * instead of resurrected from memory.
-     */
-    readonly evidenceAuthority: PublicationEvidenceAuthority;
+    /** Group-wide proof composition (D10). Captured from the resolution. */
+    readonly proof: ResolvedModel["proof"];
     readonly fetchedAt: string;
     readonly fetchedAtEpochMs: number;
     readonly spec: ModelSpec;
@@ -224,35 +217,30 @@ export declare function lastKnownGoodKey(modelName: string): string;
 /**
  * Capture the publication facts proven by an assessment.
  *
- * `spec` supplies the input limit (the assessment has no input gate);
- * when omitted, `input` is `0` and `createLastKnownGoodEntry` backfills it
- * from the spec it stores, so adapters seeding through the legacy
- * single-argument call keep producing valid entries.
+ * `spec` supplies the input limit; when omitted, `input` is `0`.
  */
 export declare function capturedPublicationVerdict(assessment: CompletenessAssessment, spec?: ModelSpec): LastKnownGoodCapabilityVerdict;
+/**
+ * Capture an LKG entry. The entry is derived from the SAME resolution that
+ * passed the publication gate (5.3): callers pass the catalog and options
+ * so Core resolves once and captures from that result. A `withheld`,
+ * incomplete, or non-`configured` resolution throws instead of failing
+ * silently through drift.
+ *
+ * The legacy `(group, selected, spec, now, captured)` adapter form keeps
+ * working only when `catalog` + `options` are also supplied; otherwise it
+ * throws. Adapters migrate their seeding to pass the live catalog/options
+ * (downstream tasks).
+ */
 export declare function createLastKnownGoodEntry(group: DeploymentGroup, selected: SelectedModelRecord | undefined, spec: ModelSpec, now?: number, captured?: LastKnownGoodCapabilityVerdict, catalog?: unknown, options?: BuildOptions): LastKnownGoodEntry;
 /**
  * Re-prove that a stored snapshot still satisfies the current publication
  * completeness policy AND describes the very spec it would restore.
- * Positive limits alone are not enough: unknown tools, reasoning, or
- * modalities, any illegal captured field, and any mismatch between the
- * captured facts and `entry.spec` (limits, tools, reasoning, modality
- * sets) fail closed. A forged fact that merely parses is still rejected.
  */
 export declare function validateCapturedPublication(entry: Pick<LastKnownGoodEntry, "spec" | "captured">): {
     valid: boolean;
     reason: string;
 };
-/**
- * Validate a stored entry against the current discovery inputs.
- * Age is reported but never a validity condition.
- *
- * Identity validity is decided FIRST from the current deployments'
- * own provider-aware evidence — never from `selected`, which is exactly
- * what a metadata outage removes. `selected` only adds a positive
- * provider cross-check when enrichment is available.
- */
-export declare function validateLastKnownGood(entry: LastKnownGoodEntry, group: DeploymentGroup, selected: SelectedModelRecord | undefined, now?: number, options?: Pick<BuildOptions, "contextTierCap">, catalog?: unknown): LKGValidation;
 export declare function isLKGEntryCompatible(value: unknown): value is LastKnownGoodEntry;
 /** In-memory LKG store. Persistence belongs to adapters; validity belongs here. */
 export declare function createLastKnownGoodStore(): {
@@ -269,6 +257,25 @@ export interface ConfigurationWithLKG {
     readonly lkg?: LastKnownGoodEntry;
     readonly lkgValidation?: LKGValidation;
 }
+/**
+ * Validate a stored entry against the current discovery inputs.
+ * Age is reported but never a validity condition.
+ *
+ * Group-wide whole-entry re-proof (D10), in two modes:
+ * - outage (catalog `unavailable`/`providers-only`): the registry and
+ *   serving records cannot be re-read, so the stored identityKind,
+ *   registryDigest, and recordDigest stand as captured. Re-proved per
+ *   component: the deployment-evidence multiset (deploymentID +
+ *   normalizedInputs, item by item, order-independent), every stored
+ *   serving declaration against the live deployments' declared providers,
+ *   the enforcement fingerprint (empty while D7a is unpromoted), and the
+ *   LiteLLM fingerprint recomputed from the live group. Restore is the
+ *   whole stored spec or nothing.
+ * - live (catalog `complete`): additionally the live resolution's proof
+ *   must agree item by item — same identityKinds and canonicalModelIDs,
+ *   same registryDigest, same serving recordDigest.
+ */
+export declare function validateLastKnownGood(entry: LastKnownGoodEntry, group: DeploymentGroup, selected: SelectedModelRecord | undefined, now?: number, options?: BuildOptions, catalog?: unknown): LKGValidation;
 /**
  * Resolve the final configuration, substituting valid LKG only when live
  * metadata is incomplete/unavailable AND a provably belonging entry exists
@@ -297,13 +304,12 @@ export interface BuildPublicationOptions {
     readonly now?: number;
 }
 /**
- * Partition discovery output for adapters.
+ * Partition discovery output for adapters. Derived from the single
+ * resolver: publishable specs equal `toModelSpec(resolved)`.
  *
  * Publishable entries are `configured` and `configured-lkg` only, and
  * nothing else. There is no user confirmation, override, or degraded
- * publication path: a model that cannot be proven trustworthy is
- * withheld with its reasons while every other model of the same
- * endpoint is published normally.
+ * publication path.
  *
  * Adapters must not reimplement this partition; they only map entries to
  * host shapes and still honor the operational-limits guard before host
@@ -314,4 +320,6 @@ export declare function buildPublicationResult(litellmResponse: unknown, catalog
 export declare function hostReasoningFlag(assessment: CompletenessAssessment): boolean;
 /** Host-transport mapping for a publishable tool state. Conservative-disable when unknown. */
 export declare function hostToolsFlag(assessment: CompletenessAssessment, legacyTools: boolean): boolean;
-export type { ModelLimits };
+export { aggregateTriState };
+export type { FieldBasis, ResolvedModel };
+export { resolveModel, toModelSpec };

@@ -6,6 +6,7 @@
         "output": 64000
       },
       "tool_call": true,
+      "reasoning": true,
       "modalities": {
         "input": [
           "text",
@@ -46,6 +47,7 @@
         "output": 32000
       },
       "tool_call": true,
+      "reasoning": true,
       "modalities": {
         "input": [
           "text"
@@ -189,6 +191,7 @@
             "output": 15
           },
           "tool_call": true,
+          "reasoning": true,
           "reasoning_options": [
             {
               "type": "budget_tokens",
@@ -233,6 +236,7 @@
             "output": 32000
           },
           "tool_call": true,
+          "reasoning": true,
           "reasoning_options": [
             {
               "type": "toggle"

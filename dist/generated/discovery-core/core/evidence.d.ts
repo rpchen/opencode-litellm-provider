@@ -65,12 +65,17 @@ export declare function isResolvedDiscrepancy(resolution: FieldResolution): bool
 export declare function isUnresolvedConflict(resolution: FieldResolution): boolean;
 /**
  * LiteLLM keys inside the operator's own deployment configuration
- * (`litellm_params`) that the endpoint enforces for a request. A value
- * here is a deployment constraint, so it narrows the effective value.
+ * (`litellm_params`) that the endpoint provably enforces for a request.
  *
- * `model_info` mirrors the LiteLLM model registry (descriptive metadata
- * copied from the cost map); a field with the same name there is NOT
- * proof of enforcement and must never be treated as a hard cap.
+ * D7a (frozen): the proven set starts EMPTY. No non-pricing `litellm_params`
+ * key has passed the promotion gate (exact source path + negative breaching
+ * test via an OpenSpec delta), so no key narrows any field. Every
+ * non-pricing `litellm_params` key is operator configuration (diagnostic
+ * only). The seven `MirroredPricingParams` price keys are Operator-Declared
+ * Pricing governed by the Price authority, never by this matrix.
+ *
+ * `model_info` mirrors descriptive registry values; a field with the same
+ * name there is declared-observable evidence, never proof of enforcement.
  */
 export interface RuntimeConstraintKeys {
     readonly context: readonly string[];

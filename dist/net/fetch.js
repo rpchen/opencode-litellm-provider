@@ -8,7 +8,7 @@ export class DiscoveryError extends Error {
         this.name = "DiscoveryError";
     }
 }
-const MODELS_DEV_URL = "https://models.dev/api.json";
+const MODELS_DEV_URL = "https://models.dev/catalog.json";
 const MODELS_DEV_TTL_MS = 6 * 60 * 60 * 1000;
 const MODELS_DEV_RETRY_MS = 60 * 1000;
 function escapeRegExp(value) {

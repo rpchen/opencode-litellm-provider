@@ -1,5 +1,6 @@
 export * from "./core/build.js";
 export * from "./core/catalog.js";
+export * from "./core/catalog-input.js";
 export * from "./core/evidence.js";
 export * from "./core/capabilities.js";
 export * from "./core/diagnostics.js";
@@ -8,4 +9,6 @@ export * from "./core/modelsdev.js";
 export * from "./core/protocol.js";
 export * from "./core/publication.js";
 export * from "./core/refresh.js";
+export * from "./core/resolve.js";
 export * from "./core/snapshot.js";
+export * from "./core/wire-id.js";

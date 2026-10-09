@@ -71,13 +71,28 @@ for (const dir of [project, home, config, data, cache, state, opencodeConfig]) m
  * failure mode under review was a catalog shape hitting a v7 dist
  * (`catalogAvailable` false → "models.dev：degraded"), which tests a shape
  * mismatch instead of the publication gate.
+ *
+ * v8: the served catalog is the repository's own models-dev fixture (the unit
+ * test baseline) merged with the e2e-only identities (vendora/vendorb/resolved
+ * and `openai/multi-endpoint-model`). Under the frozen dimension-isolation
+ * rule (G30) a LiteLLM-only group cannot publish, so every model the E2E
+ * expects to register needs a canonical registry entry keyed by its exact
+ * wire id.
  */
+const fixtureCatalog = JSON.parse(
+  readFileSync(path.join(root, "test", "fixtures", "models-dev.json"), "utf8"),
+)
 const catalogueEntries = () => ({
-  // Catalog shape (adopt-modelsdev-canonical-catalog): canonical registry +
-  // provider records. vendorb/resolved entries exist only for enrichment
-  // documentation; the E2E focuses on the served LiteLLM declarations plus
-  // the declared-serving vendorb path.
   models: {
+    ...fixtureCatalog.models,
+    // G30: register via the canonical registry under its exact wire id. The
+    // record deliberately omits tool_call/reasoning so the model's completeness
+    // depends on the live declarations — which is what makes the declaration
+    // change below a fail-closed LKG rejection instead of a silent no-op.
+    "openai/multi-endpoint-model": {
+      modalities: { input: ["text"], output: ["text"] },
+      limit: { context: 128_000, output: 16_000 },
+    },
     "vendora/coding-model": {
       tool_call: true,
       reasoning: false,
@@ -92,6 +107,7 @@ const catalogueEntries = () => ({
     },
   },
   providers: {
+    ...fixtureCatalog.providers,
     vendora: {
       models: {
         "coding-model": {
@@ -165,16 +181,22 @@ const legacyProviderMap = () => ({
 
 function startCatalogServer() {
   const bodies = new Map([
-    ["/catalog.json", JSON.stringify(catalogueEntries())],
-    ["/api.json", JSON.stringify(legacyProviderMap())],
+    ["/catalog.json", () => JSON.stringify(catalogueEntries())],
+    ["/api.json", () => JSON.stringify(legacyProviderMap())],
   ])
   let requests = 0
+  let failStatus = 0
   const server = createServer((req, res) => {
     const body = bodies.get(req.url ?? "")
     if (body) {
+      if (failStatus) {
+        res.writeHead(failStatus, { "content-type": "application/json" })
+        res.end(JSON.stringify({ error: "injected models.dev outage" }))
+        return
+      }
       requests += 1
       res.writeHead(200, { "content-type": "application/json" })
-      res.end(body)
+      res.end(body())
       return
     }
     res.writeHead(404, { "content-type": "application/json" })
@@ -191,6 +213,9 @@ function startCatalogServer() {
         url: `http://127.0.0.1:${address.port}/catalog.json`,
         legacyUrl: `http://127.0.0.1:${address.port}/api.json`,
         requests: () => requests,
+        setFailStatus(status) {
+          failStatus = status
+        },
         close: () => new Promise((done) => server.close(() => done())),
       })
     })
@@ -920,30 +945,58 @@ try {
     `partial availability must state the withheld section: ${rejectionDiagnostics}`,
   )
 
-  // 3) A previously configured LiteLLM-only model loses its capability evidence:
-  // only a provably belonging LKG snapshot keeps it registered.
-  const stripCapabilities = (entry) => ({
+  // 3) A previously configured model's capability declarations change. Under
+  //    the frozen schema-8 semantics the stored LKG entry's LiteLLM fingerprint
+  //    no longer matches, so the whole entry fails closed: the model is
+  //    withdrawn and the operator must fix the declarations — never silently
+  //    substituted by a stale snapshot.
+  const strippedCapabilities = (entry) => ({
     model_name: entry.model_name,
     litellm_params: entry.litellm_params,
     model_info: {
       mode: entry.model_info.mode,
       ...(entry.model_info.supported_endpoints ? { supported_endpoints: entry.model_info.supported_endpoints } : {}),
-      ...(entry.model_info.base_model ? { base_model: entry.model_info.base_model } : {}),
       max_input_tokens: entry.model_info.max_input_tokens,
       max_output_tokens: entry.model_info.max_output_tokens,
     },
   })
   servedModels = servedFixture.data.map((entry) =>
-    entry.model_name === "multi-endpoint-model" ? stripCapabilities(entry) : entry)
-  const lkgReport = await waitForRefreshAfter(Date.now(), "the LKG substitution")
+    entry.model_name === "multi-endpoint-model" ? strippedCapabilities(entry) : entry)
+  const failClosedReport = await waitForRefreshAfter(Date.now(), "the fail-closed declaration change")
   assert(
-    lkgReport.models.some((model) => model.id === "multi-endpoint-model"),
-    `LKG must keep the previously configured model registered: ${JSON.stringify(lkgReport.models.map((m) => m.id))}`,
+    !failClosedReport.models.some((model) => model.id === "multi-endpoint-model"),
+    `a changed declaration set must fail closed even with a stored LKG entry: ${JSON.stringify(failClosedReport.models.map((m) => m.id))}`,
   )
-  assert(hostModels().includes("litellm/multi-endpoint-model"), "the LKG-backed model must stay visible in CLI models")
-  await diagnosticsThroughTui(
-    /使用已信任的前次完整配置（LKG）：multi-endpoint-model/u,
-    "the valid LKG substitution",
+  assert(
+    !hostModels().includes("litellm/multi-endpoint-model"),
+    "the fail-closed model must leave the host CLI model list",
+  )
+  const failClosedDiagnostics = await diagnosticsThroughTui(
+    /Endpoint[\s：:]+default/u,
+    "the fail-closed declaration change",
+  )
+  assert(
+    /withheld[s：:]*multi-endpoint-model/u.test(failClosedDiagnostics),
+    `the withdrawn model must stay visible as withheld: ${failClosedDiagnostics}`,
+  )
+  assert(
+    !/使用已信任的前次完整配置（LKG）：multi-endpoint-model/u.test(failClosedDiagnostics),
+    `a changed declaration set must not be silently substituted from LKG: ${failClosedDiagnostics}`,
+  )
+  // Restore the declarations: the same identity re-publishes freshly.
+  servedModels = servedFixture.data
+  const restoredReport = await waitForRefreshAfter(Date.now(), "the declaration restoration")
+  assert(
+    restoredReport.models.some((model) => model.id === "multi-endpoint-model"),
+    "restored declarations must re-publish the model",
+  )
+  const restoredDeclarationDiagnostics = await diagnosticsThroughTui(
+    /Endpoint[\s：:]+default/u,
+    "the declaration restoration",
+  )
+  assert(
+    !/使用已信任的前次完整配置（LKG）：multi-endpoint-model/u.test(restoredDeclarationDiagnostics),
+    `restoration must be a fresh configuration, not LKG: ${restoredDeclarationDiagnostics}`,
   )
 
   // 4) A withheld model that becomes complete again is published automatically:
