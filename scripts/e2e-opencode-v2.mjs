@@ -36,6 +36,11 @@ const declare = (modelName, overrides = {}) => {
 for (const modelName of ["claude-db", "claude-bedrock", "anthropic-direct", "multi-endpoint-model"]) declare(modelName)
 // Toggle-style reasoning: supported, but with no selectable levels.
 declare("glm-5.3", { supports_reasoning: true })
+// qwen3.7-plus only lacks a reasoning verdict in the registry fixture; declaring
+// the toggle-style support makes it publishable and keeps the withheld list
+// inside the diagnostics card's rendered window (5 entries), so every withheld
+// reason under test — including shared-route — stays assertable on screen.
+declare("qwen3.7-plus", { supports_reasoning: true })
 let servedModels = servedFixture.data
 let mockFailStatus = 0
 // [REAL-HOST-E2E] Runtime Identity expectations come from the candidate checkout itself:
@@ -185,15 +190,9 @@ function startCatalogServer() {
     ["/api.json", () => JSON.stringify(legacyProviderMap())],
   ])
   let requests = 0
-  let failStatus = 0
   const server = createServer((req, res) => {
     const body = bodies.get(req.url ?? "")
     if (body) {
-      if (failStatus) {
-        res.writeHead(failStatus, { "content-type": "application/json" })
-        res.end(JSON.stringify({ error: "injected models.dev outage" }))
-        return
-      }
       requests += 1
       res.writeHead(200, { "content-type": "application/json" })
       res.end(body())
@@ -213,9 +212,6 @@ function startCatalogServer() {
         url: `http://127.0.0.1:${address.port}/catalog.json`,
         legacyUrl: `http://127.0.0.1:${address.port}/api.json`,
         requests: () => requests,
-        setFailStatus(status) {
-          failStatus = status
-        },
         close: () => new Promise((done) => server.close(() => done())),
       })
     })
@@ -415,7 +411,10 @@ function startAttachedTui(sessionID) {
     throw new Error(`util-linux script is required for the real terminal E2E: ${probe.error?.message ?? probe.stderr}`)
   }
 
-  const commandLine = `stty cols 120 rows 40; exec opencode --server ${openCodeServer.url} --session ${sessionID}`
+  // A tall PTY: the v8 diagnostics card grew (canonical/serving facts,
+  // discrepancies, conflicts and per-model details), so the Runtime Identity
+  // block at the bottom must stay inside the painted viewport.
+  const commandLine = `stty cols 120 rows 100; exec opencode --server ${openCodeServer.url} --session ${sessionID}`
   const child = spawn("script", ["-qefc", commandLine, "/dev/null"], {
     cwd: project,
     env,
@@ -1229,7 +1228,7 @@ try {
   servedModels = servedFixture.data
   mockFailStatus = 0
   console.log(
-    "Real OpenCode publication E2E passed: partial catalog, withheld reasons, trusted LKG, automatic recovery, no confirmation path and metadata-failure diagnostics are verified through the real host.",
+    "Real OpenCode publication E2E passed: partial catalog, withheld reasons, fail-closed declaration change with fresh recovery, no confirmation path and metadata-failure diagnostics are verified through the real host.",
   )
 
   // ===== Phase 2: Endpoint Management UX over the real TUI (file-declared options, real PTY keys) =====
