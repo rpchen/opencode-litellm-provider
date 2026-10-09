@@ -1430,11 +1430,12 @@ try {
     rmSync(seamLog, { force: true })
     const seamConfig = { ...e2eConfig, plugins: [...e2eConfig.plugins, seamPluginSpec] }
     writeFileSync(opencodeConfigFile, JSON.stringify(seamConfig, null, 2) + "\n")
-    // offlineEnv snapshotted `env` when it was created, long before either
-    // config was written, so the server process only ever sees the values
-    // captured there. Keep both env objects in step with the file.
-    env.OPENCODE_CONFIG_CONTENT = JSON.stringify(seamConfig)
-    offlineEnv.OPENCODE_CONFIG_CONTENT = env.OPENCODE_CONFIG_CONTENT
+    // Deliberately do NOT mirror this into OPENCODE_CONFIG_CONTENT: setting
+    // OPENCODE_CONFIG and OPENCODE_CONFIG_CONTENT together made the host skip
+    // plugin loading entirely (no "loading plugin" line at all). Every other
+    // phase configures plugins through the file alone, and so does this one.
+    delete env.OPENCODE_CONFIG_CONTENT
+    delete offlineEnv.OPENCODE_CONFIG_CONTENT
 
     openCodeServer = await startOpenCodeServer()
     env.OPENCODE_PASSWORD = openCodeServer.password
@@ -1444,8 +1445,17 @@ try {
     {
       const deadline = Date.now() + 30_000
       while (Date.now() < deadline && !existsSync(seamLog)) await sleep(200)
-      assert(existsSync(seamLog),
-        `the E2E cache seam never loaded in the real host; seam spec=${seamPluginSpec}; written config=${JSON.stringify(seamConfig)}; on-disk config=${readFileSync(opencodeConfigFile, "utf8")}; server log tail:\n${openCodeServer.output().stdout.slice(-3000)}`)
+      const seamPluginStates = () => {
+      try {
+        return payload(jsonOutput(api("GET", "/api/plugin"), "plugin.list"))
+          .filter((item) => !String(item.id ?? "").startsWith("opencode."))
+          .map((item) => `${item.id ?? "(unnamed)"}:${item.state?.status ?? "?"}`)
+      } catch (error) {
+        return `plugin.list unavailable: ${String(error)}`
+      }
+    }
+    assert(existsSync(seamLog),
+        `the E2E cache seam never loaded in the real host; seam spec=${seamPluginSpec}; config env: CONTENT=${JSON.stringify(env.OPENCODE_CONFIG_CONTENT)} CONFIG=${env.OPENCODE_CONFIG}; server stdout tail:\n${openCodeServer.output().stdout.slice(-4000)}\n--- server stderr tail ---\n${openCodeServer.output().stderr.slice(-4000)}\nnon-builtin plugins: ${seamPluginStates()}`)
       const seamLogText = readFileSync(seamLog, "utf8")
       const evaluated = /module-evaluated pid=(\d+)/u.exec(seamLogText)
       assert(evaluated, `the E2E cache seam did not evaluate its module body:\n${seamLogText}`)
