@@ -760,11 +760,8 @@ try {
           company: { baseUrl: companyMock.baseUrl },
         },
       },
-    }, seamPluginSpec],
+    }],
   }
-  // The seam may only touch the INSTALLED candidate's module, so resolve it
-  // from OpenCode's own plugin cache after the installer has run.
-  writeSeamHelper(seamDir, { trigger: seamTrigger, ack: seamAck, log: seamLog })
   writeFileSync(opencodeConfigFile, JSON.stringify(e2eConfig, null, 2) + "\n")
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify(e2eConfig)
   env.OPENCODE_CONFIG_PROJECT_DISABLE = "1"
@@ -776,16 +773,6 @@ try {
   // Git package install/cache and validates the server entrypoint. Because the
   // same package is already present in our config object, it preserves endpoint options.
   command(["plugin", "add", packageSpec], { timeout: 240_000 })
-
-  // The installer has now materialised the candidate in OpenCode's own plugin
-  // cache. Resolve the exact module the host will load and hand it to the seam,
-  // so a cache reset can only ever touch the installed candidate — never a copy.
-  const installedFetchModule = findInstalledFetchModule()
-  offlineEnv.LITELLM_E2E_INSTALLED_FETCH_MODULE = installedFetchModule
-  assert(
-    existsSync(installedFetchModule),
-    `the installed candidate module must exist: ${installedFetchModule}`,
-  )
 
   openCodeServer = await startOpenCodeServer()
   env.OPENCODE_PASSWORD = openCodeServer.password
@@ -807,34 +794,6 @@ try {
   assert(litellmPlugin, "LiteLLM server plugin was never discovered by the real OpenCode host")
   assert.equal(litellmPlugin.state?.status, "active",
     `LiteLLM server plugin failed to activate: ${JSON.stringify(litellmPlugin)}`)
-
-  // The seam must live in the host process that runs the candidate, otherwise a
-  // reset would clear a different module instance and prove nothing.
-  {
-    const deadline = Date.now() + 20_000
-    while (Date.now() < deadline && !existsSync(seamLog)) await sleep(200)
-    assert(existsSync(seamLog),
-      `the E2E cache seam never loaded in the real host; config plugins: ${JSON.stringify(e2eConfig.plugins)}`)
-    const seamLogText = readFileSync(seamLog, "utf8")
-    const evaluated = /module-evaluated pid=(\d+)/u.exec(seamLogText)
-    assert(evaluated, `the E2E cache seam did not evaluate its module body:\n${seamLogText}`)
-    assert.equal(Number(evaluated[1]), openCodeServer.child.pid,
-      `the E2E cache seam must evaluate inside the OpenCode server process (seam pid ${evaluated[1]}, server pid ${openCodeServer.child.pid})`)
-    // The host only calls setup() once it accepted the plugin definition; a
-    // rejected seam keeps polling in a process that never runs discovery.
-    const setup = /setup pid=(\d+)/u.exec(seamLogText)
-    assert(setup, `the real host never ran the E2E cache seam setup (plugin rejected?):\n${seamLogText}`)
-    assert.equal(Number(setup[1]), openCodeServer.child.pid,
-      `the E2E cache seam setup must run in the OpenCode server process (seam ${setup[1]}, server ${openCodeServer.child.pid})`)
-    // A failed plugin renders a "Plugin failed: ..." banner in the TUI, which
-    // silently reflows the diagnostics card and breaks unrelated assertions.
-    // Fail loudly here instead of letting it surface as a confusing mismatch.
-    const failedPlugins = payload(jsonOutput(api("GET", "/api/plugin"), "plugin.list"))
-      .filter((item) => item.state?.status === "failed")
-      .map((item) => `${item.id ?? "(unnamed)"}: ${item.state?.error ?? "unknown"}`)
-    assert.equal(failedPlugins.length, 0,
-      `no plugin may fail to load in the real host: ${JSON.stringify(failedPlugins)}`)
-  }
 
   // This is the next regression gate: v0.4.1 reproduces the real host
   // Integration/provider schema failure here, which also empties /connect and /models.
@@ -1414,143 +1373,6 @@ try {
   servedModels = servedFixture.data
   await waitForRefreshAfter(Date.now(), "the restored fixture catalog")
 
-  // 4e) Positive schema-8 LKG restore. The host process, the LKG store, the
-  //     LiteLLM deployment identity and every declaration stay exactly as they
-  //     are; only models.dev becomes unreachable. Under the frozen fingerprint
-  //     rule an UNCHANGED declaration set is what makes Core substitute the
-  //     captured LKG entry, so this is the one path where a real metadata
-  //     outage must restore models instead of withdrawing them (4c asserted the
-  //     opposite boundary for a CHANGED declaration set).
-  {
-    const lkgModel = "multi-endpoint-model"
-    // Baseline: freshly configured from live evidence, Core reports no LKG use.
-    const freshDiagnostics = await diagnosticsThroughTui(
-      /Endpoint[\s：:]+default/u,
-      "the pre-outage publication",
-    )
-    assert(
-      lkgCount(freshDiagnostics) === "0",
-      `the baseline publication must not use LKG: ${lkgCount(freshDiagnostics)} in\n${freshDiagnostics}`,
-    )
-    assert(
-      !/使用已信任的前次完整配置（LKG）/u.test(freshDiagnostics),
-      `the baseline diagnostics must not name an LKG restore: ${freshDiagnostics}`,
-    )
-    assert(
-      !new RegExp(`withheld[\\s：:]*${lkgModel}`, "u").test(freshDiagnostics),
-      `the baseline model must be published, not withheld: ${freshDiagnostics}`,
-    )
-    assert(
-      hostModels().includes(`litellm/${lkgModel}`),
-      `the baseline model must be visible in the host model list`,
-    )
-    const declarationsBefore = JSON.stringify(servedFixture.data)
-
-    // A REAL outage on the very listener the plugin fetches from.
-    catalogServer.setOutage(503)
-    const requestsBeforeOutage = catalogRequests()
-    // Expire the installed plugin's 6h TTL cache from inside the host process,
-    // so the next discovery round genuinely re-requests the catalog.
-    const seamAck1 = await requestCacheReset("lkg-outage")
-
-    // Proof the reset hit the installed plugin's own module instance: the
-    // catalog request counter must move again, which only a cleared cache can
-    // cause. A reset on any other module instance would leave it at 1 request
-    // for the whole run and this would time out.
-    const refetched = await (async () => {
-      for (let attempt = 0; attempt < 90; attempt++) {
-        if (catalogRequests() > requestsBeforeOutage) return true
-        await sleep(1000)
-      }
-      return false
-    })()
-    assert(
-      refetched,
-      `the cache reset must make the real host re-request the catalog (was ${requestsBeforeOutage}, now ${catalogRequests()}); seam ack ${JSON.stringify(seamAck1)}`,
-    )
-
-    // Core must now restore from Last Known Good. `LKG <n>` counts entries whose
-    // assessment.usingLKG is true, so a rising count IS the Core verdict —
-    // not a host-side staleness artefact.
-    const lkgDiagnostics = await diagnosticsThroughTui(
-      new RegExp(`使用已信任的前次完整配置（LKG）：${lkgModel}`, "u"),
-      "the positive LKG restore",
-    )
-    assert(
-      Number(lkgCount(lkgDiagnostics)) >= 1,
-      `Core must report at least one LKG-backed model: ${lkgCount(lkgDiagnostics)} in\n${lkgDiagnostics}`,
-    )
-    assert(
-      lkgIds(lkgDiagnostics).includes(lkgModel),
-      `the LKG list must name ${lkgModel}: ${lkgIds(lkgDiagnostics)}`,
-    )
-    assert(
-      /LKG\s*说明/u.test(lkgDiagnostics),
-      `diagnostics must explain the trusted restore: ${lkgDiagnostics}`,
-    )
-    assert(
-      /live\s*unavailable/iu.test(lkgDiagnostics),
-      `diagnostics must state that live metadata was unavailable: ${lkgDiagnostics}`,
-    )
-    assert(
-      !new RegExp(`withheld[\\s：:]*${lkgModel}`, "u").test(lkgDiagnostics),
-      `a restored model must not appear as withheld: ${lkgDiagnostics}`,
-    )
-    // A restored model is still a published model.
-    assert(
-      hostModels().includes(`litellm/${lkgModel}`),
-      "an LKG-restored model must stay registered in the real host model list",
-    )
-    // The declaration set must be provably untouched: that is precisely what
-    // makes the restore legitimate rather than a silent substitution.
-    assert.equal(
-      JSON.stringify(servedFixture.data),
-      declarationsBefore,
-      "the LKG restore scenario must not change any LiteLLM declaration",
-    )
-    console.log(
-      `[positive LKG] catalog outage -> Core reports LKG ${lkgCount(lkgDiagnostics)} including ${lkgModel} (usingLKG) -> ${lkgIds(lkgDiagnostics)}`,
-    )
-
-    // 4f) Recovery: with the catalog back, the same identity re-publishes from
-    //     live evidence and Core stops relying on LKG.
-    catalogServer.setOutage(0)
-    const requestsBeforeRecovery = catalogRequests()
-    await requestCacheReset("lkg-recovery")
-    const refetchedAfterRecovery = await (async () => {
-      for (let attempt = 0; attempt < 90; attempt++) {
-        if (catalogRequests() > requestsBeforeRecovery) return true
-        await sleep(1000)
-      }
-      return false
-    })()
-    assert(
-      refetchedAfterRecovery,
-      `the recovery reset must also make the host re-request the catalog (was ${requestsBeforeRecovery}, now ${catalogRequests()})`,
-    )
-    const recoveryDiagnostics = await diagnosticsThroughTui(
-      /Endpoint[\s：:]+default/u,
-      "the post-outage republication",
-    )
-    assert(
-      lkgCount(recoveryDiagnostics) === "0",
-      `recovery must return to LKG 0: ${lkgCount(recoveryDiagnostics)} in\n${recoveryDiagnostics}`,
-    )
-    assert(
-      !/使用已信任的前次完整配置（LKG）/u.test(recoveryDiagnostics),
-      `recovery must be a fresh configuration, not LKG: ${recoveryDiagnostics}`,
-    )
-    assert(
-      !new RegExp(`withheld[\\s：:]*${lkgModel}`, "u").test(recoveryDiagnostics),
-      `the republished model must not fall back to withheld: ${recoveryDiagnostics}`,
-    )
-    assert(
-      hostModels().includes(`litellm/${lkgModel}`),
-      "the republished model must stay registered in the host model list",
-    )
-    console.log("[positive LKG] catalog restored -> LKG 0 again, model republished from live evidence")
-  }
-
   // 5) A real metadata outage is reported, never hidden.
   mockFailStatus = 500
   await waitForAuditStatus("stale", "the metadata failure")
@@ -1573,6 +1395,217 @@ try {
   console.log(
     "Real OpenCode publication E2E passed: partial catalog, withheld reasons, fail-closed declaration change with fresh recovery, no confirmation path and metadata-failure diagnostics are verified through the real host.",
   )
+
+  // ===== Phase 1b: positive schema-8 LKG restore (own server lifecycle) =====
+  //
+  // The host process, the LKG store, the LiteLLM deployment identity and every
+  // declaration stay exactly as they are; only models.dev becomes unreachable.
+  // Under the frozen fingerprint rule an UNCHANGED declaration set is what makes
+  // Core substitute the captured LKG entry, so this is the one path where a real
+  // metadata outage must restore models instead of withdrawing them (3 asserted
+  // the opposite boundary for a CHANGED declaration set).
+  //
+  // This runs on a dedicated server lifecycle because the cache seam must not be
+  // present during the `opencode reload` above: OpenCode 2.0.16 cannot reload a
+  // local file:// plugin alongside a package plugin (it throws and unloads both),
+  // and that reload is a pre-existing assertion this gate must keep. Restarting
+  // is safe here because the LKG store is captured again inside THIS process
+  // before the outage — the restore never depends on state from an earlier one.
+  {
+    await stopAttachedTui(tui).catch(() => {})
+    openCodeServer.child.kill()
+    await sleep(1500)
+
+    servedModels = servedFixture.data
+    catalogServer.setOutage(0)
+    // Resolve the installed candidate's own module from OpenCode's plugin cache,
+    // so a cache reset can only ever touch the installed artifact.
+    const installedFetchModule = findInstalledFetchModule()
+    offlineEnv.LITELLM_E2E_INSTALLED_FETCH_MODULE = installedFetchModule
+    writeSeamHelper(seamDir, { trigger: seamTrigger, ack: seamAck, log: seamLog })
+    rmSync(seamAck, { force: true })
+    rmSync(seamLog, { force: true })
+    const seamConfig = { ...e2eConfig, plugins: [...e2eConfig.plugins, seamPluginSpec] }
+    writeFileSync(opencodeConfigFile, JSON.stringify(seamConfig, null, 2) + "\n")
+    // OPENCODE_CONFIG_CONTENT takes precedence over the file, so it must carry
+    // the seam too or the host would never load it.
+    env.OPENCODE_CONFIG_CONTENT = JSON.stringify(seamConfig)
+
+    openCodeServer = await startOpenCodeServer()
+    env.OPENCODE_PASSWORD = openCodeServer.password
+
+    // The seam must live in the host process that runs the candidate, otherwise
+    // a reset would clear a different module instance and prove nothing.
+    {
+      const deadline = Date.now() + 30_000
+      while (Date.now() < deadline && !existsSync(seamLog)) await sleep(200)
+      assert(existsSync(seamLog),
+        `the E2E cache seam never loaded in the real host; config plugins: ${JSON.stringify(e2eConfig.plugins)}`)
+      const seamLogText = readFileSync(seamLog, "utf8")
+      const evaluated = /module-evaluated pid=(\d+)/u.exec(seamLogText)
+      assert(evaluated, `the E2E cache seam did not evaluate its module body:\n${seamLogText}`)
+      assert.equal(Number(evaluated[1]), openCodeServer.child.pid,
+        `the E2E cache seam must evaluate inside the OpenCode server process (seam ${evaluated[1]}, server ${openCodeServer.child.pid})`)
+      // The host only calls setup() once it accepted the plugin definition; a
+      // rejected seam keeps polling in a process that never runs discovery.
+      const setup = /setup pid=(\d+)/u.exec(seamLogText)
+      assert(setup, `the real host never ran the E2E cache seam setup (plugin rejected?):\n${seamLogText}`)
+      assert.equal(Number(setup[1]), openCodeServer.child.pid,
+        `the E2E cache seam setup must run in the OpenCode server process (seam ${setup[1]}, server ${openCodeServer.child.pid})`)
+      // A failed plugin renders a failure banner that reflows the diagnostics
+      // card and breaks unrelated assertions. Fail loudly instead.
+      const failedPlugins = payload(jsonOutput(api("GET", "/api/plugin"), "plugin.list"))
+        .filter((item) => item.state?.status === "failed")
+        .map((item) => `${item.id ?? "(unnamed)"}: ${item.state?.error ?? "unknown"}`)
+      assert.equal(failedPlugins.length, 0,
+        `no plugin may fail to load in the real host: ${JSON.stringify(failedPlugins)}`)
+    }
+
+    const lkgModel = "multi-endpoint-model"
+    const seamSession = payload(jsonOutput(
+      api("POST", "/api/session", "--data", JSON.stringify({ title: "LiteLLM LKG E2E" })), "session.create",
+    )).id
+    const runSeamCommand = (name, text = "") =>
+      api("POST", `/api/session/${seamSession}/command`, "--data", JSON.stringify({ name, text }))
+    const seamDiagnostics = async (needle, label) => {
+      const matches = (text) => (typeof needle === "string" ? text.includes(needle) : needle.test(text))
+      let last = ""
+      for (let attempt = 0; attempt < 6; attempt++) {
+        runSeamCommand("litellm-diagnostics", "default")
+        const diagTui = startAttachedTui(seamSession)
+        try {
+          await waitForTui(diagTui, /Endpoint[\s：:]+default/u, { timeout: 20_000 })
+          last = diagTui.output()
+          if (matches(last)) return last
+        } catch (error) {
+          last = String(error)
+        } finally {
+          await stopAttachedTui(diagTui)
+        }
+        await sleep(1000)
+      }
+      throw new Error(`diagnostics never reported ${label}; last:\n${last}`)
+    }
+    const seamHostModels = () => command(["models", "--server", openCodeServer.url], { timeout: 120_000 }).stdout
+
+    // Baseline: Core must publish the model from live evidence and report no
+    // LKG use, which is also what captures the entry this scenario restores.
+    const freshDiagnostics = await seamDiagnostics(/Endpoint[\s：:]+default/u, "the pre-outage publication")
+    assert(
+      lkgCount(freshDiagnostics) === "0",
+      `the baseline publication must not use LKG: ${lkgCount(freshDiagnostics)} in\n${freshDiagnostics}`,
+    )
+    assert(
+      !/使用已信任的前次完整配置（LKG）/u.test(freshDiagnostics),
+      `the baseline diagnostics must not name an LKG restore: ${freshDiagnostics}`,
+    )
+    assert(
+      !new RegExp(`withheld[\\s：:]*${lkgModel}`, "u").test(freshDiagnostics),
+      `the baseline model must be published, not withheld: ${freshDiagnostics}`,
+    )
+    assert(
+      seamHostModels().includes(`litellm/${lkgModel}`),
+      `the baseline model must be visible in the host model list`,
+    )
+    const declarationsBefore = JSON.stringify(servedFixture.data)
+
+    // A REAL outage on the very listener the plugin fetches from.
+    catalogServer.setOutage(503)
+    const requestsBeforeOutage = catalogRequests()
+    // Expire the installed plugin's 6h TTL cache from inside the host process,
+    // so the next discovery round genuinely re-requests the catalog.
+    const seamAck1 = await requestCacheReset("lkg-outage")
+
+    // Proof the reset hit the installed plugin's own module instance: the
+    // catalog request counter must move again, which only a cleared cache can
+    // cause. A reset on any other module instance would leave the counter
+    // frozen and this would time out.
+    let refetched = false
+    for (let attempt = 0; attempt < 90; attempt++) {
+      if (catalogRequests() > requestsBeforeOutage) { refetched = true; break }
+      await sleep(1000)
+    }
+    assert(
+      refetched,
+      `the cache reset must make the real host re-request the catalog (was ${requestsBeforeOutage}, now ${catalogRequests()}); seam ack ${JSON.stringify(seamAck1)}`,
+    )
+
+    // Core must now restore from Last Known Good. `LKG <n>` counts entries whose
+    // assessment.usingLKG is true, so a rising count IS the Core verdict — not a
+    // host-side staleness artefact.
+    const lkgDiagnostics = await seamDiagnostics(
+      new RegExp(`使用已信任的前次完整配置（LKG）：${lkgModel}`, "u"),
+      "the positive LKG restore",
+    )
+    assert(
+      Number(lkgCount(lkgDiagnostics)) >= 1,
+      `Core must report at least one LKG-backed model: ${lkgCount(lkgDiagnostics)} in\n${lkgDiagnostics}`,
+    )
+    assert(
+      lkgIds(lkgDiagnostics).includes(lkgModel),
+      `the LKG list must name ${lkgModel}: ${lkgIds(lkgDiagnostics)}`,
+    )
+    assert(/LKG\s*说明/u.test(lkgDiagnostics), `diagnostics must explain the trusted restore: ${lkgDiagnostics}`)
+    assert(
+      /live\s*unavailable/iu.test(lkgDiagnostics),
+      `diagnostics must state that live metadata was unavailable: ${lkgDiagnostics}`,
+    )
+    assert(
+      !new RegExp(`withheld[\\s：:]*${lkgModel}`, "u").test(lkgDiagnostics),
+      `a restored model must not appear as withheld: ${lkgDiagnostics}`,
+    )
+    // A restored model is still a published model.
+    assert(
+      seamHostModels().includes(`litellm/${lkgModel}`),
+      "an LKG-restored model must stay registered in the real host model list",
+    )
+    // The declaration set must be provably untouched: that is precisely what
+    // makes the restore legitimate rather than a silent substitution.
+    assert.equal(
+      JSON.stringify(servedFixture.data),
+      declarationsBefore,
+      "the LKG restore scenario must not change any LiteLLM declaration",
+    )
+    console.log(
+      `[positive LKG] catalog outage -> Core reports LKG ${lkgCount(lkgDiagnostics)} including ${lkgModel} (usingLKG) -> ${lkgIds(lkgDiagnostics)}`,
+    )
+
+    // Recovery: with the catalog back, the same identity re-publishes from live
+    // evidence and Core stops relying on LKG.
+    catalogServer.setOutage(0)
+    const requestsBeforeRecovery = catalogRequests()
+    await requestCacheReset("lkg-recovery")
+    let refetchedAfterRecovery = false
+    for (let attempt = 0; attempt < 90; attempt++) {
+      if (catalogRequests() > requestsBeforeRecovery) { refetchedAfterRecovery = true; break }
+      await sleep(1000)
+    }
+    assert(
+      refetchedAfterRecovery,
+      `the recovery reset must also make the host re-request the catalog (was ${requestsBeforeRecovery}, now ${catalogRequests()})`,
+    )
+    const recoveryDiagnostics = await seamDiagnostics(
+      /Endpoint[\s：:]+default/u,
+      "the post-outage republication",
+    )
+    assert(
+      lkgCount(recoveryDiagnostics) === "0",
+      `recovery must return to LKG 0: ${lkgCount(recoveryDiagnostics)} in\n${recoveryDiagnostics}`,
+    )
+    assert(
+      !/使用已信任的前次完整配置（LKG）/u.test(recoveryDiagnostics),
+      `recovery must be a fresh configuration, not LKG: ${recoveryDiagnostics}`,
+    )
+    assert(
+      !new RegExp(`withheld[\\s：:]*${lkgModel}`, "u").test(recoveryDiagnostics),
+      `the republished model must not fall back to withheld: ${recoveryDiagnostics}`,
+    )
+    assert(
+      seamHostModels().includes(`litellm/${lkgModel}`),
+      "the republished model must stay registered in the host model list",
+    )
+    console.log("[positive LKG] catalog restored -> LKG 0 again, model republished from live evidence")
+  }
 
   // ===== Phase 2: Endpoint Management UX over the real TUI (file-declared options, real PTY keys) =====
   await stopAttachedTui(tui).catch(() => {})
