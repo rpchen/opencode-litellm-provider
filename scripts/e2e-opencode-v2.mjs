@@ -1052,6 +1052,11 @@ export default {
     throw new Error(`publication state never matched ${label}; last=${JSON.stringify(last)}`)
   }
 
+  // [REAL-HOST-E2E] Card lines wrap at the terminal width and sit inside
+  // box-drawing borders; normalize both away so assertions on long facts can
+  // never straddle a wrap boundary.
+  const cardText = (text) => text.replace(/[┃╹▀╻╺╸]/gu, "").replace(/\s+/gu, "")
+
   // Clear the delivered dist's 6h models.dev catalog cache through the guard
   // plugin's RPC. The response names the module that was reset: it must be the
   // INSTALLED candidate's `dist/net/fetch.js`, so the reset lands on the same
@@ -1427,7 +1432,7 @@ export default {
     "the capture partition",
   )
   assert(
-    !/使用已信任的前次完整配置（LKG）/u.test(captureDiagnostics),
+    !/使用已信任的前次完整配置（LKG）/u.test(cardText(captureDiagnostics)),
     `the capture round must not use LKG: ${captureDiagnostics}`,
   )
 
@@ -1466,13 +1471,14 @@ export default {
     "the LKG-backed model must keep registering in the real host during the outage",
   )
   const lkgDiagnostics = await diagnosticsThroughTui(
-    /使用已信任的前次完整配置（LKG）[\s：:]*lkg-recovery-model/u,
+    /LKG 说明[\s：:]/u,
     "the trusted LKG substitution",
   )
-  assert(/发现 \d+ · 可用 1 · withheld 0 · LKG 1/u.test(lkgDiagnostics), `the LKG partition must be visible: ${lkgDiagnostics}`)
-  assert(/LKG 说明[\s：:]/u.test(lkgDiagnostics), `the LKG provenance must be explained in diagnostics: ${lkgDiagnostics}`)
-  assert(/via provider vendora -> model lkg-recovery-model/u.test(lkgDiagnostics), `the LKG source must reach the diagnostics card: ${lkgDiagnostics}`)
-  assert(/live unavailable/u.test(lkgDiagnostics), `the live-unavailable reason must reach the diagnostics card: ${lkgDiagnostics}`)
+  const lkgCard = cardText(lkgDiagnostics)
+  assert(/使用已信任的前次完整配置（LKG）[\s：:]*lkg-recovery-model/u.test(lkgCard), `the LKG model must be named in diagnostics: ${lkgDiagnostics}`)
+  assert(/发现1·可用1·withheld0·LKG1/u.test(lkgCard), `the LKG partition must be visible: ${lkgDiagnostics}`)
+  assert(/viaprovidervendora->modellkg-recovery-model/u.test(lkgCard), `the LKG source must reach the diagnostics card: ${lkgDiagnostics}`)
+  assert(/liveunavailable/u.test(lkgCard), `the live-unavailable reason must reach the diagnostics card: ${lkgDiagnostics}`)
   console.log("[schema-8 LKG] configured -> real catalog outage (cache genuinely re-fetched) -> configured-lkg (usingLKG) -> configured again")
 
   // Restore the catalog: the next live round re-proves the same configuration
@@ -1492,7 +1498,7 @@ export default {
     "the recovered publication partition",
   )
   assert(
-    !/使用已信任的前次完整配置（LKG）/u.test(recoveredLkgDiagnostics),
+    !/使用已信任的前次完整配置（LKG）/u.test(cardText(recoveredLkgDiagnostics)),
     `the recovered model must be freshly configured, not served from LKG: ${recoveredLkgDiagnostics}`,
   )
 
