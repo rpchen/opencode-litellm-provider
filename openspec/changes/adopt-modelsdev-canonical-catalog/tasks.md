@@ -27,7 +27,8 @@
 - [x] 4.3 提交前门禁：`test:delivery`、`typecheck`、`test`（旧 Core 305 pass / 新 Core 9328706 300 pass 双轨全绿）、`test:tui-render`、`test:package`、`validate:spec`、`test:openspec-closure`、`test:release-metadata` 通过；`verify:dist` 与 `test:distribution` 在本 PR 为预期红（差异仅本次 src 变更：host/diagnostics、host/sync、net/fetch、options；§5 重建后恢复零差异）
 - [x] 4.4 Real OpenCode 2.0.16 E2E（旧 dist 宿主契约回归）：**通过**（2026-10-08 CI run 37775162760 @ cecbe87，GitHub Actions Ubuntu + 固定 OpenCode 2.0.16 + 插件安装器 + `E2E_PACKAGE_SPEC=github:rpchen/opencode-litellm-provider#cecbe87...`：startup recovery、native keyboard activation、endpoint-scoped diagnostics、credentials、providers/models、publication gate、LKG、ack 重启持久化、identity-change withdraw、resolved discrepancy、ghostless endpoint 管理全绿）。本地已建隔离固定版本环境（`@opencode/cli@2.0.16` 于 `%TEMP%\litellm-e2e-fixed\opencode`，全局 2.0.24 未动）；CI 红的根因已修复并记录：era 不匹配（v7 dist 收到 catalog 形状 fixture → `models.dev：degraded` → `models.dev ok` 超时）非环境问题——E2E catalog server 现按已装 dist era 服务 `/catalog.json`（v8 catalog 形状）或 `/api.json`（与 PR #59 基线逐字段一致的 v7 provider map），`modelsDevUrl` 按已装 dist 的 `PUBLICATION_SCHEMA_VERSION` 选路
 
-## 5. Core 稳定 SHA 后（BLOCKED）
+## 5. Core 稳定 SHA 后
 
-- [ ] 5.1 `build:dist` 取稳定 SHA → `verify:dist` → 全门禁 + Real OpenCode E2E（新 dist）
-- [ ] 5.2 与 Core/Pi PR 互链；archive + canonical sync + strict validation
+- [x] 5.1 `build:dist` 取稳定 SHA → `verify:dist` → 全门禁 + Real OpenCode E2E（新 dist）
+  - 证据：Core `a13f16fd983478572502f3896fd5509978027261`；artifact digest `sha256:f596488b9ad2f4030cc18a2a74265076f0b82bdc8a991419e41ebafec00c3790`；`verify:dist`（105 文件零差异）、`test:delivery`、`typecheck`、`npm test`（304 pass / 5 skip / 0 fail）、`test:tui-render`、`test:distribution`、`test:package`、`validate:spec`、`test:scenario-coverage`、`test:openspec-closure`、`test:release-metadata` 全绿；Real OpenCode 2.0.16 E2E 迁移到冻结 v8 语义（fixture 合并 e2e registry、fail-closed 指纹拒绝 + 恢复、每阶段保留确定性 modelsDevUrl），CI run 37913345669 @ `1391ebb` 全绿
+- [ ] 5.2 与 Core/Pi PR 互链；archive + canonical sync + strict validation（用户未授权归档/合并前保持未勾选）
