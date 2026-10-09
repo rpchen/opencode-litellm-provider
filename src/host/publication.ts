@@ -108,6 +108,10 @@ export function summarizePublication(
   const lkgDetail = publication.publishable
     .map((entry) => entry.assessment.lkgDetail)
     .find((detail): detail is string => detail !== undefined)
+  // Optional evidence fields are OMITTED when absent instead of being emitted
+  // as explicit `undefined`: the OpenCode host validates plugin RPC outputs
+  // against the declared schema, where an `undefined` property is not a
+  // string. Both fields stay optional on the type.
   return {
     discovered: catalogFacts.discovered,
     publishable: publication.publishable.map((entry) => ({
@@ -117,7 +121,7 @@ export function summarizePublication(
     lkgIDs: publication.publishable
       .filter((entry) => entry.assessment.usingLKG)
       .map((entry) => entry.spec.id),
-    lkgDetail,
+    ...(lkgDetail === undefined ? {} : { lkgDetail }),
     withheld: catalogFacts.withheld.map((entry) => ({
       id: entry.id,
       status: entry.status,
@@ -130,7 +134,7 @@ export function summarizePublication(
     regressions: catalogFacts.regressions.map((entry) => entry.id),
     discrepancies: allFacts.filter((fact) => fact.status === "resolved-discrepancy"),
     conflicts: allFacts.filter((fact) => fact.status === "unresolved-conflict"),
-    failureKind,
+    ...(failureKind === undefined ? {} : { failureKind }),
     acknowledgement: { notify: false, reason: "unchanged", fingerprint: catalogFacts.fingerprint },
   }
 }

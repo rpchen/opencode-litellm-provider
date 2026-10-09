@@ -508,6 +508,10 @@ describe("publication longitudinal: Core -> snapshot -> RPC -> TUI lines", () =>
       const state = await handlers.state!({}) as { withheld: Array<{ id: string }>; partial: boolean }
       expect(state.withheld.map((model) => model.id)).toEqual(["gap-model"])
       expect(state.partial).toBeFalse()
+      // Host schema compliance: optional evidence fields stay absent rather
+      // than explicit undefined (the RPC layer type-checks declared fields).
+      expect("lkgDetail" in state).toBeFalse()
+      expect("failureKind" in state).toBeFalse()
 
       // Even after a refresh nothing forces the model in: publication is
       // Core's decision alone.
@@ -545,6 +549,28 @@ describe("publication longitudinal: Core -> snapshot -> RPC -> TUI lines", () =>
     expect(summary.withheld).toEqual([])
     expect(summary.regressions).toEqual([])
     expect(summary.acknowledgement.reason).toBe("unchanged")
+  })
+
+  test("absent optional summary fields are omitted, never emitted as undefined", () => {
+    // The OpenCode host validates `litellm-publication.state` outputs against
+    // the declared schema: an explicit `undefined` property fails the string
+    // type check and the RPC returns rpc.invalid_output.
+    const summary = summarizePublication(
+      { publishable: [], blocked: [], assessments: new Map() },
+      {
+        discovered: 1,
+        publishable: [],
+        lkgBacked: [],
+        withheld: [],
+        partial: false,
+        unusable: false,
+        regressions: [],
+        newlyWithheld: [],
+        fingerprint: "sha256:none",
+      },
+    )
+    expect("lkgDetail" in summary).toBeFalse()
+    expect("failureKind" in summary).toBeFalse()
   })
 })
 
