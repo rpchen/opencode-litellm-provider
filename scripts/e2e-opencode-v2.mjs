@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -68,10 +68,8 @@ const seamDir = path.join(workspace, "e2e-cache-seam")
 const seamTrigger = path.join(workspace, "e2e-cache-reset.trigger")
 const seamAck = path.join(workspace, "e2e-cache-reset.ack.json")
 const seamLog = path.join(workspace, "e2e-cache-seam.log")
-// pathToFileURL, not string concatenation: on POSIX the seam directory already
-// starts with "/", so `"file:///" + dir` yields four slashes and OpenCode
-// rejects the plugin.
-const seamPluginSpec = pathToFileURL(seamDir).href
+/** Assigned by writeSeamHelper() once the directory really exists on disk. */
+let seamPluginSpec
 
 /**
  * Deterministic models.dev catalog. The real host stays real; only the metadata
@@ -262,6 +260,11 @@ function startCatalogServer() {
 // request again. The plugin then makes every publication decision itself.
 function writeSeamHelper(dir, paths) {
   mkdirSync(dir, { recursive: true })
+  // pathToFileURL, not string concatenation: on POSIX the seam directory already
+  // starts with "/", so `"file:///" + dir` yields four slashes and OpenCode
+  // rejects the plugin. realpathSync first because a Windows temp dir can be an
+  // 8.3 short path (CHENR_~1) whose "~" pathToFileURL percent-encodes.
+  seamPluginSpec = pathToFileURL(realpathSync(dir)).href
   writeFileSync(path.join(dir, "package.json"), JSON.stringify({
     name: "litellm-e2e-cache-seam",
     version: "0.0.0-e2e",
@@ -1427,9 +1430,11 @@ try {
     rmSync(seamLog, { force: true })
     const seamConfig = { ...e2eConfig, plugins: [...e2eConfig.plugins, seamPluginSpec] }
     writeFileSync(opencodeConfigFile, JSON.stringify(seamConfig, null, 2) + "\n")
-    // OPENCODE_CONFIG_CONTENT takes precedence over the file, so it must carry
-    // the seam too or the host would never load it.
+    // offlineEnv snapshotted `env` when it was created, long before either
+    // config was written, so the server process only ever sees the values
+    // captured there. Keep both env objects in step with the file.
     env.OPENCODE_CONFIG_CONTENT = JSON.stringify(seamConfig)
+    offlineEnv.OPENCODE_CONFIG_CONTENT = env.OPENCODE_CONFIG_CONTENT
 
     openCodeServer = await startOpenCodeServer()
     env.OPENCODE_PASSWORD = openCodeServer.password
@@ -1440,7 +1445,7 @@ try {
       const deadline = Date.now() + 30_000
       while (Date.now() < deadline && !existsSync(seamLog)) await sleep(200)
       assert(existsSync(seamLog),
-        `the E2E cache seam never loaded in the real host; config plugins: ${JSON.stringify(e2eConfig.plugins)}`)
+        `the E2E cache seam never loaded in the real host; seam spec=${seamPluginSpec}; written config=${JSON.stringify(seamConfig)}; on-disk config=${readFileSync(opencodeConfigFile, "utf8")}; server log tail:\n${openCodeServer.output().stdout.slice(-3000)}`)
       const seamLogText = readFileSync(seamLog, "utf8")
       const evaluated = /module-evaluated pid=(\d+)/u.exec(seamLogText)
       assert(evaluated, `the E2E cache seam did not evaluate its module body:\n${seamLogText}`)
