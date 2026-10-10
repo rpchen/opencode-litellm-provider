@@ -1,7 +1,5 @@
-# 修订验证与审查边界
+# 实施验证与审查边界
 
-本次仅修订同名change。实施任务未完成，源码、dist、canonical specs、历史archive与版本保持不变。新行为的真实宿主E2E在获准实施后执行，不能把现有代码CI或合成数据检查称为新行为已验收。
+已获批准并按Core→Pi→OpenCode实施，固定Core squash merge SHA cf797e953eb1f6de8e7c3e0fd5e98094398c26f9。源码、dist及README已更新；冻结oracle和历史archive未改。当前逐Scenario自动化证据见scenario-evidence.md，具体命令、真实宿主安装/请求结果见implementation.md。
 
-本仓库 strict：24/24。`openspec validate --all --strict --no-interactive` 通过；`npm run test:openspec-closure` 为32/32，历史检查0 mismatches。具体结果与跨仓库一致性见Core同名change/validation.md，逐Scenario计划见scenario-evidence.md。
-
-更新现有Draft PR，不合并、不归档、不发布。README产品行为未变：No README change；实施时说明contextTierCap废弃和快照升级。
+strict为24/24，closure为32项门禁测试、0历史mismatch。完整真实OpenCode2.0.16门禁与CI均通过，4.x/5.1按实际证据勾选；模拟context/package smoke未替代native E2E。PR #63仅交Review，合并、finish与Release另行授权。

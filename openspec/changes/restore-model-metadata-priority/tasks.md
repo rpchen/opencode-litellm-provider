@@ -21,12 +21,14 @@ Core #34 已授权合并，稳定 SHA cf797e953eb1f6de8e7c3e0fd5e98094398c26f9�
 
 ## 4. 真实宿主验收
 
-- [ ] 4.1 使用真实OpenCode2.0.16自身installer安装不可变candidate commit/tag；隔离HOME/XDG、两个本地fake endpoints与独立credentials，留存package/Core SHA。
-- [ ] 4.2 执行T33：16项最终注册/picker逐字段断言、每声明effort实际请求、无档位和不支持推理请求、Chat/Responses/Messages路径与SDK初始化；mock/factory/package smoke不能替代。
-- [ ] 4.3 在真实宿主中注入价格错误、catalog outage、恢复、删除、auth、重启/activation并检查UI与注册一致；保存脱敏证据，逐Scenario回填自动化测试名/CI run。
+- [x] 4.1 使用真实OpenCode2.0.16自身installer安装不可变candidate commit/tag；隔离HOME/XDG、两个本地fake endpoints与独立credentials，留存package/Core SHA。
+- [x] 4.2 执行T33：16项最终注册/picker逐字段断言、每声明effort实际请求、无档位和不支持推理请求、Chat/Responses/Messages路径与SDK初始化；mock/factory/package smoke不能替代。
+- [x] 4.3 在真实宿主中注入价格错误、catalog outage、恢复、删除、auth、重启/activation并检查UI与注册一致；保存脱敏证据，逐Scenario回填自动化测试名/CI run。
 
 ## 5. 完成门禁
 
-- [ ] 5.1 运行verify:dist、test:delivery、typecheck、test、test:tui-render、test:distribution、test:package、Real OpenCode2.0.16 E2E和validate:spec、test:openspec-closure、test:release-metadata；记录具体命令、退出码及未执行项。
+- [x] 5.1 运行verify:dist、test:delivery、typecheck、test、test:tui-render、test:distribution、test:package、Real OpenCode2.0.16 E2E和validate:spec、test:openspec-closure、test:release-metadata；记录具体命令、退出码及未执行项。
 - [ ] 5.2 仅实现和证据齐全后CLI archive新change，再strict/closure；PR依赖Core与Pi验证结果，不得自动合并。
 - [ ] 5.3 获授权合并后finish_codebase_task核对准确main/index字节；Release另行授权，固定provenance不得跟随新main重建。
+
+实施验收候选4663f92的CI38068474541为SUCCESS：301/301与真实OpenCode2.0.16的16/16配置、63请求、完整endpoint/恢复/迁移通过。证据见implementation.md/scenario-evidence.md。5.2/5.3等待代码Review和授权合并收尾，Core宿主关闭任务不提前勾选，历史archive不改。

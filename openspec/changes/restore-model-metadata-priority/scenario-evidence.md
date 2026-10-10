@@ -1,37 +1,37 @@
-# Scenario 证据计划
+# Scenario 自动化证据
 
-实施前每项均为planned；设计数据验证不能替代业务与真实宿主验收。实施时补具体文件、test名称、CI run与结果。矩阵T编号定义在Core同名change/test-matrix.md。
+沿用 Core T01–T34，T05/T06撤回。冻结输入、公开catalog和oracle从合并Core逐字节复制，未修改验收预期。具体命令、安装身份、CI结果及测试环境限制见implementation.md。候选`4663f9251113f471d3196b1118ef822174e4d9ef`的[完整CI与真实OpenCode2.0.16 E2E](https://github.com/rpchen/opencode-litellm-provider/actions/runs/38068474541)均通过，301/301测试、16/16配置和63个实际SDK请求。后续文档HEAD由本PR最新checks相同门禁复验。
 
-| Capability | Requirement | Scenario / Matrix | 计划证据 | 当前状态 |
+| Capability | Requirement | Scenario / Matrix | 自动化证据 | 结果 |
 |---|---|---|---|---|
-| change-sync | 元数据不可用时消费 Core 恢复结果 | [T25] catalog超时 | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| discovery-quality-integration | OpenCode preserves selected limits and reference prices | [T28] 后备元数据 | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| discovery-resilience-integration | Consume one Core publication result | [T31] 只有Core判定 | Core→state→command/RPC→UI纵向 | planned，未实施 |
-| discovery-snapshot | OpenCode current-policy snapshot restore | [T19] 旧策略不回放 | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| discovery-snapshot | OpenCode current-policy snapshot restore | [T21] scope不兼容 | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| discovery-snapshot | OpenCode current-policy snapshot restore | [T19] 价格损坏 | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| model-audit-export | 内容与注册快照一致 | 最终映射与协议 | audit 安全负向 | planned，未实施 |
-| model-audit-export | 内容与注册快照一致 | 无推理档位或未知字段 | audit 安全负向 | planned，未实施 |
-| model-audit-export | 内容与注册快照一致 | 发布日期保留注册原值 | audit 安全负向 | planned，未实施 |
-| model-audit-export | Metadata provenance audit | [T23] 安全可追溯 | audit 安全负向 | planned，未实施 |
-| model-discovery | 消费 Core 整记录配置 | [T01] 完整16项 | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| model-discovery | 消费 Core 整记录配置 | [T08] 内部信息变化 | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| model-discovery | 消费 Core 整记录配置 | [T10] 明确能力值 | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| model-discovery | 消费 Core 整记录配置 | [T03] 官方记录不存在 | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| model-discovery | 精确宿主推理选项映射 | [T13] GPT各自档位 | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| model-discovery | 精确宿主推理选项映射 | [T14] 支持无档位 | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| model-discovery | 精确宿主推理选项映射 | [T33] 真实宿主请求 | 真实 OpenCode 2.0.16 E2E | planned，未实施 |
-| model-discovery | 原始模型名与可选参考价 | [T16] 价格缺失或错误 | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| model-discovery | 原始模型名与可选参考价 | [T17] 原272k价格阶梯 | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| provider-diagnostics | Model metadata summary | [T22] 匹配成功 | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| provider-diagnostics | Model metadata summary | [T31] 诊断纵向一致 | Core→state→command/RPC→UI纵向 | planned，未实施 |
-| publication | Current Core configuration cache | [T19] 策略迁移 | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| publication | Core publication controls host registration | [T01] 完整16模型 | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| publication | Core publication controls host registration | [T03] 合法后备记录 | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| publication | Core publication controls host registration | [T30] 非法关键上限 | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| publication | Explicit OpenCode tool capability | [T30] tools未知 | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| publication | Explicit OpenCode tool capability | [T10] tools明确false | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| publication | Host handling of metadata outages | [T18] catalog失败 | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| publication | Host handling of metadata outages | [T16] 价格故障 | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| publication | Host handling of metadata outages | [T20] 模型已删除 | Core/adapter 对应矩阵单元与集成测试 | planned，未实施 |
-| shared-discovery-core | OpenCode single Core implementation | [T34] 同一Core事实 | 固定provenance/package消费者 | planned，未实施 |
+| change-sync | 元数据不可用时消费 Core 恢复结果 | [T25] catalog超时 | test/metadata-priority.test.ts — prices do not affect publishing; outage retains original model_name despite route changes; deletion removes models；test/publication.test.ts — metadata failure with valid LKG still registers with LKG marking；real host catalog failure/deletion | PASS |
+| discovery-quality-integration | OpenCode preserves selected limits and reference prices | [T28] 后备元数据 | test/metadata-priority.test.ts — official absent: maps selected opencode/openrouter record without provider proof | PASS |
+| discovery-resilience-integration | Consume one Core publication result | [T31] 只有Core判定 | scripts/test-tui-render.ts — frozen 16 Core→snapshot→diagnostics command/RPC→actual rendered card；test/metadata-priority.test.ts — Core to snapshot to RPC/TUI diagnostics and audit | PASS |
+| discovery-snapshot | OpenCode current-policy snapshot restore | [T19] 旧策略不回放 | test/metadata-priority.test.ts — bad reference prices restore as zero before any network result；old schema, critical corruption and credential scope do not restore | PASS |
+| discovery-snapshot | OpenCode current-policy snapshot restore | [T21] scope不兼容 | test/metadata-priority.test.ts — old schema, critical corruption and credential scope do not restore；test/sync.test.ts — 显式 endpoint identity 隔离同 URL/同凭据的 legacy snapshot | PASS |
+| discovery-snapshot | OpenCode current-policy snapshot restore | [T19] 价格损坏 | test/metadata-priority.test.ts — bad reference prices restore as zero before any network result；old schema, critical corruption and credential scope do not restore | PASS |
+| model-audit-export | 内容与注册快照一致 | 最终映射与协议 | test/metadata-priority.test.ts — Core to snapshot to RPC/TUI diagnostics and audit retains public records, hides raw secret/URL/route；test/audit.test.ts — 凭据、连接、上游原文和扩展设置不进入报告 | PASS |
+| model-audit-export | 内容与注册快照一致 | 无推理档位或未知字段 | test/metadata-priority.test.ts — supported-empty and unsupported preserve empty variants；test/audit.test.ts allowlist | PASS |
+| model-audit-export | 内容与注册快照一致 | 发布日期保留注册原值 | test/audit.test.ts — 字符串、数值、缺失及无效日期保留注册数值并分别标注 | PASS |
+| model-audit-export | Metadata provenance audit | [T23] 安全可追溯 | test/metadata-priority.test.ts — Core to snapshot to RPC/TUI diagnostics and audit retains public records, hides raw secret/URL/route；test/audit.test.ts — 凭据、连接、上游原文和扩展设置不进入报告 | PASS |
+| model-discovery | 消费 Core 整记录配置 | [T01] 完整16项 | test/metadata-priority.test.ts — 16 final host configurations preserve all declared fields and no extra variants；scripts/e2e-opencode-v2.mjs real host registry/picker | PASS |
+| model-discovery | 消费 Core 整记录配置 | [T08] 内部信息变化 | test/metadata-priority.test.ts — prices do not affect publishing; outage retains original model_name despite route changes; deletion removes models；test/publication.test.ts — metadata failure with valid LKG still registers with LKG marking；real host catalog failure/deletion | PASS |
+| model-discovery | 消费 Core 整记录配置 | [T10] 明确能力值 | test/metadata-priority.test.ts — supported-empty and unsupported preserve empty variants; tools false is explicit and unknown is withheld | PASS |
+| model-discovery | 消费 Core 整记录配置 | [T03] 官方记录不存在 | test/metadata-priority.test.ts — official absent: maps selected opencode/openrouter record without provider proof | PASS |
+| model-discovery | 精确宿主推理选项映射 | [T13] GPT各自档位 | test/metadata-priority.test.ts — 16 final host configurations preserve all declared fields and no extra variants；scripts/e2e-opencode-v2.mjs real host registry/picker | PASS |
+| model-discovery | 精确宿主推理选项映射 | [T14] 支持无档位 | test/metadata-priority.test.ts — supported-empty and unsupported preserve empty variants; tools false is explicit and unknown is withheld | PASS |
+| model-discovery | 精确宿主推理选项映射 | [T33] 真实宿主请求 | scripts/e2e-opencode-v2.mjs — frozen 16-model matrix；真实session model选择与每effort请求 | PASS |
+| model-discovery | 原始模型名与可选参考价 | [T16] 价格缺失或错误 | test/metadata-priority.test.ts — prices do not affect publishing; outage retains original model_name despite route changes; deletion removes models（contextTierCap=true，GPT 1050000） | PASS |
+| model-discovery | 原始模型名与可选参考价 | [T17] 原272k价格阶梯 | test/metadata-priority.test.ts — prices do not affect publishing; outage retains original model_name despite route changes; deletion removes models（contextTierCap=true，GPT 1050000） | PASS |
+| provider-diagnostics | Model metadata summary | [T22] 匹配成功 | test/metadata-priority.test.ts — Core to snapshot to RPC/TUI diagnostics and audit；scripts/test-tui-render.ts — 16/16 selected metadata | PASS |
+| provider-diagnostics | Model metadata summary | [T31] 诊断纵向一致 | scripts/test-tui-render.ts — frozen 16 Core→snapshot→diagnostics command/RPC→actual rendered card；test/metadata-priority.test.ts — Core to snapshot to RPC/TUI diagnostics and audit | PASS |
+| publication | Current Core configuration cache | [T19] 策略迁移 | test/metadata-priority.test.ts — bad reference prices restore as zero before any network result；old schema, critical corruption and credential scope do not restore | PASS |
+| publication | Core publication controls host registration | [T01] 完整16模型 | test/metadata-priority.test.ts — 16 final host configurations preserve all declared fields and no extra variants；scripts/e2e-opencode-v2.mjs real host registry/picker | PASS |
+| publication | Core publication controls host registration | [T03] 合法后备记录 | test/metadata-priority.test.ts — official absent: maps selected opencode/openrouter record without provider proof | PASS |
+| publication | Core publication controls host registration | [T30] 非法关键上限 | test/core-adapter.test.ts — generic operational limits guard rejects nonpositive and nonfinite context/output（0/-1/NaN/Infinity，含最终注册） | PASS |
+| publication | Explicit OpenCode tool capability | [T30] tools未知 | test/metadata-priority.test.ts — supported-empty and unsupported preserve empty variants; tools false is explicit and unknown is withheld | PASS |
+| publication | Explicit OpenCode tool capability | [T10] tools明确false | test/metadata-priority.test.ts — supported-empty and unsupported preserve empty variants; tools false is explicit and unknown is withheld | PASS |
+| publication | Host handling of metadata outages | [T18] catalog失败 | test/metadata-priority.test.ts — prices do not affect publishing; outage retains original model_name despite route changes; deletion removes models；test/publication.test.ts — metadata failure with valid LKG still registers with LKG marking；real host catalog failure/deletion | PASS |
+| publication | Host handling of metadata outages | [T16] 价格故障 | test/metadata-priority.test.ts — prices do not affect publishing; outage retains original model_name despite route changes; deletion removes models（contextTierCap=true，GPT 1050000） | PASS |
+| publication | Host handling of metadata outages | [T20] 模型已删除 | test/metadata-priority.test.ts — prices do not affect publishing; outage retains original model_name despite route changes; deletion removes models；test/publication.test.ts — metadata failure with valid LKG still registers with LKG marking；real host catalog failure/deletion | PASS |
+| shared-discovery-core | OpenCode single Core implementation | [T34] 同一Core事实 | dist/core-provenance.json — cf797e9…；verify:dist；scripts/test-package.ts/installed-consumer.mjs，tarball与不可变Git安装 | PASS |
