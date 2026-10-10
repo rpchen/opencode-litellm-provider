@@ -5,13 +5,7 @@ import { registerAudit } from "../src/host/audit-command.js"
 import { createDiagnosticsLines } from "../src/host/diagnostics.js"
 import { PROTOCOL_PACKAGES } from "../src/host/protocol.js"
 import {
-  assessModelConfiguration,
   buildModelSpecs,
-  capturedPublicationVerdict,
-  createLastKnownGoodEntry,
-  createLastKnownGoodStore,
-  groupLiteLLMDeployments,
-  lastKnownGoodKey,
   PUBLICATION_SCHEMA_VERSION,
 } from "../src/generated/discovery-core/index.js"
 import { buildPublicationModels, toOpenCodeModelSpecWithPublication } from "../src/host/models.js"
@@ -474,7 +468,7 @@ describe("publication longitudinal: Core -> snapshot -> RPC -> TUI lines", () =>
     }
   })
 
-  test("the publication RPC summary carries the new evidence facts", () => {
+  test("the publication RPC summary preserves the actual failure and configured partition", () => {
     const summary = summarizePublication(
       { publishable: [], blocked: [], assessments: new Map() },
       {

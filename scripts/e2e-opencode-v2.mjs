@@ -14,10 +14,8 @@ if (!packageSpec || !/^(github:rpchen\/opencode-litellm-provider|git\+file:\/\/\
   throw new Error("E2E_PACKAGE_SPEC must pin this repository to a full Git commit")
 }
 const fixture = JSON.parse(readFileSync(path.join(root, "test/fixtures/litellm-model-info.json"), "utf8"))
-// [REAL-HOST-E2E] models.dev is deliberately unreachable in this gate (see the proxy
-// env below), so every capability dimension the trusted publication policy requires
-// must be declared by the served endpoint metadata. Only the served payload changes;
-// the shared fixture file stays the unit-test baseline.
+// Preserve the existing lifecycle input while the selected complete catalog
+// records below provide model capabilities. Do not mutate shared fixtures.
 const FULL_CAPABILITY_DECLARATIONS = {
   supports_function_calling: true,
   supports_reasoning: false,
@@ -124,9 +122,7 @@ function startCatalogServer() {
       if (!address || typeof address === "string") return reject(new Error("catalog server did not bind TCP"))
       resolve({
         server,
-        // v8 dists request /catalog.json; v7 dists still request /api.json.
         url: `http://127.0.0.1:${address.port}/catalog.json`,
-        legacyUrl: `http://127.0.0.1:${address.port}/api.json`,
         requests: () => requests,
         failures: () => failures,
         setOutage: (flag) => { outage = flag },
@@ -538,7 +534,7 @@ async function dumpFailureDiagnostics() {
 try {
   catalogServer = await startCatalogServer()
   const catalogRequests = catalogServer.requests
-  // [REAL-HOST-E2E] Schema-8 LKG positive recovery needs a genuine models.dev
+  // [REAL-HOST-E2E] Schema-9 LKG positive recovery needs a genuine models.dev
   // outage that Core can SEE. The delivered dist keeps a 6h in-memory catalog
   // cache (production trigger: TTL expiry) and OpenCode 2.0.16 is a compiled
   // binary without any preload seam, so a tiny companion plugin — loaded by the
@@ -615,6 +611,9 @@ export default {
 
   const e2eConfig = {
     $schema: "https://opencode.ai/config.json",
+    // The fake service emits a plain reply, not OpenCode's required compaction
+    // template. Keep the request matrix on the real SDK conversational path.
+    compaction: { auto: false },
     plugins: [{
       package: packageSpec,
       options: {
@@ -1031,7 +1030,7 @@ export default {
     }
     assert(finished,`${id}/${variant??"default"}: actual host turn did not finish`)
     if(finished.outcome!=="succeeded") api("GET",`/api/session/${requestSession}/context`)
-    assert.equal(finished.outcome,"succeeded",`${id}/${variant??"default"}: SDK turn failed; session=${sanitize(JSON.stringify(finished))}; requests=${sanitize(JSON.stringify(defaultMock.requests.slice(before)))}`)
+    assert.equal(finished.outcome,"succeeded",`${id}/${variant??"default"}: SDK turn failed; session=${sanitize(JSON.stringify(finished))}; requests=${JSON.stringify(defaultMock.requests.slice(before).map(request=>({path:request.path,model:request.body.model,reasoning_effort:request.body.reasoning_effort,reasoning:request.body.reasoning,thinking:request.body.thinking})))}`)
     const requests=defaultMock.requests.slice(before).filter(request=>request.body.model===id)
     assert(requests.length>0,`${id}/${variant??"default"}: SDK never reached LiteLLM`)
     for(const request of requests){

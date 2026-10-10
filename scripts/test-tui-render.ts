@@ -1,4 +1,6 @@
 import assert from "node:assert/strict"
+import metadataDiscovery from "../test/fixtures/metadata-priority/synthetic-discovery.json" with { type: "json" }
+import metadataCatalog from "../test/fixtures/metadata-priority/modelsdev-subset.json" with { type: "json" }
 import { testRender } from "@opentui/solid"
 import { RGBA, TextRenderable, type Renderable } from "@opentui/core"
 import { createSignal } from "solid-js"
@@ -173,9 +175,7 @@ const cleanup = await setupAuditTui(context, (callback) => {
   tick = callback
   return () => { stopped++ }
 })
-// Height must fit the audit card plus the diagnostics card: under the frozen
-// Core v8 semantics the diagnostics payload adds canonical/serving/operator
-// detail lines, so the render viewport is sized for the full card.
+// Height fits both cards, including the selected metadata and reasoning summary.
 const live = await testRender(() => render({ sessionID: "current" }), { width: 110, height: 40 })
 async function clickLive(label: string) {
   await live.renderOnce()
@@ -255,48 +255,8 @@ try {
     conversationFeedback: false,
   }, {
     scheduler: { setTimeout: () => ({}), clearTimeout: () => {} },
-    fetchLiteLLM: async () => ({
-      data: [{
-        model_name: "gpt-diagnostics",
-        litellm_params: { model: "openai/gpt-diagnostics" },
-        model_info: {
-          supported_endpoints: ["/v1/responses"],
-          max_input_tokens: 100000,
-          max_output_tokens: 10000,
-        },
-      }],
-    }),
-    // Catalog shape ({ models, providers }): the committed dist is the frozen
-    // Core v8 era, where a legacy provider map classifies `providers-only`
-    // (unavailable) and the LiteLLM-only group can no longer publish (G30).
-    // The registry entry publishes the canonical identity; the provider record
-    // is the diagnostic serving reference that makes the catalog `ok`.
-    getModelsDev: async () => ({
-      models: {
-        "openai/gpt-diagnostics": {
-          limit: { context: 100000, output: 10000 },
-          modalities: { input: ["text"], output: ["text"] },
-          tool_call: false,
-          reasoning: false,
-          release_date: "2026-05-01",
-        },
-      },
-      providers: {
-        openai: {
-          models: {
-            "gpt-diagnostics": {
-              id: "gpt-diagnostics",
-              canonical_model_id: "openai/gpt-diagnostics",
-              limit: { context: 100000, output: 10000 },
-              modalities: { input: ["text"], output: ["text"] },
-              tool_call: false,
-              reasoning: false,
-              release_date: "2026-05-01",
-            },
-          },
-        },
-      },
-    }),
+    fetchLiteLLM: async () => metadataDiscovery,
+    getModelsDev: async () => metadataCatalog,
   })
   await diagnosticLoop.start()
   assert.equal(diagnosticSnapshot.audit?.status, "ready")
@@ -365,7 +325,11 @@ try {
     const diagnosticsFrame = live.captureCharFrame()
     assert.match(diagnosticsFrame, /LiteLLM Diagnostics/)
     assert.match(diagnosticsFrame, /状态：正常/)
-    assert.match(diagnosticsFrame, /已注册模型：1/)
+    assert.match(diagnosticsFrame, /已注册模型：16/)
+    assert.match(diagnosticsFrame, /命中 16\/16/)
+    assert.match(diagnosticsFrame, /deepseek-v4\.1-flash/)
+    assert.match(diagnosticsFrame, /来源 deepseek · 推理 low,high,max/)
+    assert.doesNotMatch(diagnosticsFrame, /serving|proof|models_dev_provider/)
     assert.match(diagnosticsFrame, /缓存：network/)
     assert.match(diagnosticsFrame, /models\.dev：ok/)
     assert.match(diagnosticsFrame, /协议 fallback：0/)
