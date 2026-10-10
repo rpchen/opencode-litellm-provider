@@ -1,0 +1,12 @@
+{
+    "schema_version": 2,
+    "commit": "b8162dd048690f4c78bbb98b83ecc703573ffb0d",
+    "indexed_at": "2026-10-10T02:01:08Z",
+    "project": "opencode-litellm-provider-main-b8162dd048690f4c78bbb98b83ecc703573ffb0d",
+    "nodes": 4058,
+    "edges": 7920,
+    "original_size": 10551296,
+    "compressed_size": 1755796,
+    "compression_level": 9,
+    "reconcile_basis": "git-clean-head"
+}
