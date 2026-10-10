@@ -20,9 +20,14 @@ export interface PluginOptions {
     conversationFeedback: boolean;
     /**
      * Optional override for the models.dev catalog URL (default
-     * `https://models.dev/api.json`). Lets an operator point at a self-hosted or
-     * mirrored catalog; the fetched document goes through exactly the same
-     * evidence and publication policy as the default source.
+     * `https://models.dev/catalog.json`). Lets an operator point at a self-hosted
+     * or mirrored catalog snapshot; the mirror MUST serve the catalog shape
+     * (`{ providers, models }`). Provider-only (`api.json` shape) mirrors are
+     * classified by Core as providers-only: no canonical resolution runs, models
+     * with complete LiteLLM declarations still publish, everything else is
+     * withheld (valid LKG may still restore), and diagnostics suggest switching
+     * to a catalog-shaped mirror. The fetched document goes through exactly the
+     * same evidence and publication policy as the default source.
      */
     modelsDevUrl?: string;
     /** Undefined means legacy single-endpoint mode using /connect URL caching. */

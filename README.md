@@ -220,6 +220,17 @@ endpoint 里发现了模型，不等于这个模型已经可以被安全使用�
 
 “最近成功发现”“下次允许重试”等绝对时间按**当前运行 OpenCode 的宿主机器时区**显示，并附带 UTC 偏移；内部 discovery/snapshot/cache 时间仍保持标准 UTC/epoch。
 
+### Canonical catalog 行为变化
+
+诊断/TUI 的模型明细新增（Core 提供则显示，否则省略）：canonical 身份与证据、serving 状态与 provider/record、推理档位状态（unknown 附 `models_dev_provider` 恢复提示）、operator-configuration 键（明确不是 enforcement）、可声明的诊断候选、catalog 形状。
+
+OpenCode 现从 `https://models.dev/catalog.json` 获取 canonical registry 与 serving 记录（同一 snapshot）：
+
+- 恢复 serving 值需要同时声明 `models_dev_provider` **且** wire id 精确命中该 provider 的某条记录；仅声明 provider 而无精确 SKU（如 DeepSeek 的 relation-only SKU）仍用 canonical 值。DeepSeek 输出因此为 384000（此前 serving SKU 值 393216 仅 serving 证明后可用）；kimi-k3 输出为 131072（此前 first-party serving 值 1048576 不再当内禀发布）。
+- serving 未证明时推理档位一律 unknown、无可选档位；`litellm_params` 非价格键（含 `reasoning_effort`、`max_tokens` 系）是 operator configuration，不收窄、不产生档位；价格按声明 → 已证明 serving 逐组件解析。
+- serving 缺字段（如 `base_model_omit` 删除的 `limit.input`）不再用 canonical 回填，有同维度 LiteLLM 声明则补缺，否则 unknown。
+- LKG 为 schema 8（group-wide proof）：升级后首轮 outage 期间旧条目不恢复，下一轮 live 自动重捕获。
+
 终端 TUI 中的诊断卡片提供 **[关闭]**，关闭只隐藏当前会话里的当前诊断结果；再次执行 `/litellm-diagnostics` 会显示新的结果。当前诊断卡片依赖 OpenCode 终端 TUI；Desktop / Web 等不加载 TUI 卡片的客户端不会显示该卡片。
 
 诊断结果同时保留为可恢复的 latest state：即使命令完成时 TUI 事件监听尚未就绪，TUI 初始化后的同步也会把结果显示出来，不需要重新执行命令。
@@ -302,7 +313,7 @@ Core Commit      649bc84f
 | `protocolOverrides` | `{}` | legacy 单 endpoint 模式按 LiteLLM `model_name` 覆盖协议；显式模式放到各 endpoint 内 |
 | `endpoints` | 未设置 | 启用显式多 endpoint 模式；对象 key 为 endpoint id，每项至少包含 `baseUrl` |
 | `conversationFeedback` | `false` | 为 audit export 向会话提交反馈；开启后会触发一次会话/模型处理 |
-| `modelsDevUrl` | `https://models.dev/api.json` | 覆盖 models.dev catalog 地址（自托管/镜像）；抓取到的元数据仍走同一套证据与 publication 规则 |
+| `modelsDevUrl` | `https://models.dev/catalog.json` | 覆盖 models.dev catalog 地址（自托管/镜像）；镜像必须是 catalog 形状（`{ providers, models }` 同 snapshot），provider-only（`api.json` 形状）镜像由 Core 按不可用降级处理（LiteLLM 完整者仍发布，其余 withheld + 有效 LKG 可恢复）并诊断提示 |
 
 示例：
 
@@ -340,15 +351,15 @@ Core Commit      649bc84f
 | 正常启动 | 若有兼容的持久化 snapshot，先恢复上次模型，再联网校正 |
 | 模型清单变化 | 整体更新 LiteLLM provider；内容未变化时不重复 reload |
 | LiteLLM 暂时不可达 / 超时 / 429 / 5xx | 保留 last-known-good，后续重试；诊断显示 `stale` |
-| models.dev 不可达 | 继续使用 LiteLLM 数据；部分补充元数据/reasoning variants 暂缺 |
+| models.dev 不可达 | 按 catalog 形状不可用处理：LiteLLM 声明完整者仍发布，其余 withheld（有效 LKG 可恢复）；reasoning variants 暂缺 |
 | Key 无效（401 / 403） | 撤下旧模型 |
 | model-info 最终 404 | 撤下旧模型 |
 | 成功返回空清单 | 撤下旧模型 |
 | 断开 LiteLLM 连接 | 撤下 provider 模型 |
 
-`/v1/model/info` 是模型发现的事实来源；`/v1/models` 不作为发现源。embedding、图像生成等非对话模型不会注册。models.dev 能力补缺优先使用原厂记录；原厂 provider 记录不可用时依次使用 OpenRouter、OpenCode，再考虑全局唯一记录，避免多网关同名模型因为 provider 歧义而丢失 context、输出上限或 reasoning 等关键能力。
+`/v1/model/info` 是模型发现的事实来源；`/v1/models` 不作为发现源。embedding、图像生成等非对话模型不会注册。内禀事实只来自 canonical registry（`catalog.models`）；serving 覆盖只在运维者声明 `models_dev_provider` **且** wire id 精确命中该 provider 记录时生效。未证明的 provider 记录（OpenCode、OpenRouter、同名、变体）不提供任何发布事实，只作诊断候选。
 
-模型上限按共享发现规则合并：总 context 与最大 input 分开处理；models.dev 可补充总 context，LiteLLM 的 `max_input_tokens` 仍作为 input 限制。两者冲突时不会再把 input 上限误当成总 context。Core diagnostics 会保留 models.dev 未命中的私有模型用于解释，但若最终仍无法得到正数 context/output，OpenCode 不会把该模型发布成 `context: 0` / `output: 0` 的不可用配置。
+模型上限按共享发现规则合并：总 context 与最大 input 分开处理；Core diagnostics 会保留 models.dev 未命中的私有模型用于解释，但若最终仍无法得到正数 context/output，OpenCode 不会把该模型发布成 `context: 0` / `output: 0` 的不可用配置。
 
 ## 升级与回滚
 

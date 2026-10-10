@@ -25,7 +25,7 @@ const defaultScheduler = {
     clearTimeout: (handle) => clearTimeout(handle),
 };
 /** Record complete configured models as Last Known Good for future outages. */
-function seedPublicationLKG(store, litellmResponse, publishable, now) {
+function seedPublicationLKG(store, litellmResponse, catalog, options, publishable, now) {
     const groups = new Map(groupLiteLLMDeployments(litellmResponse).map((item) => [item.modelName, item]));
     for (const entry of publishable) {
         if (entry.assessment.status !== "configured")
@@ -34,7 +34,7 @@ function seedPublicationLKG(store, litellmResponse, publishable, now) {
         if (!group)
             continue;
         try {
-            store.set(lastKnownGoodKey(entry.spec.id), createLastKnownGoodEntry(group, entry.assessment.identity.selected, entry.spec, now, capturedPublicationVerdict(entry.assessment)));
+            store.set(lastKnownGoodKey(entry.spec.id), createLastKnownGoodEntry(group, entry.assessment.identity.selected, entry.spec, now, capturedPublicationVerdict(entry.assessment, entry.spec), catalog, { contextTierCap: options.contextTierCap, protocolOverrides: options.protocolOverrides }));
         }
         catch {
             // Seeding is best-effort; it must never fail a discovery.
@@ -422,7 +422,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                     failure: catalogFailure,
                     now,
                 });
-                seedPublicationLKG(controller.store, response, result.publishable, now);
+                seedPublicationLKG(controller.store, response, catalog, options, result.publishable, now);
                 // Published specs are the only persisted specs: a withheld model
                 // never survives into a snapshot, and no user confirmation adds one.
                 const snapshotSpecs = result.publishable

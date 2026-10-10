@@ -3,6 +3,7 @@ import type { ConnectionInfo } from "@opencode/client"
 import type { ModelSpec } from "../src/core/build.js"
 import { createDiscoverySnapshot, endpointFingerprint } from "../src/core/snapshot.js"
 import { DiscoveryError } from "../src/net/fetch.js"
+import { PUBLICATION_SCHEMA_VERSION } from "../src/generated/discovery-core/index.js"
 import { createDiagnosticsLines } from "../src/host/diagnostics.js"
 import { createDiscoveryLoop, type Scheduler, type SyncContext } from "../src/host/sync.js"
 import type { ProviderSnapshot } from "../src/host/register.js"
@@ -81,6 +82,7 @@ function harness(
   initialStorage?: unknown,
   useCoreDiagnostics = false,
   endpoint: EndpointIdentity = endpointIdentity("default", undefined, true),
+  modelsDevCatalog?: unknown,
 ) {
   const scheduler = new FakeScheduler()
   const events = new EventQueue()
@@ -144,7 +146,7 @@ function harness(
       fetches += 1
       return nextFetch()
     },
-    getModelsDev: async () => ({}),
+    getModelsDev: async () => (modelsDevCatalog ?? {}),
     ...(useCoreDiagnostics ? {} : {
       buildModels: (response: unknown) => {
         const input = response as { model?: string; models?: string[] }
@@ -294,7 +296,25 @@ describe("发现循环", () => {
   })
 
   test("production Core diagnostics and registered protocol stay aligned on conservative fallback", async () => {
-    const h = harness(undefined, true)
+    // v8 (G30): without a canonical identity the group cannot publish, so the
+    // harness's models.dev stub must provide a registry entry for the wire id
+    // (v7 returned {} and the LiteLLM-only branch published directly).
+    // Protocol mixing stays the point; the catalog only keeps the model
+    // registerable.
+    const coreV8 = (PUBLICATION_SCHEMA_VERSION as number) === 8
+    const h = harness(undefined, true, undefined, coreV8
+      ? {
+        models: {
+          "openai/mixed-model": {
+            limit: { context: 100000, output: 10000 },
+            tool_call: true,
+            reasoning: false,
+            modalities: { input: ["text"], output: ["text"] },
+          },
+        },
+        providers: {},
+      }
+      : undefined)
     h.setFetch(async () => ({
       data: [
         {

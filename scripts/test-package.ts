@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
@@ -109,10 +109,15 @@ try {
   run(npm, ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=false",
     remote ?? path.join(packages, artifact.filename), `@opencode/plugin@${peerVersion}`], consumer)
   cpSync(path.join(root, "scripts", "installed-consumer.mjs"), path.join(consumer, "probe.mjs"))
+  // The v7-era fixture (provider map) is preserved in-repo for the legacy
+  // dist era; the catalog fixture exercises Core v8. The probe picks by the
+  // installed dist's PUBLICATION_SCHEMA_VERSION.
+  const legacyFixture = path.join(root, "test/fixtures/models-dev-legacy-provider-map.json")
   writeFileSync(path.join(consumer, "verification-input.json"), JSON.stringify({
     name: manifest.name, version: manifest.version, peerVersion, distributionDigests,
     litellm: JSON.parse(readFileSync(path.join(root, "test/fixtures/litellm-model-info.json"), "utf8")),
     modelsDev: JSON.parse(readFileSync(path.join(root, "test/fixtures/models-dev.json"), "utf8")),
+    modelsDevLegacy: existsSync(legacyFixture) ? JSON.parse(readFileSync(legacyFixture, "utf8")) : undefined,
   }) + "\n")
   const probeOutput = run(process.execPath, [path.join(consumer, "probe.mjs")], consumer)
   process.stdout.write(probeOutput)

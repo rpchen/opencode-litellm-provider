@@ -1,0 +1,41 @@
+{
+  "models": {
+    "labA/alpha": {
+      "limit": { "context": 128000, "input": 120000, "output": 8000 },
+      "modalities": { "input": ["text"], "output": ["text"] },
+      "tool_call": true,
+      "reasoning": false
+    },
+    "labB/beta": {
+      "limit": { "context": 64000, "output": 4000 },
+      "modalities": { "input": ["text"], "output": ["text"] },
+      "tool_call": false,
+      "reasoning": true
+    }
+  },
+  "providers": {
+    "labA": {
+      "models": {
+        "alpha": {
+          "id": "alpha",
+          "limit": { "context": 128000, "input": 120000, "output": 8000 },
+          "modalities": { "input": ["text"], "output": ["text"] },
+          "tool_call": true,
+          "reasoning": false,
+          "reasoning_options": [{ "type": "effort", "values": ["low", "high"] }],
+          "cost": { "input": 0.5, "output": 1.5 }
+        }
+      }
+    },
+    "gatewayX": {
+      "models": {
+        "beta-free": {
+          "id": "beta-free",
+          "canonical_model_id": "labB/beta",
+          "limit": { "context": 32000, "output": 2000 },
+          "cost": { "input": 0, "output": 0 }
+        }
+      }
+    }
+  }
+}

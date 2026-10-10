@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { buildModelSpecs } from "../src/core/build.js"
+import { PUBLICATION_SCHEMA_VERSION } from "../src/generated/discovery-core/index.js"
 import { createAuditReport } from "../src/host/audit.js"
 import { applyProvider, createRegistrationView, type ProviderEditorLike, type ProviderSnapshot } from "../src/host/register.js"
 import liteLLM from "./fixtures/litellm-model-info.json" with { type: "json" }
@@ -68,22 +69,53 @@ describe("发布日期单位及 allowlist", () => {
       "date-invalid": { release_date: "not-a-date" },
       "date-epoch": { release_date: "1970-01-01T00:00:00.000Z" },
     }
-    const specs = buildModelSpecs(response, { vendor: { models } }, options)
+    const CORE_V8 = (PUBLICATION_SCHEMA_VERSION as number) === 8
+    // v7: provider-map records supplied dates/levels. v8: unproven provider
+    // records supply nothing; the canonical registry carries the intrinsic
+    // facts (complete gated fields keep the models registerable), and dates
+    // come from the registry entries (serving unproven).
+    const catalog = CORE_V8
+      ? {
+        models: Object.fromEntries(Object.entries(models).map(([name, record]) => {
+          const entry: Record<string, unknown> = {
+            limit: { context: 1000, output: 100 },
+            tool_call: true,
+            reasoning: false,
+            modalities: { input: ["text"], output: ["text"] },
+          }
+          const release = (record as { release_date?: unknown }).release_date
+          if (typeof release === "string" || typeof release === "number") entry.release_date = release
+          return [`vendor/${name}`, entry]
+        })),
+        providers: { vendor: { models } },
+      }
+      : { vendor: { models } }
+    const specs = buildModelSpecs(response, catalog, options)
     const view = createRegistrationView(specs, "https://private.example/v1")
     const output = createAuditReport({ status: "ready", view }) as { models: Array<{ id: string; time: { released: number; unit: string }; variants: Array<{ id: string; settings: object }> }> }
     const byID = Object.fromEntries(output.models.map((model) => [model.id, model]))
-    expect(byID["date-text"]?.time).toEqual({ released: Date.parse("2026-01-02"), unit: "unix-ms" })
-    expect(byID["date-number"]?.time).toEqual({ released: 1234567890, unit: "unknown" })
+    expect(byID["date-text"]?.time).toEqual(CORE_V8 ? { released: Date.parse("2026-01-02"), unit: "unix-ms" } : { released: Date.parse("2026-01-02"), unit: "unix-ms" })
+    expect(byID["date-number"]?.time).toEqual(CORE_V8 ? { released: 1234567890, unit: "unknown" } : { released: 1234567890, unit: "unknown" })
     expect(byID["date-missing"]?.time).toEqual({ released: 0, unit: "none" })
     expect(byID["date-invalid"]?.time).toEqual({ released: 0, unit: "none" })
-    expect(byID["date-epoch"]?.time).toEqual({ released: 0, unit: "unix-ms" })
-    expect(byID["date-text"]?.variants).toEqual([{ id: "high", settings: { reasoningEffort: "high" } }])
+    expect(byID["date-epoch"]?.time).toEqual(CORE_V8 ? { released: 0, unit: "unix-ms" } : { released: 0, unit: "unix-ms" })
+    // v8: no proven serving record → no selectable levels even when the
+    // unproven provider record declares reasoning_options.
+    expect(byID["date-text"]?.variants).toEqual(CORE_V8 ? [] : [{ id: "high", settings: { reasoningEffort: "high" } }])
   })
 
   test("凭据、连接、上游原文和扩展设置不进入报告，允许字段不被改写", () => {
     const secret = "sk-fixture-not-real"
     const response = { data: [{ model_name: "internal-model", litellm_params: { model: "openai/internal-model", api_key: secret, api_base: "https://private.example" }, model_info: { api_key: secret, route: "private-route", base_model: "internal-model", max_input_tokens: 1000, max_output_tokens: 100 } }] }
-    const catalog = { internal: { models: { "internal-model": { reasoning_options: [{ type: "effort", values: ["internal-high"] }], hidden: secret } } } }
+    const CORE_V8 = (PUBLICATION_SCHEMA_VERSION as number) === 8
+    // v8 catalog shape: a canonical registry entry keeps the model
+    // registerable while the provider record stays unproven (levels inert).
+    const catalog = CORE_V8
+      ? {
+        models: { "openai/internal-model": { limit: { context: 1000, output: 100 }, tool_call: true, reasoning: false, modalities: { input: ["text"], output: ["text"] } } },
+        providers: { internal: { models: { "internal-model": { reasoning_options: [{ type: "effort", values: ["internal-high"] }], hidden: secret } } } },
+      }
+      : { internal: { models: { "internal-model": { reasoning_options: [{ type: "effort", values: ["internal-high"] }], hidden: secret } } } }
     const specs = buildModelSpecs(response, catalog, options)
     const view = createRegistrationView(specs, "https://private.example/v1")
     const model = view.models[0]!

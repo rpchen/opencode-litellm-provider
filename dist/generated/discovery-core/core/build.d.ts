@@ -1,10 +1,14 @@
 /**
  * Host-independent assembly of LiteLLM deployments and models.dev catalog into ModelSpec[].
  * This module contains no host SDK imports; protocol mapping belongs to each plugin adapter.
+ *
+ * Single-resolver invariant (D9): every ModelSpec is projected from a
+ * `ResolvedModel` via `toModelSpec()`. There is no independent parsing here.
  */
-import { type ModelCapabilities, type ModelCost, type ModelLimits } from "./capabilities.js";
-import { type CapabilityState, type ModelVariant } from "./modelsdev.js";
+import type { ModelCapabilities, ModelCost, ModelLimits } from "./capabilities.js";
+import type { CapabilityState, ModelVariant } from "./modelsdev.js";
 import { type Protocol } from "./protocol.js";
+import { toModelSpec } from "./resolve.js";
 export interface BuildOptions {
     contextTierCap: boolean;
     protocolOverrides: Readonly<Record<string, Protocol>>;
@@ -27,6 +31,7 @@ export interface ModelSpec {
      */
     reasoningSupported?: CapabilityState;
 }
+export type { CapabilityState } from "./modelsdev.js";
 /**
  * Whether a neutral model has the minimum positive token limits required by
  * Pi/OpenCode to expose it as an operational conversational model.
@@ -37,3 +42,4 @@ export interface ModelSpec {
 export declare function hasOperationalLimits(spec: Pick<ModelSpec, "limit">): boolean;
 export declare function buildModelSpecs(litellmResponse: unknown, modelsDevCatalog: unknown, options: BuildOptions): ModelSpec[];
 export declare function modelFingerprint(models: readonly ModelSpec[]): string;
+export { toModelSpec };

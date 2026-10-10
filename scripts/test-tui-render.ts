@@ -173,7 +173,10 @@ const cleanup = await setupAuditTui(context, (callback) => {
   tick = callback
   return () => { stopped++ }
 })
-const live = await testRender(() => render({ sessionID: "current" }), { width: 110, height: 24 })
+// Height must fit the audit card plus the diagnostics card: under the frozen
+// Core v8 semantics the diagnostics payload adds canonical/serving/operator
+// detail lines, so the render viewport is sized for the full card.
+const live = await testRender(() => render({ sessionID: "current" }), { width: 110, height: 40 })
 async function clickLive(label: string) {
   await live.renderOnce()
   const lines = live.captureCharFrame().split("\n")
@@ -263,16 +266,33 @@ try {
         },
       }],
     }),
+    // Catalog shape ({ models, providers }): the committed dist is the frozen
+    // Core v8 era, where a legacy provider map classifies `providers-only`
+    // (unavailable) and the LiteLLM-only group can no longer publish (G30).
+    // The registry entry publishes the canonical identity; the provider record
+    // is the diagnostic serving reference that makes the catalog `ok`.
     getModelsDev: async () => ({
-      openai: {
-        models: {
-          "gpt-diagnostics": {
-            id: "gpt-diagnostics",
-            release_date: "2026-05-01",
-            modalities: { input: ["text"], output: ["text"] },
-            limit: { context: 100000, output: 10000 },
-            tool_call: false,
-            reasoning: false,
+      models: {
+        "openai/gpt-diagnostics": {
+          limit: { context: 100000, output: 10000 },
+          modalities: { input: ["text"], output: ["text"] },
+          tool_call: false,
+          reasoning: false,
+          release_date: "2026-05-01",
+        },
+      },
+      providers: {
+        openai: {
+          models: {
+            "gpt-diagnostics": {
+              id: "gpt-diagnostics",
+              canonical_model_id: "openai/gpt-diagnostics",
+              limit: { context: 100000, output: 10000 },
+              modalities: { input: ["text"], output: ["text"] },
+              tool_call: false,
+              reasoning: false,
+              release_date: "2026-05-01",
+            },
           },
         },
       },

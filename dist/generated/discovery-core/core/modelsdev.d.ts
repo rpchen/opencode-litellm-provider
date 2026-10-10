@@ -1,5 +1,21 @@
 /**
  * Host-independent models.dev record selection and reasoning variant extraction.
+ *
+ * Canonical catalog model (D3–D5):
+ * - Canonical identity is proven only against the canonical registry
+ *   (`catalog.models`) through deterministic evidence; see `resolve.ts`.
+ * - Serving records are selected only under a proven serving provider
+ *   (`models_dev_provider`) by exact parsed-key match; see `resolve.ts`.
+ * - Unproven provider records (OpenCode, OpenRouter, unique-match,
+ *   first-party, same-name) NEVER supply publication facts. They appear only
+ *   as diagnostic candidates.
+ * - `resolveInheritedRecord` field inheritance is DELETED: intrinsic facts
+ *   come only from the canonical registry entry; a serving record is the
+ *   final serving view.
+ *
+ * This module keeps the shared record-reader helpers and the deprecated
+ * selection entry points as thin shims over the single resolver so existing
+ * callers keep compiling; new code must use `resolveModel()` directly.
  */
 import { type DeploymentGroup } from "./litellm.js";
 import type { Protocol } from "./protocol.js";
@@ -42,8 +58,9 @@ export interface SelectedModelRecord {
 }
 /**
  * Whether provider-scoped models.dev pricing can be treated as a plausible
- * fallback for the deployed model. Gateway/reseller records selected only for
- * capability enrichment must never masquerade as the LiteLLM route price.
+ * fallback for the deployed model. Only proven serving records (explicit
+ * provider, and legacy canonical-original) may serve as a price source;
+ * reseller/unique fallbacks must never masquerade as route pricing.
  */
 export declare function canUseSelectedModelsDevPrice(selected: SelectedModelRecord | undefined): boolean;
 export interface ModelVariant {
@@ -63,14 +80,10 @@ export interface ReasoningSupportResolution {
 export declare function canonicalModelID(value: string): string;
 /**
  * Deterministic canonical relations a provider-scoped record may declare to
- * point at the canonical model it serves.
- *
- * `canonical_model_id` is the canonical namespace proof (`deepseek/deepseek-v4.1-flash`
- * names both the provider namespace and the canonical model). `base_model` is the
- * same family of relation ("this record serves that upstream model") without
- * encoding the namespace; matching compares its model part only.
- * `inherits` / `equivalent_to` / `equivalents` are identity relations without a
- * canonical-namespace meaning and never prove an original provider by themselves.
+ * point at the canonical model it serves. Only `canonical_model_id` /
+ * `base_model` carry canonical-namespace meaning; `inherits` /
+ * `equivalent_to` / `equivalents` never prove identity (0 occurrences in
+ * the real catalog) and are inert.
  */
 export interface RecordRelationTargets {
     /** Preferred canonical identity the record declares, route prefix kept. */
@@ -83,42 +96,31 @@ export declare function candidateModelIDs(group: DeploymentGroup): string[];
 /**
  * Non-publication compatibility helper. Returns a name-prefix provider guess
  * and never participates in trusted identity resolution.
- *
- * Callers that need a publishable identity must use
- * `selectModelsDevRecord` / `selectModelsDevRecordDetailed`.
  */
 export declare function legacyFamilyCompatibilityProvider(group: DeploymentGroup): string | undefined;
 /**
- * Trusted identity resolution. Provider choice uses only verifiable
- * relations: explicit `models_dev_provider`, deterministic canonical
- * relations (`canonical_model_id` / `base_model`) with a namespace proof,
- * alias / equivalent / inherits metadata consumed by matching, OpenCode,
- * OpenRouter, or a genuinely unique remaining record.
+ * Trusted identity resolution (compat shim over the single resolver).
  *
- * Model-name prefixes and family substrings never select a provider.
- * Multiple remaining records stay unresolved (`undefined`) so publication
- * can report `ambiguous` instead of guessing.
+ * Only a proven serving record under a declared `models_dev_provider`,
+ * resolved by exact parsed-key match, is returned. Canonical-only identity
+ * carries no provider record by design, so this returns `undefined` for it;
+ * callers that need canonical identity must use `resolveModel()`.
  */
 export declare function selectModelsDevRecord(group: DeploymentGroup, catalog: unknown): SelectedModelRecord | undefined;
 /**
- * Trusted model-level reasoning evidence: explicit `reasoning`, else the
- * presence of `reasoning_options`. `undefined` means the record declares
- * nothing. Exported so LKG conflict detection consumes the same source
- * extraction instead of re-deriving it.
+ * Trusted-publication reasoning evidence from a record: explicit
+ * `reasoning`, else the presence of `reasoning_options`. `undefined` means
+ * the record declares nothing.
  */
 export declare function modelsDevReasoning(selected: SelectedModelRecord | undefined): boolean | undefined;
 export declare function resolveReasoningSupport(group: DeploymentGroup, selected: SelectedModelRecord | undefined): ReasoningSupportResolution;
+/**
+ * Reasoning variants from a PROVEN serving record's `reasoning_options`.
+ * Callers must only pass the resolved serving record; unproven records,
+ * `reasoning_effort`, and `allowed_openai_params` never produce variants.
+ */
 export declare function buildVariants(selected: SelectedModelRecord | undefined, protocol: Protocol): ModelVariant[];
 export declare function releaseTimestamp(selected: SelectedModelRecord | undefined): number;
-/**
- * Trusted-publication additions (see `trusted-model-capability-publication`).
- *
- * The legacy boolean/zero defaults above stay wire-compatible. The helpers
- * below expose the unknown-aware semantics the publication policy needs:
- * tri-state capability states, detailed selection outcomes, and
- * deterministic canonical inheritance with provenance. Nothing here
- * performs I/O or guesses capabilities from names or families.
- */
 /** Unknown-aware capability state: `unknown` means no trusted evidence. */
 export type CapabilityState = "supported" | "unsupported" | "unknown";
 export interface ReasoningStateResolution {
@@ -128,11 +130,6 @@ export interface ReasoningStateResolution {
 }
 /**
  * Tri-state reasoning support, independent from variant levels.
- *
- * Unlike the legacy boolean resolver (which maps "no evidence" to
- * `false`), this resolver reports `unknown` when neither LiteLLM nor
- * models.dev supplies trusted evidence, and when explicit LiteLLM
- * declarations disagree with each other.
  */
 export declare function resolveReasoningState(group: DeploymentGroup, selected: SelectedModelRecord | undefined): ReasoningStateResolution;
 export interface ReasoningLevelsResolution {
@@ -142,10 +139,8 @@ export interface ReasoningLevelsResolution {
     readonly values: readonly string[];
 }
 /**
- * Reasoning levels decoupled from support. `known=true` with empty
- * `values` means the model reasons without user-selectable grades; it
- * never implies lack of support. `known=false` means no level metadata
- * was declared at all.
+ * Reasoning levels from a record's `reasoning_options`. Only meaningful for
+ * proven serving records; see `resolve.ts` for the authority rule.
  */
 export declare function resolveReasoningLevels(selected: SelectedModelRecord | undefined, protocol: Protocol): ReasoningLevelsResolution;
 export type SelectionOutcomeKind = "matched" | "unmatched" | "ambiguous";
@@ -168,25 +163,6 @@ export declare function groupExplicitProviderConflict(group: DeploymentGroup): {
     providers: string[];
 } | undefined;
 export type GroupIdentityStatus = "known" | "unknown" | "conflict";
-/**
- * Group-wide identity evidence. Identity is publication-critical like
- * every other capability: the absence of a detected conflict is NOT
- * proof of identity.
- *
- * - `known`: every deployment carries positive identity evidence and all
- *   ids reconcile into one component. `identity` is deterministic and
- *   order-independent — the sorted union of every deployment's
- *   provider-aware ids, joined by `|`. It preserves provider namespaces
- *   (`openai/foo` never collapses to `foo`) and is never derived from
- *   `model_name`, family names, or a sibling deployment's evidence.
- * - `unknown`: one or more deployments declare no identity at all
- *   (no route, no base model, no deterministic provider proof).
- * - `conflict`: deployments provably cannot name the same model.
- *
- * The same evidence serves live selection/publication and LKG
- * capture/restore, so provider-aware publication and LKG matching can
- * never drift apart.
- */
 export interface GroupIdentityEvidence {
     readonly status: GroupIdentityStatus;
     /** Deterministic stable identity; defined iff `status === "known"`. */
@@ -195,61 +171,26 @@ export interface GroupIdentityEvidence {
     readonly reason?: string;
 }
 /**
- * Group identity evidence. Pure over the group and catalog.
- *
- * Reconciliation runs on the identity equivalence graph: nodes are
- * normalized identity strings (provider namespace preserved), edges come
- * from deployment declarations plus catalog relations
- * (`canonical_model_id`, `aliases`, `equivalent_to`, `equivalents`,
- * `inherits`). Connectivity is symmetric, so the verdict never depends
- * on deployment array order nor on which side of a relation stores the
- * declaration. The graph proves identity membership only — capability
- * values never inherit through it.
+ * Group identity evidence. Every deployment must carry positive identity
+ * evidence; an identity-less member is never filtered out. `model_name`
+ * never substitutes for per-deployment evidence.
  */
 export declare function groupIdentityEvidence(group: DeploymentGroup, catalog: unknown): GroupIdentityEvidence;
 /**
- * Compatibility wrapper over `groupIdentityEvidence`: any non-known
- * state blocks trusted identity the same way. Prefer the evidence form
- * when the unknown/conflict distinction matters.
+ * Compatibility wrapper over `groupIdentityEvidence`.
  */
 export declare function groupIdentityConflict(group: DeploymentGroup, catalog: unknown): string | undefined;
 /**
- * Detailed models.dev selection outcome.
+ * Detailed selection outcome (compat shim over the single resolver).
  *
- * Trusted precedence is explicit provider > canonical-original >
- * OpenCode > OpenRouter > unique match. Name/family heuristics are not a
- * step. Multiple remaining records stay `ambiguous` instead of collapsing
- * into an arbitrary reseller or a name-prefix provider.
- *
- * Canonical Model Identity and Metadata Provider Selection are separate
- * concerns: the identity of the deployment group comes from the
- * deployments' own deterministic evidence (see `groupIdentityEvidence`),
- * while this function only chooses which provider-scoped record serves as
- * the enrichment source. A fallback record never rewrites the canonical
- * identity.
- *
- * Canonical-original proof = a deterministic canonical relation
- * (`canonical_model_id` / `base_model`) pointing at the canonical identity
- * AND the record's provider namespace equal to the canonical namespace. A
- * reseller (OpenRouter, OpenCode, ...) may relation-point at the canonical
- * model - that proves which canonical model it serves, never that it is
- * the original provider.
- *
- * Group consistency: distinct explicit `models_dev_provider` values,
- * deployment identities that metadata cannot prove equivalent, or any
- * deployment with no positive identity evidence, make the whole group
- * `ambiguous` — never first-deployment wins, and never a silent pass
- * because no conflict was detected.
+ * `matched` with a `selected` record happens ONLY for a proven serving
+ * provider with an exactly resolved record (`explicit-provider`).
+ * Canonical-only identity, unproven providers, relation-only matches,
+ * and reseller/unique records never produce a selection.
  */
 export declare function selectModelsDevRecordDetailed(group: DeploymentGroup, catalog: unknown): DetailedSelection;
 /**
  * Tri-state aggregation for one capability across deployments.
- *
- * `undefined` is unknown, not a value that can be dropped. A missing
- * deployment declaration therefore cannot turn the group into supported
- * or unsupported. Model-level evidence fills only an entirely unevidenced
- * group; an explicit deployment disagreement with that evidence stays a
- * conflict.
  */
 export declare function aggregateTriState(deploymentValues: readonly (boolean | undefined)[], modelLevel?: boolean): {
     state: CapabilityState;
@@ -265,12 +206,11 @@ export interface InheritedRecord {
     readonly inheritedFields: readonly string[];
 }
 /**
- * Deterministic capability inheritance.
+ * DELETED (D5): cross-provider field inheritance. Intrinsic facts come only
+ * from the canonical registry entry; serving records are final views.
+ * Kept as a deprecated stub returning `undefined` so stale callers fail
+ * open in the safe direction (no inheritance) instead of crashing.
  *
- * Only metadata-expressed relations (`canonical_model_id`,
- * `inherits`, `equivalent_to` / `equivalents` naming a
- * `provider/model` identity) may supply missing fields. Name similarity,
- * family membership, or neighbor-model values never inherit. Every
- * inherited field is reported so provenance can name its source.
+ * @deprecated Do not use. Resolved by `resolveModel()`; always `undefined`.
  */
 export declare function resolveInheritedRecord(selected: SelectedModelRecord | undefined, catalog: unknown): InheritedRecord | undefined;

@@ -36,6 +36,11 @@ const declare = (modelName, overrides = {}) => {
 for (const modelName of ["claude-db", "claude-bedrock", "anthropic-direct", "multi-endpoint-model"]) declare(modelName)
 // Toggle-style reasoning: supported, but with no selectable levels.
 declare("glm-5.3", { supports_reasoning: true })
+// qwen3.7-plus only lacks a reasoning verdict in the registry fixture; declaring
+// the toggle-style support makes it publishable and keeps the withheld list
+// inside the diagnostics card's rendered window (5 entries), so every withheld
+// reason under test — including shared-route — stays assertable on screen.
+declare("qwen3.7-plus", { supports_reasoning: true })
 let servedModels = servedFixture.data
 let mockFailStatus = 0
 // [REAL-HOST-E2E] Runtime Identity expectations come from the candidate checkout itself:
@@ -63,8 +68,107 @@ for (const dir of [project, home, config, data, cache, state, opencodeConfig]) m
  * content is fixed, so the gate never depends on what the public service
  * happens to return today. The plugin points at it through the documented
  * `modelsDevUrl` option.
+ *
+ * Era-aware serving: the committed dist pins one discovery-core era. A Core
+ * v8 dist consumes the catalog shape ({ models, providers }); the legacy v7
+ * dist consumes the provider map. Both shapes are served under their canonical
+ * paths so the INSTALLED dist always meets the fixture of its own era — the
+ * failure mode under review was a catalog shape hitting a v7 dist
+ * (`catalogAvailable` false → "models.dev：degraded"), which tests a shape
+ * mismatch instead of the publication gate.
+ *
+ * v8: the served catalog is the repository's own models-dev fixture (the unit
+ * test baseline) merged with the e2e-only identities (vendora/vendorb/resolved
+ * and `openai/multi-endpoint-model`). Under the frozen dimension-isolation
+ * rule (G30) a LiteLLM-only group cannot publish, so every model the E2E
+ * expects to register needs a canonical registry entry keyed by its exact
+ * wire id.
  */
+const fixtureCatalog = JSON.parse(
+  readFileSync(path.join(root, "test", "fixtures", "models-dev.json"), "utf8"),
+)
 const catalogueEntries = () => ({
+  models: {
+    ...fixtureCatalog.models,
+    // G30: register via the canonical registry under its exact wire id. The
+    // record deliberately omits tool_call/reasoning so the model's completeness
+    // depends on the live declarations — which is what makes the declaration
+    // change below a fail-closed LKG rejection instead of a silent no-op.
+    "openai/multi-endpoint-model": {
+      modalities: { input: ["text"], output: ["text"] },
+      limit: { context: 128_000, output: 16_000 },
+    },
+    "vendora/coding-model": {
+      tool_call: true,
+      reasoning: false,
+      modalities: { input: ["text"], output: ["text"] },
+      limit: { context: 200_000, output: 64_000 },
+    },
+    "resolved/e2e-discrepancy-model": {
+      tool_call: true,
+      reasoning: false,
+      modalities: { input: ["text", "image"], output: ["text"] },
+      limit: { context: 400_000, output: 512_000 },
+    },
+    // Schema-8 LKG recovery: the registry supplies the gated capability
+    // dimensions, so this model's completeness depends on the LIVE catalog —
+    // which is exactly what makes an injected catalog outage fall back to the
+    // captured LKG entry instead of re-publishing LiteLLM-only declarations.
+    "vendora/lkg-recovery-model": {
+      tool_call: true,
+      reasoning: false,
+      modalities: { input: ["text"], output: ["text"] },
+      limit: { context: 200_000, output: 64_000 },
+    },
+  },
+  providers: {
+    ...fixtureCatalog.providers,
+    vendora: {
+      models: {
+        "coding-model": {
+          id: "coding-model",
+          canonical_model_id: "vendora/coding-model",
+          tool_call: true,
+          reasoning: false,
+          modalities: { input: ["text"], output: ["text"] },
+          limit: { context: 200_000, output: 64_000 },
+        },
+        // Serving record for the schema-8 LKG recovery model (see the models
+        // registry entry above): proves the LKG provenance down to the record.
+        "lkg-recovery-model": {
+          id: "lkg-recovery-model",
+          canonical_model_id: "vendora/lkg-recovery-model",
+          tool_call: true,
+          reasoning: false,
+          modalities: { input: ["text"], output: ["text"] },
+          limit: { context: 200_000, output: 64_000 },
+        },
+      },
+    },
+    vendorb: {
+      models: {
+        // Deliberately incomplete: the identity resolves reliably, but the record
+        // cannot make the model publishable on its own.
+        "coding-model": { id: "coding-model", tool_call: true },
+      },
+    },
+    resolved: {
+      models: {
+        "e2e-discrepancy-model": {
+          id: "e2e-discrepancy-model",
+          canonical_model_id: "resolved/e2e-discrepancy-model",
+          tool_call: true,
+          reasoning: false,
+          modalities: { input: ["text", "image"], output: ["text"] },
+          limit: { context: 400_000, output: 512_000 },
+        },
+      },
+    },
+  },
+})
+
+/** Legacy v7 provider-map shape served to dists pinned before the catalog era. */
+const legacyProviderMap = () => ({
   vendora: {
     models: {
       "coding-model": {
@@ -101,13 +205,27 @@ const catalogueEntries = () => ({
 })
 
 function startCatalogServer() {
-  const body = JSON.stringify(catalogueEntries())
+  const bodies = new Map([
+    ["/catalog.json", () => JSON.stringify(catalogueEntries())],
+    ["/api.json", () => JSON.stringify(legacyProviderMap())],
+  ])
   let requests = 0
+  let failures = 0
+  let outage = false
   const server = createServer((req, res) => {
-    if (req.url === "/api.json") {
+    const body = bodies.get(req.url ?? "")
+    if (body && outage) {
+      // A genuine models.dev catalog outage: the deterministic source answers
+      // its canonical paths with a server error instead of a stale body.
+      failures += 1
+      res.writeHead(500, { "content-type": "application/json" })
+      res.end(JSON.stringify({ detail: "injected models.dev outage" }))
+      return
+    }
+    if (body) {
       requests += 1
       res.writeHead(200, { "content-type": "application/json" })
-      res.end(body)
+      res.end(body())
       return
     }
     res.writeHead(404, { "content-type": "application/json" })
@@ -120,8 +238,12 @@ function startCatalogServer() {
       if (!address || typeof address === "string") return reject(new Error("catalog server did not bind TCP"))
       resolve({
         server,
-        url: `http://127.0.0.1:${address.port}/api.json`,
+        // v8 dists request /catalog.json; v7 dists still request /api.json.
+        url: `http://127.0.0.1:${address.port}/catalog.json`,
+        legacyUrl: `http://127.0.0.1:${address.port}/api.json`,
         requests: () => requests,
+        failures: () => failures,
+        setOutage: (flag) => { outage = flag },
         close: () => new Promise((done) => server.close(() => done())),
       })
     })
@@ -321,7 +443,10 @@ function startAttachedTui(sessionID) {
     throw new Error(`util-linux script is required for the real terminal E2E: ${probe.error?.message ?? probe.stderr}`)
   }
 
-  const commandLine = `stty cols 120 rows 40; exec opencode --server ${openCodeServer.url} --session ${sessionID}`
+  // A tall PTY: the v8 diagnostics card grew (canonical/serving facts,
+  // discrepancies, conflicts and per-model details), so the Runtime Identity
+  // block at the bottom must stay inside the painted viewport.
+  const commandLine = `stty cols 120 rows 100; exec opencode --server ${openCodeServer.url} --session ${sessionID}`
   const child = spawn("script", ["-qefc", commandLine, "/dev/null"], {
     cwd: project,
     env,
@@ -496,18 +621,109 @@ async function dumpFailureDiagnostics() {
 try {
   catalogServer = await startCatalogServer()
   const catalogRequests = catalogServer.requests
+  // Era-aware modelsDevUrl: a Core v8 dist fetches /catalog.json, while a
+  // v7-era dist fetches /api.json. Point the option at the catalog path; if
+  // the committed dist is still pre-catalog, the v7 fetcher will hit its
+  // compiled-in default instead — so serve BOTH paths and let the era pick.
+  const distCoreEra = (() => {
+    try {
+      const publication = readFileSync(path.join(root, "dist", "generated", "discovery-core", "core", "publication.js"), "utf8")
+      const match = /PUBLICATION_SCHEMA_VERSION\s*=\s*(\d+)/u.exec(publication)
+      return match ? Number(match[1]) : 7
+    } catch {
+      return 7
+    }
+  })()
+  // [REAL-HOST-E2E] Schema-8 LKG positive recovery needs a genuine models.dev
+  // outage that Core can SEE. The delivered dist keeps a 6h in-memory catalog
+  // cache (production trigger: TTL expiry) and OpenCode 2.0.16 is a compiled
+  // binary without any preload seam, so a tiny companion plugin — loaded by the
+  // SAME real host into the SAME server process — clears that cache through the
+  // INSTALLED package's own `dist/net/fetch.js` export
+  // (`resetModelsDevCacheForTest`): the in-process equivalent of the production
+  // TTL expiry. It never mocks a Core value and never serves fake data; the
+  // outage itself is a real HTTP 500 from the deterministic catalog source.
+  const catalogGuardDir = path.join(workspace, "e2e-catalog-guard")
+  mkdirSync(catalogGuardDir, { recursive: true })
+  writeFileSync(path.join(catalogGuardDir, "package.json"), `${JSON.stringify({ name: "e2e-catalog-guard", type: "module", main: "index.js" })}\n`)
+  writeFileSync(path.join(catalogGuardDir, "index.js"), `
+import { readdirSync, statSync } from "node:fs"
+import path from "node:path"
+import { pathToFileURL } from "node:url"
+const discover = () => {
+  const found = []
+  const visit = (dir, depth = 0) => {
+    if (depth > 9 || found.length > 0) return
+    let names = []
+    try { names = readdirSync(dir) } catch { return }
+    if (names.includes("core-provenance.json") && names.includes("runtime-identity.json")) {
+      found.push(path.join(dir, "net", "fetch.js"))
+      return
+    }
+    for (const name of names) {
+      let isDir = false
+      try { isDir = statSync(path.join(dir, name)).isDirectory() } catch { continue }
+      // OpenCode's package store nests installs under node_modules; the marker
+      // pair lives in the installed package's dist.
+      if (isDir) visit(path.join(dir, name), depth + 1)
+    }
+  }
+  for (const dir of [process.env.HOME, process.env.XDG_CONFIG_HOME, process.env.XDG_DATA_HOME, process.env.XDG_STATE_HOME, process.env.XDG_CACHE_HOME]) {
+    if (dir) visit(dir)
+  }
+  return found[0]
+}
+const rpcDef = {
+  id: "e2e-catalog-cache",
+  methods: {
+    reset: {
+      input: { type: "object", properties: {}, additionalProperties: false },
+      output: {
+        type: "object",
+        properties: { ok: { type: "boolean" }, module: { type: "string" }, error: { type: "string" } },
+        required: ["ok"],
+        additionalProperties: false,
+      },
+    },
+  },
+  events: {},
+}
+export default {
+  id: "e2e-catalog-guard",
+  async setup(ctx) {
+    await ctx.rpc.register(rpcDef, {
+      async reset() {
+        try {
+          const target = String(ctx.options.fetchModule ?? "") || discover()
+          const mod = await import(pathToFileURL(target).href)
+          if (typeof mod.resetModelsDevCacheForTest !== "function")
+            return { ok: false, module: target, error: "resetModelsDevCacheForTest missing" }
+          mod.resetModelsDevCacheForTest()
+          return { ok: true, module: target }
+        } catch (error) {
+          return { ok: false, module: "", error: String(error) }
+        }
+      },
+    })
+  },
+}
+`)
+
   const e2eConfig = {
     $schema: "https://opencode.ai/config.json",
     plugins: [{
       package: packageSpec,
       options: {
         pollInterval: 30,
-        modelsDevUrl: catalogServer.url,
+        modelsDevUrl: distCoreEra >= 8 ? catalogServer.url : catalogServer.legacyUrl,
         endpoints: {
           default: { baseUrl: defaultMock.baseUrl },
           company: { baseUrl: companyMock.baseUrl },
         },
       },
+    }, {
+      package: catalogGuardDir,
+      options: {},
     }],
   }
   writeFileSync(opencodeConfigFile, JSON.stringify(e2eConfig, null, 2) + "\n")
@@ -810,6 +1026,53 @@ try {
 
   const hostModels = () => command(["models", "--server", openCodeServer.url], { timeout: 120_000 }).stdout
 
+  // [REAL-HOST-E2E] Core's publication partition through the real host's
+  // read-only plugin RPC (`litellm-publication.state`): the only host surface
+  // that reports the literal publication status (`configured` /
+  // `configured-lkg`) and the usingLKG projection (`lkgIDs`).
+  const publicationState = () => {
+    const result = jsonOutput(
+      command(["api", "--server", openCodeServer.url, "POST", "/api/rpc/litellm-publication/state", "--data", JSON.stringify({ input: {} })], { retries: 6, echo: false }),
+      "litellm-publication.state",
+    )
+    return result.output
+  }
+
+  const waitForPublicationState = async (predicate, label) => {
+    let last
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      try {
+        last = publicationState()
+        if (predicate(last)) return last
+      } catch (error) {
+        last = String(error)
+      }
+      await sleep(1000)
+    }
+    throw new Error(`publication state never matched ${label}; last=${JSON.stringify(last)}`)
+  }
+
+  // [REAL-HOST-E2E] Card lines wrap at the terminal width and sit inside
+  // box-drawing borders; normalize both away so assertions on long facts can
+  // never straddle a wrap boundary.
+  const cardText = (text) => text.replace(/[┃╹▀╻╺╸]/gu, "").replace(/\s+/gu, "")
+
+  // Clear the delivered dist's 6h models.dev catalog cache through the guard
+  // plugin's RPC. The response names the module that was reset: it must be the
+  // INSTALLED candidate's `dist/net/fetch.js`, so the reset lands on the same
+  // module instance the plugin's discovery loop uses.
+  const resetCatalogCache = async () => {
+    const result = jsonOutput(
+      command(["api", "--server", openCodeServer.url, "POST", "/api/rpc/e2e-catalog-cache/reset", "--data", JSON.stringify({ input: {} })], { retries: 6, echo: false }),
+      "e2e-catalog-cache.reset",
+    )
+    const output = result.output ?? {}
+    assert.equal(output.ok, true, `the catalog cache reset must reach the installed fetch module: ${JSON.stringify(output)}`)
+    assert.match(String(output.module), /net[\\/]fetch\.js$/u, `the reset must target dist/net/fetch.js: ${JSON.stringify(output)}`)
+    assert.match(String(output.module), /opencode-litellm-provider/u, `the reset must target the installed candidate package: ${JSON.stringify(output)}`)
+    return output
+  }
+
   // 1) Complete metadata registers; toggle reasoning registers with no levels.
   const baselineReport = defaultAuditReport(await exportAudit())
   const baselineIds = baselineReport.models.map((model) => model.id)
@@ -838,30 +1101,58 @@ try {
     `partial availability must state the withheld section: ${rejectionDiagnostics}`,
   )
 
-  // 3) A previously configured LiteLLM-only model loses its capability evidence:
-  // only a provably belonging LKG snapshot keeps it registered.
-  const stripCapabilities = (entry) => ({
+  // 3) A previously configured model's capability declarations change. Under
+  //    the frozen schema-8 semantics the stored LKG entry's LiteLLM fingerprint
+  //    no longer matches, so the whole entry fails closed: the model is
+  //    withdrawn and the operator must fix the declarations — never silently
+  //    substituted by a stale snapshot.
+  const strippedCapabilities = (entry) => ({
     model_name: entry.model_name,
     litellm_params: entry.litellm_params,
     model_info: {
       mode: entry.model_info.mode,
       ...(entry.model_info.supported_endpoints ? { supported_endpoints: entry.model_info.supported_endpoints } : {}),
-      ...(entry.model_info.base_model ? { base_model: entry.model_info.base_model } : {}),
       max_input_tokens: entry.model_info.max_input_tokens,
       max_output_tokens: entry.model_info.max_output_tokens,
     },
   })
   servedModels = servedFixture.data.map((entry) =>
-    entry.model_name === "multi-endpoint-model" ? stripCapabilities(entry) : entry)
-  const lkgReport = await waitForRefreshAfter(Date.now(), "the LKG substitution")
+    entry.model_name === "multi-endpoint-model" ? strippedCapabilities(entry) : entry)
+  const failClosedReport = await waitForRefreshAfter(Date.now(), "the fail-closed declaration change")
   assert(
-    lkgReport.models.some((model) => model.id === "multi-endpoint-model"),
-    `LKG must keep the previously configured model registered: ${JSON.stringify(lkgReport.models.map((m) => m.id))}`,
+    !failClosedReport.models.some((model) => model.id === "multi-endpoint-model"),
+    `a changed declaration set must fail closed even with a stored LKG entry: ${JSON.stringify(failClosedReport.models.map((m) => m.id))}`,
   )
-  assert(hostModels().includes("litellm/multi-endpoint-model"), "the LKG-backed model must stay visible in CLI models")
-  await diagnosticsThroughTui(
-    /使用已信任的前次完整配置（LKG）：multi-endpoint-model/u,
-    "the valid LKG substitution",
+  assert(
+    !hostModels().includes("litellm/multi-endpoint-model"),
+    "the fail-closed model must leave the host CLI model list",
+  )
+  const failClosedDiagnostics = await diagnosticsThroughTui(
+    /Endpoint[\s：:]+default/u,
+    "the fail-closed declaration change",
+  )
+  assert(
+    /withheld[s：:]*multi-endpoint-model/u.test(failClosedDiagnostics),
+    `the withdrawn model must stay visible as withheld: ${failClosedDiagnostics}`,
+  )
+  assert(
+    !/使用已信任的前次完整配置（LKG）：multi-endpoint-model/u.test(failClosedDiagnostics),
+    `a changed declaration set must not be silently substituted from LKG: ${failClosedDiagnostics}`,
+  )
+  // Restore the declarations: the same identity re-publishes freshly.
+  servedModels = servedFixture.data
+  const restoredReport = await waitForRefreshAfter(Date.now(), "the declaration restoration")
+  assert(
+    restoredReport.models.some((model) => model.id === "multi-endpoint-model"),
+    "restored declarations must re-publish the model",
+  )
+  const restoredDeclarationDiagnostics = await diagnosticsThroughTui(
+    /Endpoint[\s：:]+default/u,
+    "the declaration restoration",
+  )
+  assert(
+    !/使用已信任的前次完整配置（LKG）：multi-endpoint-model/u.test(restoredDeclarationDiagnostics),
+    `restoration must be a fresh configuration, not LKG: ${restoredDeclarationDiagnostics}`,
   )
 
   // 4) A withheld model that becomes complete again is published automatically:
@@ -1091,10 +1382,130 @@ try {
   assert(recoveredReport.models.length > 0, "recovery must republish models")
   await diagnosticsThroughTui(/状态[\s：:]*正常/u, "the retry recovery")
 
+  // 7) Schema-8 LKG positive recovery through the real host. A fully trusted
+  //    model publishes fresh (`configured`) and is captured as a schema-8 LKG
+  //    entry derived from the SAME resolution that passed the gate. Then the
+  //    models.dev catalog goes down FOR REAL (HTTP 500 from the deterministic
+  //    source) with the 6h catalog cache genuinely invalidated, so Core
+  //    re-fetches, loses the live source and substitutes the captured entry:
+  //    the model keeps registering with publication status `configured-lkg`
+  //    and `usingLKG=true` (projected into `lkgIDs`). The LiteLLM deployment
+  //    identity, the declarations and the LKG proof stay unchanged across the
+  //    outage — only the catalog availability changes. Restoring the catalog
+  //    re-proves the same configuration freshly: `configured` again, no LKG.
+  //    Nothing here checks a host stale snapshot, an un-cleared model list or
+  //    a mocked Core return value: every verdict comes from Core running in
+  //    the installed dist of the real OpenCode 2.0.16 host.
+  assert(distCoreEra >= 8, `the schema-8 LKG scenario requires a Core v8+ dist, got era ${distCoreEra}`)
+  const lkgRecoveryModel = {
+    model_name: "lkg-recovery-model",
+    // custom_llm_provider makes the wire id parse to its bare lookup key, so
+    // the provider record resolves the SKU and the LKG provenance names it.
+    litellm_params: { model: "vendora/lkg-recovery-model", custom_llm_provider: "vendora" },
+    // Limits-only declarations: the gated capability dimensions come from the
+    // canonical registry entry, so completeness requires the live catalog.
+    model_info: {
+      mode: "chat",
+      models_dev_provider: "vendora",
+      max_input_tokens: 200_000,
+      max_output_tokens: 64_000,
+    },
+  }
+  servedModels = [lkgRecoveryModel]
+  const captureStartedAt = Date.now()
+  const captureReport = await waitForRefreshAfter(captureStartedAt, "the schema-8 LKG capture round")
+  assert(
+    captureReport.models.some((model) => model.id === "lkg-recovery-model"),
+    `the complete trusted model must publish in the capture round: ${JSON.stringify(captureReport.models.map((m) => m.id))}`,
+  )
+  assert(hostModels().includes("litellm/lkg-recovery-model"), "the capture round must register the model in the real host")
+  const captureState = await waitForPublicationState(
+    (state) => state.publishable.some((model) => model.id === "lkg-recovery-model" && model.status === "configured"),
+    "the fresh configured capture",
+  )
+  assert(
+    !captureState.lkgIDs.includes("lkg-recovery-model"),
+    `the capture round must configure from fresh evidence: ${JSON.stringify(captureState)}`,
+  )
+  const captureDiagnostics = await diagnosticsThroughTui(
+    /发现 \d+ · 可用 1 · withheld 0 · LKG 0/u,
+    "the capture partition",
+  )
+  assert(
+    !/使用已信任的前次完整配置（LKG）/u.test(cardText(captureDiagnostics)),
+    `the capture round must not use LKG: ${captureDiagnostics}`,
+  )
+
+  // Real outage + cache invalidation. The failure counter below is the proof
+  // that the 6h cache did NOT mask the outage: with a warm cache the round
+  // would never touch the catalog source at all, and Core could not enter the
+  // LKG recovery path.
+  const outageStartedAt = Date.now()
+  const catalogFailuresBefore = catalogServer.failures()
+  assert(catalogServer.requests() > 0, "the capture round must have fetched the catalog live")
+  catalogServer.setOutage(true)
+  await resetCatalogCache()
+  const lkgState = await waitForPublicationState(
+    (state) => state.publishable.some((model) => model.id === "lkg-recovery-model" && model.status === "configured-lkg"),
+    "the schema-8 LKG recovery round",
+  )
+  assert(
+    lkgState.lkgIDs.includes("lkg-recovery-model"),
+    `usingLKG=true must project into lkgIDs: ${JSON.stringify(lkgState)}`,
+  )
+  assert(
+    catalogServer.failures() > catalogFailuresBefore,
+    "the outage round never re-fetched the catalog: the 6h cache masked the outage instead of Core entering the LKG path",
+  )
+  const lkgDetail = String(lkgState.lkgDetail ?? "")
+  assert.match(lkgDetail, /LKG originally fetched at /u, `the LKG source time must be visible: ${lkgDetail}`)
+  assert.match(lkgDetail, /via provider vendora -> model lkg-recovery-model/u, `the LKG source must be named: ${lkgDetail}`)
+  assert.match(lkgDetail, /live unavailable/u, `the LKG detail must state the live unavailability: ${lkgDetail}`)
+  const lkgFetchedAt = Date.parse(/LKG originally fetched at (\S+)/u.exec(lkgDetail)?.[1] ?? "")
+  assert(
+    Number.isFinite(lkgFetchedAt) && lkgFetchedAt >= captureStartedAt - 1_000 && lkgFetchedAt <= outageStartedAt + 30_000,
+    `the LKG entry must be the one captured in this round window: ${lkgDetail}`,
+  )
+  assert(
+    hostModels().includes("litellm/lkg-recovery-model"),
+    "the LKG-backed model must keep registering in the real host during the outage",
+  )
+  const lkgDiagnostics = await diagnosticsThroughTui(
+    /LKG 说明[\s：:]/u,
+    "the trusted LKG substitution",
+  )
+  const lkgCard = cardText(lkgDiagnostics)
+  assert(/使用已信任的前次完整配置（LKG）[\s：:]*lkg-recovery-model/u.test(lkgCard), `the LKG model must be named in diagnostics: ${lkgDiagnostics}`)
+  assert(/发现1·可用1·withheld0·LKG1/u.test(lkgCard), `the LKG partition must be visible: ${lkgDiagnostics}`)
+  assert(/viaprovidervendora->modellkg-recovery-model/u.test(lkgCard), `the LKG source must reach the diagnostics card: ${lkgDiagnostics}`)
+  assert(/liveunavailable/u.test(lkgCard), `the live-unavailable reason must reach the diagnostics card: ${lkgDiagnostics}`)
+  console.log("[schema-8 LKG] configured -> real catalog outage (cache genuinely re-fetched) -> configured-lkg (usingLKG) -> configured again")
+
+  // Restore the catalog: the next live round re-proves the same configuration
+  // from fresh evidence — no LKG label, no stale substitution.
+  catalogServer.setOutage(false)
+  await resetCatalogCache()
+  const recoveredLkgState = await waitForPublicationState(
+    (state) => state.publishable.some((model) => model.id === "lkg-recovery-model" && model.status === "configured"),
+    "the post-outage re-proof",
+  )
+  assert(
+    !recoveredLkgState.lkgIDs.includes("lkg-recovery-model"),
+    `recovery must stop using LKG: ${JSON.stringify(recoveredLkgState)}`,
+  )
+  const recoveredLkgDiagnostics = await diagnosticsThroughTui(
+    /发现 \d+ · 可用 1 · withheld 0 · LKG 0/u,
+    "the recovered publication partition",
+  )
+  assert(
+    !/使用已信任的前次完整配置（LKG）/u.test(cardText(recoveredLkgDiagnostics)),
+    `the recovered model must be freshly configured, not served from LKG: ${recoveredLkgDiagnostics}`,
+  )
+
   servedModels = servedFixture.data
   mockFailStatus = 0
   console.log(
-    "Real OpenCode publication E2E passed: partial catalog, withheld reasons, trusted LKG, automatic recovery, no confirmation path and metadata-failure diagnostics are verified through the real host.",
+    "Real OpenCode publication E2E passed: partial catalog, withheld reasons, fail-closed declaration change with fresh recovery, no confirmation path and metadata-failure diagnostics are verified through the real host.",
   )
 
   // ===== Phase 2: Endpoint Management UX over the real TUI (file-declared options, real PTY keys) =====
@@ -1117,6 +1528,7 @@ try {
       "package": "${packageSpec}",
       "options": {
         "pollInterval": 30,
+        "modelsDevUrl": ${JSON.stringify(distCoreEra >= 8 ? catalogServer.url : catalogServer.legacyUrl)},
         "futureOption": { "keep": ["me"] },
         "endpoints": {
           // the company endpoint is untouched by this test
@@ -1353,6 +1765,7 @@ try {
       "package": "${packageSpec}",
       "options": {
         "pollInterval": 30,
+        "modelsDevUrl": ${JSON.stringify(distCoreEra >= 8 ? catalogServer.url : catalogServer.legacyUrl)},
         "futureOption": { "keep": ["legacy"] },
         "protocolOverrides": { "demo-model": "chat" }
       }
@@ -1515,7 +1928,8 @@ try {
     {
       "package": "${packageSpec}",
       "options": {
-        "pollInterval": 30
+        "pollInterval": 30,
+        "modelsDevUrl": ${JSON.stringify(distCoreEra >= 8 ? catalogServer.url : catalogServer.legacyUrl)}
       }
     }
   ]
@@ -1590,7 +2004,7 @@ try {
   await stopAttachedTui(tg2)
   console.log("Real OpenCode 2.0.16 ghostless legacy E2E passed: Add starts inactive and no stale default activation")
 
-  console.log("Real OpenCode 2.0.16 E2E passed: startup recovery, native keyboard activation, endpoint-scoped diagnostics, credentials, providers and models are verified.")
+  console.log("Real OpenCode 2.0.16 E2E passed: startup recovery, native keyboard activation, endpoint-scoped diagnostics, credentials, providers, models and schema-8 LKG recovery (configured -> configured-lkg -> configured) are verified.")
 } catch (error) {
   await dumpFailureDiagnostics()
   throw error

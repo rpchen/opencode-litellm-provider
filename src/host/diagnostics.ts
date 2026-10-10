@@ -135,6 +135,68 @@ export function formatPublicationLines(summary: PublicationSummary | undefined):
   return out;
 }
 
+/**
+ * Per-model canonical/serving/LKG facts (adopt-modelsdev-canonical-catalog).
+ * Every new field is optional: older Core shapes omit them and the lines are
+ * skipped, never fabricated. Local minimal shape keeps this renderer
+ * independent of the generated Core version.
+ */
+interface ModelDiagnosticLike {
+  readonly id: string;
+  readonly deploymentCount?: number;
+  readonly quality?: {
+    readonly identity?: {
+      readonly canonicalModelID?: string;
+      readonly canonicalEvidence?: string;
+      readonly canonicalStatus?: string;
+    };
+    readonly serving?: { readonly status?: string; readonly providerID?: string; readonly recordID?: string };
+    readonly reasoningLevelsState?: string;
+    readonly operatorConfigurationKeys?: readonly string[];
+    readonly diagnosticCandidates?: ReadonlyArray<{ readonly providerID: string; readonly recordID: string }>;
+    readonly catalogKind?: string;
+  };
+  readonly publication?: { readonly reasoningLevels?: readonly string[] };
+}
+
+export function formatModelDetails(discovery: { readonly models?: readonly ModelDiagnosticLike[] } | undefined, limit = 5): string[] {
+  const models = discovery?.models ?? [];
+  if (models.length === 0) return [];
+  const lines = ["模型明细："];
+  for (const model of models.slice(0, limit)) {
+    const quality = model.quality ?? {};
+    const parts = [`${model.id} · 部署 ${model.deploymentCount ?? 1}`];
+    const canonical = quality.identity?.canonicalModelID;
+    if (canonical) {
+      parts.push(`canonical ${canonical}${quality.identity?.canonicalEvidence ? `（${quality.identity.canonicalEvidence}）` : ""}`);
+    } else if (quality.identity?.canonicalStatus && quality.identity.canonicalStatus !== "proven") {
+      parts.push(`identity ${quality.identity.canonicalStatus}`);
+    }
+    const serving = quality.serving;
+    if (serving?.status && serving.status !== "unproven") {
+      parts.push(`serving ${serving.status}${serving.providerID ? ` ${serving.providerID}${serving.recordID ? ` → ${serving.recordID}` : ""}` : ""}`);
+    }
+    if (quality.reasoningLevelsState === "unknown") {
+      parts.push("档位 unknown（声明 models_dev_provider 可恢复）");
+    } else if (quality.reasoningLevelsState === "known") {
+      const levels = model.publication?.reasoningLevels;
+      parts.push(`档位 known[${levels && levels.length > 0 ? levels.join(",") : "无可选档"}]`);
+    }
+    lines.push(parts.join(" · "));
+    const operatorKeys = quality.operatorConfigurationKeys ?? [];
+    if (operatorKeys.length > 0) lines.push(`  operator configuration：${operatorKeys.join("、")}（非 enforcement，只诊断）`);
+    const candidates = quality.diagnosticCandidates ?? [];
+    if (candidates.length > 0) {
+      lines.push(`  候选声明：${candidates.map((item) => `${item.providerID}/${item.recordID}`).join("、")}`);
+    }
+    if (quality.catalogKind && quality.catalogKind !== "complete") {
+      lines.push(`  catalog：${quality.catalogKind}（canonical 不可用，仅 LiteLLM 声明 + LKG）`);
+    }
+  }
+  if (models.length > limit) lines.push(`……另有 ${models.length - limit} 个模型`);
+  return lines;
+}
+
 export function createDiagnosticsLines(
   snapshot: ProviderSnapshot,
   now = Date.now(),
@@ -180,6 +242,7 @@ export function createDiagnosticsLines(
 
   if (snapshot.diagnostics?.note) lines.push(`说明：${snapshot.diagnostics.note}`)
   lines.push(...formatPublicationLines(snapshot.diagnostics?.publication))
+  lines.push(...formatModelDetails(snapshot.diagnostics?.discovery as never))
   lines.push(`Core：${build.coreBranch}@${build.coreSHA}`)
   const identity = getRuntimeIdentity()
   lines.push(

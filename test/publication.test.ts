@@ -11,6 +11,7 @@ import {
   createLastKnownGoodStore,
   groupLiteLLMDeployments,
   lastKnownGoodKey,
+  PUBLICATION_SCHEMA_VERSION,
 } from "../src/generated/discovery-core/index.js"
 import { buildPublicationModels, toOpenCodeModelSpecWithPublication } from "../src/host/models.js"
 import { catalogNotice, summarizePublication } from "../src/host/publication.js"
@@ -48,7 +49,8 @@ const COMPLETE_RESPONSE = {
   ],
 }
 
-const COMPLETE_CATALOG = {
+/** Legacy provider-map fixture kept for Core v7 runs. */
+const COMPLETE_CATALOG_PROVIDER_MAP = {
   openai: {
     models: {
       "pub-complete": {
@@ -61,6 +63,21 @@ const COMPLETE_CATALOG = {
     },
   },
 }
+
+/** Catalog-shape fixture for Core v8 (provider-map classifies providers-only). */
+const COMPLETE_CATALOG_V8 = {
+  models: {
+    "openai/pub-complete": {
+      limit: { context: 100000, output: 10000 },
+      tool_call: true,
+      reasoning: false,
+      modalities: { input: ["text"], output: ["text"] },
+    },
+  },
+  providers: {},
+}
+
+const COMPLETE_CATALOG = (PUBLICATION_SCHEMA_VERSION as number) === 8 ? COMPLETE_CATALOG_V8 : COMPLETE_CATALOG_PROVIDER_MAP
 
 const OPTIONS: PluginOptions = {
   pollInterval: 3600,
@@ -328,7 +345,25 @@ describe("publication sync partition", () => {
 
   test("a withheld model recovering is published automatically without user approval", async () => {
     let complete = false
-    const h = loopHarness(async () => COMPLETE_CATALOG, async () => ({
+    // v8: recovery is the canonical registry gaining a complete entry for the
+    // previously-withheld model (identity was unproven before; LiteLLM-only
+    // declarations alone can never publish — G30). v7: the LiteLLM-only
+    // branch published from complete declarations directly.
+    const catalogFor = () => ((PUBLICATION_SCHEMA_VERSION as number) === 8 && complete
+      ? {
+        ...COMPLETE_CATALOG,
+        models: {
+          ...(COMPLETE_CATALOG as { models: Record<string, unknown> }).models,
+          "openai/pub-incomplete": {
+            limit: { context: 100000, output: 10000 },
+            tool_call: true,
+            reasoning: false,
+            modalities: { input: ["text"], output: ["text"] },
+          },
+        },
+      }
+      : COMPLETE_CATALOG)
+    const h = loopHarness(async () => catalogFor(), async () => ({
       data: [
         { model_name: "pub-complete", litellm_params: { model: "openai/pub-complete" }, model_info: { ...COMPLETE_INFO } },
         {
@@ -355,8 +390,13 @@ describe("publication sync partition", () => {
     // The canonical route changes while enrichment is unavailable: the old
     // trusted snapshot no longer describes this model, so it is withheld and
     // reported as a regression instead of silently disappearing.
+    // v8 note: with a complete catalog the fresh phase captures from the
+    // registry; the changed phase both renames the route AND takes the
+    // catalog down, so the model is withheld as a regression (no valid LKG
+    // can re-prove renamed evidence).
     let phase: "fresh" | "changed" = "fresh"
-    const h = loopHarness(async () => ({}), async () => ({
+    const catalogFor = () => ((PUBLICATION_SCHEMA_VERSION as number) === 8 && phase === "fresh" ? COMPLETE_CATALOG : {})
+    const h = loopHarness(async () => catalogFor(), async () => ({
       data: [{
         model_name: "pub-complete",
         litellm_params: { model: phase === "fresh" ? "openai/pub-complete" : "openai/pub-complete-renamed" },
@@ -468,6 +508,10 @@ describe("publication longitudinal: Core -> snapshot -> RPC -> TUI lines", () =>
       const state = await handlers.state!({}) as { withheld: Array<{ id: string }>; partial: boolean }
       expect(state.withheld.map((model) => model.id)).toEqual(["gap-model"])
       expect(state.partial).toBeFalse()
+      // Host schema compliance: optional evidence fields stay absent rather
+      // than explicit undefined (the RPC layer type-checks declared fields).
+      expect("lkgDetail" in state).toBeFalse()
+      expect("failureKind" in state).toBeFalse()
 
       // Even after a refresh nothing forces the model in: publication is
       // Core's decision alone.
@@ -505,6 +549,28 @@ describe("publication longitudinal: Core -> snapshot -> RPC -> TUI lines", () =>
     expect(summary.withheld).toEqual([])
     expect(summary.regressions).toEqual([])
     expect(summary.acknowledgement.reason).toBe("unchanged")
+  })
+
+  test("absent optional summary fields are omitted, never emitted as undefined", () => {
+    // The OpenCode host validates `litellm-publication.state` outputs against
+    // the declared schema: an explicit `undefined` property fails the string
+    // type check and the RPC returns rpc.invalid_output.
+    const summary = summarizePublication(
+      { publishable: [], blocked: [], assessments: new Map() },
+      {
+        discovered: 1,
+        publishable: [],
+        lkgBacked: [],
+        withheld: [],
+        partial: false,
+        unusable: false,
+        regressions: [],
+        newlyWithheld: [],
+        fingerprint: "sha256:none",
+      },
+    )
+    expect("lkgDetail" in summary).toBeFalse()
+    expect("failureKind" in summary).toBeFalse()
   })
 })
 
@@ -594,6 +660,9 @@ const DEEPSEEK_CATALOG = {
 
 const storedSnapshotSpecsShape = "specs-only" as const
 
+/** Core capability gate: serving-proof levels/selection exist on Core v8 only. */
+const CORE_V8 = (PUBLICATION_SCHEMA_VERSION as number) === 8
+
 const OC_FULL_CAPABILITY_DECLARATIONS = {
   supports_function_calling: true,
   supports_reasoning: false,
@@ -604,8 +673,8 @@ const OC_FULL_CAPABILITY_DECLARATIONS = {
   supports_audio_output: false,
 }
 
-describe("LKG schema 7 round-trip (OpenCode transparency)", () => {
-  test("route-qualified canonical record capture grades authoritative-intrinsic", () => {
+describe("LKG schema 7 round-trip (OpenCode transparency, legacy Core only)", () => {
+  test.skipIf(CORE_V8)("route-qualified canonical record capture grades authoritative-intrinsic", () => {
     const body = {
       data: [{
         model_name: "openai-org-model",
@@ -630,10 +699,10 @@ describe("LKG schema 7 round-trip (OpenCode transparency)", () => {
       OPTIONS,
     )
     store.set(lastKnownGoodKey("openai-org-model"), entry)
-    expect(store.get(lastKnownGoodKey("openai-org-model"))?.evidenceAuthority).toBe("authoritative-intrinsic")
+    expect((store.get(lastKnownGoodKey("openai-org-model")) as { evidenceAuthority?: unknown } | undefined)?.evidenceAuthority).toBe("authoritative-intrinsic")
   })
 
-  test("unique-match record capture grades fallback-serving (outage fail-closed path)", () => {
+  test.skipIf(CORE_V8)("unique-match record capture grades fallback-serving (outage fail-closed path)", () => {
     const body = {
       data: [{
         model_name: "reseller-only-model",
@@ -659,7 +728,46 @@ describe("LKG schema 7 round-trip (OpenCode transparency)", () => {
       OPTIONS,
     )
     store.set(lastKnownGoodKey("reseller-only-model"), entry)
-    expect(store.get(lastKnownGoodKey("reseller-only-model"))?.evidenceAuthority).toBe("fallback-serving")
+    expect((store.get(lastKnownGoodKey("reseller-only-model")) as { evidenceAuthority?: unknown } | undefined)?.evidenceAuthority).toBe("fallback-serving")
+  })
+
+  test.skipIf(!CORE_V8)("schema-8 capture carries the group-wide proof through the store", () => {
+    const body = {
+      data: [{
+        model_name: "v8-model",
+        litellm_params: { model: "v8-model" },
+        model_info: { mode: "chat", max_input_tokens: 100_000, max_output_tokens: 10_000, ...OC_FULL_CAPABILITY_DECLARATIONS },
+      }],
+    }
+    const catalog = {
+      models: {
+        "labA/v8-model": {
+          limit: { context: 128_000, input: 100_000, output: 32_000 },
+          modalities: { input: ["text"], output: ["text"] },
+          tool_call: true,
+          reasoning: false,
+        },
+      },
+      providers: {},
+    }
+    const group = groupLiteLLMDeployments(body)[0]!
+    const assessment = assessModelConfiguration(group, catalog, OPTIONS)
+    const spec = buildModelSpecs(body, catalog, OPTIONS)[0]!
+    const entry = createLastKnownGoodEntry(
+      group,
+      assessment.identity.selected,
+      spec,
+      1000,
+      capturedPublicationVerdict(assessment, spec),
+      catalog,
+      OPTIONS,
+    )
+    const store = createLastKnownGoodStore()
+    store.set(lastKnownGoodKey("v8-model"), entry)
+    const stored = store.get(lastKnownGoodKey("v8-model"))
+    expect((stored?.schemaVersion as number)).toBe(8)
+    const proof = (stored as { proof?: { deploymentEvidence?: Array<{ identityKind?: string }> } } | undefined)?.proof
+    expect(proof?.deploymentEvidence?.[0]?.identityKind).toBe("canonical")
   })
 
   test("snapshot persistence carries specs only; the LKG authority stays Core-owned", () => {
@@ -667,8 +775,8 @@ describe("LKG schema 7 round-trip (OpenCode transparency)", () => {
   })
 })
 
-describe("canonical selection integration: Core publication -> OpenCode host config", () => {
-  test("DeepSeek official provider limits reach the OpenCode host model (output=393216)", () => {
+describe("canonical selection integration: Core publication -> OpenCode host config (legacy v7 semantics)", () => {
+  test.skipIf(CORE_V8)("DeepSeek official provider limits reach the OpenCode host model (output=393216)", () => {
     const { models, result } = buildPublicationModels(DEEPSEEK_RESPONSE, DEEPSEEK_CATALOG, OPTIONS)
     expect(result.publishable).toHaveLength(1)
     expect(result.blocked).toEqual([])
@@ -686,7 +794,7 @@ describe("canonical selection integration: Core publication -> OpenCode host con
     expect(model!.package).toBe(PROTOCOL_PACKAGES.responses)
   })
 
-  test("OpenRouter-only fallback conflicting with the endpoint stays blocked (943718 never registers)", () => {
+  test.skipIf(CORE_V8)("OpenRouter-only fallback conflicting with the endpoint stays blocked (943718 never registers)", () => {
     const { models, result } = buildPublicationModels(
       DEEPSEEK_RESPONSE,
       { openrouter: DEEPSEEK_CATALOG.openrouter },
@@ -698,7 +806,7 @@ describe("canonical selection integration: Core publication -> OpenCode host con
     expect(blocked!.assessment.conflicts.map((item) => item.field)).toContain("limit.output")
   })
 
-  test("OpenCode fallback ranks before OpenRouter and never rewrites the identity", () => {
+  test.skipIf(CORE_V8)("OpenCode fallback ranks before OpenRouter and never rewrites the identity", () => {
     const resellersOnly = { opencode: DEEPSEEK_CATALOG.opencode, openrouter: DEEPSEEK_CATALOG.openrouter }
     const { models } = buildPublicationModels(DEEPSEEK_RESPONSE, resellersOnly, OPTIONS)
     const model = models.find((item) => item.id === "deepseek-v4.1-flash")
@@ -707,5 +815,132 @@ describe("canonical selection integration: Core publication -> OpenCode host con
     expect(model!.limit.output).toBe(384_000)
     // The canonical identity stays the deployment's own name.
     expect(model!.id).toBe("deepseek-v4.1-flash")
+  })
+})
+
+describe("canonical catalog integration: Core publication -> OpenCode host config (v8 semantics)", () => {
+  const V8_RESPONSE = {
+    data: [
+      {
+        model_name: "deepseek-v4.1-flash",
+        litellm_params: { model: "deepseek-v4.1-flash" },
+        model_info: {
+          mode: "responses",
+          base_model: "deepseek-v4.1-flash",
+          max_input_tokens: 1_000_000,
+          max_output_tokens: 384_000,
+          max_tokens: 384_000,
+          supports_function_calling: true,
+          supports_reasoning: true,
+          supports_vision: false,
+          supports_pdf_input: false,
+          supports_audio_input: false,
+          supports_video_input: false,
+          supports_audio_output: false,
+        },
+      },
+    ],
+  }
+  const V8_CATALOG = {
+    models: {
+      "deepseek/deepseek-v4.1-flash": {
+        limit: { context: 1_000_000, output: 384_000 },
+        modalities: { input: ["text"], output: ["text"] },
+        tool_call: true,
+        reasoning: true,
+      },
+    },
+    providers: {
+      deepseek: {
+        models: {
+          "deepseek-flash": {
+            id: "deepseek-flash",
+            canonical_model_id: "deepseek/deepseek-v4.1-flash",
+            limit: { context: 1_000_000, output: 393_216 },
+            modalities: { input: ["text"], output: ["text"] },
+            tool_call: true,
+            reasoning: true,
+            reasoning_options: [{ type: "effort", values: ["low", "high", "max"] }],
+            cost: { input: 0.15, output: 0.6 },
+          },
+        },
+      },
+      openrouter: {
+        models: {
+          "deepseek-v4.1-flash": {
+            id: "deepseek-v4.1-flash",
+            canonical_model_id: "deepseek/deepseek-v4.1-flash",
+            limit: { context: 1_048_576, output: 943_718 },
+            cost: { input: 0.0033, output: 3.3 },
+          },
+        },
+      },
+    },
+  }
+
+  test.skipIf(!CORE_V8)("unproven serving publishes canonical 384000; reseller 943718 never registers", () => {
+    const { models, result } = buildPublicationModels(V8_RESPONSE, V8_CATALOG, OPTIONS)
+    expect(result.publishable).toHaveLength(1)
+    expect(result.blocked).toEqual([])
+    const model = models.find((item) => item.id === "deepseek-v4.1-flash")
+    expect(model).toBeDefined()
+    // Behavior change (Core design Risks): serving SKU value only with serving proof.
+    expect(model!.limit.output).toBe(384_000)
+    expect(model!.limit.output).not.toBe(943_718)
+    expect(model!.limit.context).toBe(1_000_000)
+  })
+
+  test.skipIf(!CORE_V8)("declared provider without exact SKU stays canonical (serving-record-unresolved)", () => {
+    const declared = {
+      data: [{
+        model_name: "deepseek-v4.1-flash",
+        litellm_params: { model: "deepseek-v4.1-flash" },
+        model_info: {
+          mode: "responses",
+          base_model: "deepseek-v4.1-flash",
+          models_dev_provider: "deepseek",
+          max_input_tokens: 1_000_000,
+          max_output_tokens: 384_000,
+          supports_function_calling: true,
+          supports_reasoning: true,
+          supports_vision: false,
+          supports_pdf_input: false,
+          supports_audio_input: false,
+          supports_video_input: false,
+          supports_audio_output: false,
+        },
+      }],
+    }
+    const { models } = buildPublicationModels(declared, V8_CATALOG, OPTIONS)
+    const model = models.find((item) => item.id === "deepseek-v4.1-flash")
+    expect(model).toBeDefined()
+    expect(model!.limit.output).toBe(384_000)
+  })
+
+  test.skipIf(!CORE_V8)("declared provider with exact SKU restores the serving limit", () => {
+    const declared = {
+      data: [{
+        model_name: "deepseek-v4.1-flash",
+        litellm_params: { model: "deepseek/deepseek-flash", custom_llm_provider: "deepseek" },
+        model_info: {
+          mode: "responses",
+          base_model: "deepseek-v4.1-flash",
+          models_dev_provider: "deepseek",
+          max_input_tokens: 1_000_000,
+          max_output_tokens: 384_000,
+          supports_function_calling: true,
+          supports_reasoning: true,
+          supports_vision: false,
+          supports_pdf_input: false,
+          supports_audio_input: false,
+          supports_video_input: false,
+          supports_audio_output: false,
+        },
+      }],
+    }
+    const { models } = buildPublicationModels(declared, V8_CATALOG, OPTIONS)
+    const model = models.find((item) => item.id === "deepseek-v4.1-flash")
+    expect(model).toBeDefined()
+    expect(model!.limit.output).toBe(393_216)
   })
 })

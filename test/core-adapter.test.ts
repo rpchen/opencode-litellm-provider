@@ -4,6 +4,7 @@ import modelsDev from "./fixtures/models-dev.json" with { type: "json" }
 import {
   buildModelSpecs as discover,
   normalizeLiteLLMURL,
+  PUBLICATION_SCHEMA_VERSION,
   type Protocol,
 } from "../src/generated/discovery-core/index.js"
 import { buildModelSpecs, hasOperationalLimits, modelFingerprint, toOpenCodeModelSpec } from "../src/host/models.js"
@@ -35,56 +36,73 @@ test("PR8 的总 context 语义贯穿 Core 到 OpenCode 模型", () => {
   const adapted = neutral.map(toOpenCodeModelSpec)
   const shared = adapted.find((model) => model.id === "shared-route")
   // shared-route aggregates a claude-haiku (200k) and a gpt-5.5 (128k)
-  // deployment with no declared equivalence. Under group identity rules
-  // the enrichment is ambiguous and the wire spec keeps conservative
-  // deployment-min fallbacks (no vendor record); the conflicting
-  // context values are not merged into a fake known limit, and output
-  // stays 0 (unknown) because neither deployment nor a trusted record
-  // declares it. Publication blocks the model.
-  expect(shared?.limit).toEqual({ context: 128000, input: 128000, output: 0 })
+  // deployment: v7 keeps the deployment-min fallback with no declared
+  // equivalence; v8 treats cross-deployment disagreement as an unresolved
+  // conflict, so both limits stay 0 (unknown) rather than a fake merged value.
+  const CORE_V8 = (PUBLICATION_SCHEMA_VERSION as number) === 8
+  expect(shared?.limit).toEqual(CORE_V8 ? { context: 0, input: 0, output: 0 } : { context: 128000, input: 128000, output: 0 })
   expect(shared?.package).toBe("@opencode/ai/providers/openai-compatible")
 })
 
-test("hy4-preview 通过 OpenRouter 能力 fallback 保持可用限制", () => {
+test("hy4-preview 由 canonical registry 保持可用限制（reseller 记录仅诊断）", () => {
   const neutral = discover({
     data: [{
       model_name: "hy4-preview",
-      litellm_params: { model: "openai/hy4-preview" },
+      litellm_params: { model: "hy4-preview" },
       model_info: {
         mode: "chat",
+        max_input_tokens: 1024000,
+        max_output_tokens: 64000,
+        supports_function_calling: true,
+        supports_reasoning: true,
+        supports_vision: false,
+        supports_pdf_input: false,
+        supports_audio_input: false,
+        supports_video_input: false,
+        supports_audio_output: false,
         input_cost_per_token: 0.000000834,
         output_cost_per_token: 0.000002501,
         cache_read_input_token_cost: 0.000000042,
       },
     }],
   }, {
-    openrouter: {
-      models: {
-        "hy4-preview": {
-          id: "hy4-preview",
-          canonical_model_id: "tencent/hy4-preview",
-          tool_call: true,
-          reasoning: true,
-          modalities: { input: ["text"], output: ["text"] },
-          limit: { context: 1024000, output: 64000 },
-        },
+    models: {
+      "tencent/hy4-preview": {
+        limit: { context: 1024000, input: 1024000, output: 64000 },
+        modalities: { input: ["text"], output: ["text"] },
+        tool_call: true,
+        reasoning: true,
       },
     },
-    opencode: {
-      models: {
-        "hy4-preview": {
-          id: "hy4-preview",
-          canonical_model_id: "tencent/hy4-preview",
-          limit: { context: 1000000, output: 32000 },
+    providers: {
+      openrouter: {
+        models: {
+          "hy4-preview": {
+            id: "hy4-preview",
+            canonical_model_id: "tencent/hy4-preview",
+            tool_call: true,
+            reasoning: true,
+            modalities: { input: ["text"], output: ["text"] },
+            limit: { context: 1024000, output: 64000 },
+          },
+        },
+      },
+      opencode: {
+        models: {
+          "hy4-preview": {
+            id: "hy4-preview",
+            canonical_model_id: "tencent/hy4-preview",
+            limit: { context: 1000000, output: 32000 },
+          },
         },
       },
     },
   }, options)
   const adapted = neutral.map(toOpenCodeModelSpec)
   const hy4 = adapted[0]!
-  // Frozen precedence: OpenCode ranks before OpenRouter when the original
-  // provider record is absent, so the OpenCode record supplies the limits.
-  expect(hy4.limit).toEqual({ context: 1000000, input: 1000000, output: 32000 })
+  // Unproven reseller records supply nothing (D5): canonical limits plus
+  // operator-declared LiteLLM prices reach the host mapping.
+  expect(hy4.limit).toEqual({ context: 1024000, input: 1024000, output: 64000 })
   expect(hy4.limit.context).toBeGreaterThan(0)
   expect(hy4.limit.output).toBeGreaterThan(0)
   expect(hy4.cost.input).toBeCloseTo(0.834)
@@ -121,6 +139,20 @@ test("通用 operational-limit guard 不向 OpenCode 发布 context/output 非�
   expect(hasOperationalLimits(invalidOutput)).toBeFalse()
   expect(hasOperationalLimits(valid)).toBeTrue()
 
+  // v8: dimension isolation (G30) means a private model without a canonical
+  // identity cannot publish at all — so the guard test needs a registry entry
+  // for `valid` to stay publishable; the zero-context/zero-output entries
+  // stay absent so their illegal limits surface as withheld specs. In v7 the
+  // LiteLLM-only branch published from the declarations directly.
+  const CORE_V8 = (PUBLICATION_SCHEMA_VERSION as number) === 8
+  const catalog = CORE_V8
+    ? {
+      models: {
+        "custom/valid": { limit: { context: 1000, output: 100 }, tool_call: true, reasoning: false, modalities: { input: ["text"], output: ["text"] } },
+      },
+      providers: {},
+    }
+    : {}
   const adapted = buildModelSpecs({
     data: [
       {
@@ -139,7 +171,7 @@ test("通用 operational-limit guard 不向 OpenCode 发布 context/output 非�
         model_info: { mode: "chat", max_input_tokens: 1000, max_output_tokens: 100 },
       },
     ],
-  }, {}, options)
+  }, catalog, options)
   expect(adapted.map((model) => model.id)).toEqual(["valid"])
   expect(adapted[0]!.limit.context).toBeGreaterThan(0)
   expect(adapted[0]!.limit.output).toBeGreaterThan(0)
