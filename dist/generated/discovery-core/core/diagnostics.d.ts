@@ -1,8 +1,8 @@
 import { type BuildOptions, type ModelSpec } from "./build.js";
-import { type ReasoningSupportResolution } from "./modelsdev.js";
-import { type FieldBasis, type ResolvedModel } from "./resolve.js";
 import type { FieldResolution } from "./evidence.js";
+import { type ReasoningSupportResolution, type SelectedModelRecord } from "./modelsdev.js";
 import { type ProtocolReason, type ProtocolSupport } from "./protocol.js";
+import { type ResolvedModel } from "./resolve.js";
 export declare const DISCOVERY_DIAGNOSTICS_SCHEMA_VERSION: 1;
 export type DiagnosticSeverity = "info" | "warning" | "error";
 export type DiagnosticStage = "model-info" | "models-list" | "models-dev" | "protocol" | "mapping" | "publication";
@@ -25,43 +25,21 @@ export interface MetadataConflictDiagnostic {
 export interface ModelQualityDiagnostic {
     readonly identity: {
         readonly canonicalCandidates: readonly string[];
-        readonly matchKind?: "exact" | "canonical" | "alias" | "relation";
+        readonly matchKind?: SelectedModelRecord["matchKind"];
         readonly matchedCandidate?: string;
-        /**
-         * Where the canonical identity evidence comes from: a provider-declared
-         * canonical relation, the deployments' own declarations, or nothing
-         * provable. Observational only.
-         */
-        readonly identityProvenance?: "provider-relation" | "deployment-declaration" | "unknown";
-        /** Canonical identity from the single resolver (D9, diagnostics 4.3). */
         readonly canonicalModelID?: string;
         readonly canonicalEvidence?: ResolvedModel["identity"]["evidence"];
         readonly canonicalStatus?: ResolvedModel["identity"]["status"];
-        readonly adapterSegment?: string;
-        readonly customLLMProvider?: string;
     };
     readonly reasoning: ReasoningSupportResolution;
     readonly protocolSupport: ProtocolSupport;
     readonly fallback: "enriched" | "litellm-only";
     readonly conflicts: readonly MetadataConflictDiagnostic[];
-    /** Serving status from the single resolver. */
-    readonly serving?: {
-        readonly status: ResolvedModel["serving"]["status"];
-        readonly providerID?: string;
-        readonly recordID?: string;
+    readonly metadataSource?: {
+        readonly providerID: string;
+        readonly recordID: string;
     };
-    /** Per-field basis from the single resolver. */
-    readonly fieldBasis?: Readonly<Record<string, FieldBasis>>;
-    /** Selectable reasoning levels state (unknown vs known). */
     readonly reasoningLevelsState?: "unknown" | "known";
-    /** Non-pricing litellm_params keys as operator configuration (never enforcement). */
-    readonly operatorConfigurationKeys?: readonly string[];
-    /** Unproven exact-id records listed as declaration hints only. */
-    readonly diagnosticCandidates?: ReadonlyArray<{
-        providerID: string;
-        recordID: string;
-        why: string;
-    }>;
     readonly catalogKind?: ResolvedModel["catalogKind"];
 }
 export interface ModelDiagnostic {
@@ -176,9 +154,5 @@ export interface DiscoveryCacheDiagnosticsInput {
     readonly nextRetryAt?: number;
     readonly pending?: boolean;
 }
-/**
- * Diagnose discovery. `buildModelSpecs` models equal the diagnostics models
- * (single-resolver invariant G22): both project the same resolutions.
- */
 export declare function diagnoseModelSpecs(litellmResponse: unknown, modelsDevCatalog: unknown, options: BuildOptions): DiagnoseModelSpecsResult;
 export declare function createDiscoveryCacheDiagnostics(input: DiscoveryCacheDiagnosticsInput, now?: number): DiscoveryCacheDiagnostics;

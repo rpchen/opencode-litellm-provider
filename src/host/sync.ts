@@ -522,6 +522,7 @@ export function createDiscoveryLoop(
         status: "stale",
         lastSuccessfulDiscoveryAt: previousPersisted.discoveredAt,
         view: restoredView,
+        cacheSource: "snapshot",
       }
       snapshot.diagnostics = {
         cache: createDiscoveryCacheDiagnostics({
@@ -710,6 +711,7 @@ export function createDiscoveryLoop(
           nextRetryAt: coordinated.nextRetryAt,
         }),
       }
+      snapshot.audit = { ...snapshot.audit, discovery: coordinated.value.diagnostics, cacheSource: snapshot.diagnostics.cache?.source, lkgIDs: publication?.lkgIDs }
     } catch (error) {
       if (disposed || identity !== nextIdentity) return
       if (error instanceof DiscoveryError && (error.kind === "auth" || error.kind === "notfound")) {

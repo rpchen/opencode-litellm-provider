@@ -1,0 +1,102 @@
+{
+  "kind": "synthetic-from-observed-model-names",
+  "note": "Actual registered model_name values only; model_info.mode mirrors observed protocol for existing host mapping tests. No route/base_model/deployment identity is required or asserted.",
+  "data": [
+    {
+      "model_name": "deepseek-v4-pro",
+      "model_info": {
+        "mode": "chat"
+      }
+    },
+    {
+      "model_name": "deepseek-v4.1-flash",
+      "model_info": {
+        "mode": "chat"
+      }
+    },
+    {
+      "model_name": "glm-5.3",
+      "model_info": {
+        "mode": "chat"
+      }
+    },
+    {
+      "model_name": "glm-5.3-flash",
+      "model_info": {
+        "mode": "chat"
+      }
+    },
+    {
+      "model_name": "gpt-5.6-luna",
+      "model_info": {
+        "mode": "responses"
+      }
+    },
+    {
+      "model_name": "gpt-5.6-sol",
+      "model_info": {
+        "mode": "responses"
+      }
+    },
+    {
+      "model_name": "gpt-5.6-terra",
+      "model_info": {
+        "mode": "responses"
+      }
+    },
+    {
+      "model_name": "gpt-6-astra",
+      "model_info": {
+        "mode": "responses"
+      }
+    },
+    {
+      "model_name": "gpt-6-luna",
+      "model_info": {
+        "mode": "responses"
+      }
+    },
+    {
+      "model_name": "gpt-6-sol",
+      "model_info": {
+        "mode": "responses"
+      }
+    },
+    {
+      "model_name": "gpt-6.1-sol",
+      "model_info": {
+        "mode": "responses"
+      }
+    },
+    {
+      "model_name": "hy4-preview",
+      "model_info": {
+        "mode": "chat"
+      }
+    },
+    {
+      "model_name": "kimi-k2.7-code",
+      "model_info": {
+        "mode": "responses"
+      }
+    },
+    {
+      "model_name": "kimi-k3",
+      "model_info": {
+        "mode": "chat"
+      }
+    },
+    {
+      "model_name": "mimo-v2.6-flash",
+      "model_info": {
+        "mode": "chat"
+      }
+    },
+    {
+      "model_name": "mimo-v2.6-pro",
+      "model_info": {
+        "mode": "chat"
+      }
+    }
+  ]
+}

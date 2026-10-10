@@ -1,0 +1,899 @@
+{
+  "kind": "review-oracle-from-public-records",
+  "note": "Expected whole-record selection from actual model_name and frozen public catalog. Canonical identity is a lookup result, not an internal-route assumption. Explicit oracle, not resolver output.",
+  "models": [
+    {
+      "id": "deepseek-v4-pro",
+      "canonicalID": "deepseek/deepseek-v4-pro",
+      "provider": "opencode",
+      "recordKey": "deepseek-v4-pro",
+      "protocol": "chat",
+      "reasoningSupported": "supported",
+      "reasoningOptions": [
+        {
+          "type": "toggle"
+        },
+        {
+          "type": "effort",
+          "values": [
+            "high",
+            "max"
+          ]
+        }
+      ],
+      "levels": [
+        "high",
+        "max"
+      ],
+      "limit": {
+        "context": 1000000,
+        "output": 384000
+      },
+      "tools": true,
+      "input": [
+        "text"
+      ],
+      "output": [
+        "text"
+      ],
+      "piLevels": [
+        "high",
+        "max"
+      ],
+      "cost": {
+        "input": 1.74,
+        "output": 3.84,
+        "cache_read": 0.145
+      }
+    },
+    {
+      "id": "deepseek-v4.1-flash",
+      "canonicalID": "deepseek/deepseek-v4.1-flash",
+      "provider": "deepseek",
+      "recordKey": "deepseek-flash",
+      "protocol": "chat",
+      "reasoningSupported": "supported",
+      "reasoningOptions": [
+        {
+          "type": "toggle"
+        },
+        {
+          "type": "effort",
+          "values": [
+            "low",
+            "high",
+            "max"
+          ]
+        }
+      ],
+      "levels": [
+        "low",
+        "high",
+        "max"
+      ],
+      "limit": {
+        "context": 1000000,
+        "output": 393216
+      },
+      "tools": true,
+      "input": [
+        "text",
+        "image"
+      ],
+      "output": [
+        "text"
+      ],
+      "piLevels": [
+        "low",
+        "high",
+        "max"
+      ],
+      "cost": {
+        "input": 0.15,
+        "output": 0.6,
+        "reasoning": 0.6,
+        "cache_read": 0.003
+      }
+    },
+    {
+      "id": "glm-5.3",
+      "canonicalID": "zhipuai/glm-5.3",
+      "provider": "zhipuai",
+      "recordKey": "glm-5.3",
+      "protocol": "chat",
+      "reasoningSupported": "supported",
+      "reasoningOptions": [
+        {
+          "type": "effort",
+          "values": [
+            "low",
+            "high",
+            "max"
+          ]
+        }
+      ],
+      "levels": [
+        "low",
+        "high",
+        "max"
+      ],
+      "limit": {
+        "context": 1000000,
+        "output": 131072
+      },
+      "tools": true,
+      "input": [
+        "text"
+      ],
+      "output": [
+        "text"
+      ],
+      "piLevels": [
+        "low",
+        "high",
+        "max"
+      ],
+      "cost": {
+        "input": 1.4,
+        "output": 4.4,
+        "cache_read": 0.26,
+        "cache_write": 0
+      }
+    },
+    {
+      "id": "glm-5.3-flash",
+      "canonicalID": "zhipuai/glm-5.3-flash",
+      "provider": "zhipuai",
+      "recordKey": "glm-5.3-flash",
+      "protocol": "chat",
+      "reasoningSupported": "supported",
+      "reasoningOptions": [
+        {
+          "type": "effort",
+          "values": [
+            "low",
+            "high",
+            "max"
+          ]
+        }
+      ],
+      "levels": [
+        "low",
+        "high",
+        "max"
+      ],
+      "limit": {
+        "context": 1000000,
+        "output": 131072
+      },
+      "tools": true,
+      "input": [
+        "text",
+        "image",
+        "video",
+        "pdf"
+      ],
+      "output": [
+        "text"
+      ],
+      "piLevels": [
+        "low",
+        "high",
+        "max"
+      ],
+      "cost": {
+        "input": 0.15,
+        "output": 0.5,
+        "cache_read": 0.03,
+        "cache_write": 0
+      }
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "canonicalID": "openai/gpt-5.6-luna",
+      "provider": "openai",
+      "recordKey": "gpt-5.6-luna",
+      "protocol": "responses",
+      "reasoningSupported": "supported",
+      "reasoningOptions": [
+        {
+          "type": "effort",
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      ],
+      "levels": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "limit": {
+        "context": 1050000,
+        "input": 922000,
+        "output": 128000
+      },
+      "tools": true,
+      "input": [
+        "text",
+        "image",
+        "pdf"
+      ],
+      "output": [
+        "text"
+      ],
+      "piLevels": [
+        "off",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "cost": {
+        "input": 0.2,
+        "output": 1.2,
+        "cache_read": 0.02,
+        "cache_write": 0.25,
+        "tiers": [
+          {
+            "input": 0.4,
+            "output": 1.8,
+            "cache_read": 0.04,
+            "cache_write": 0.5,
+            "tier": {
+              "type": "context",
+              "size": 272000
+            }
+          }
+        ],
+        "context_over_200k": {
+          "input": 0.4,
+          "output": 1.8,
+          "cache_read": 0.04,
+          "cache_write": 0.5
+        }
+      }
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "canonicalID": "openai/gpt-5.6-sol",
+      "provider": "openai",
+      "recordKey": "gpt-5.6-sol",
+      "protocol": "responses",
+      "reasoningSupported": "supported",
+      "reasoningOptions": [
+        {
+          "type": "effort",
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      ],
+      "levels": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "limit": {
+        "context": 1050000,
+        "input": 922000,
+        "output": 128000
+      },
+      "tools": true,
+      "input": [
+        "text",
+        "image",
+        "pdf"
+      ],
+      "output": [
+        "text"
+      ],
+      "piLevels": [
+        "off",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "cost": {
+        "input": 4,
+        "output": 20,
+        "cache_read": 0.4,
+        "cache_write": 5,
+        "tiers": [
+          {
+            "input": 8,
+            "output": 30,
+            "cache_read": 0.8,
+            "cache_write": 10,
+            "tier": {
+              "type": "context",
+              "size": 272000
+            }
+          }
+        ],
+        "context_over_200k": {
+          "input": 8,
+          "output": 30,
+          "cache_read": 0.8,
+          "cache_write": 10
+        }
+      }
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "canonicalID": "openai/gpt-5.6-terra",
+      "provider": "openai",
+      "recordKey": "gpt-5.6-terra",
+      "protocol": "responses",
+      "reasoningSupported": "supported",
+      "reasoningOptions": [
+        {
+          "type": "effort",
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      ],
+      "levels": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "limit": {
+        "context": 1050000,
+        "input": 922000,
+        "output": 128000
+      },
+      "tools": true,
+      "input": [
+        "text",
+        "image",
+        "pdf"
+      ],
+      "output": [
+        "text"
+      ],
+      "piLevels": [
+        "off",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "cost": {
+        "input": 2,
+        "output": 12,
+        "cache_read": 0.2,
+        "cache_write": 2.5,
+        "tiers": [
+          {
+            "input": 4,
+            "output": 18,
+            "cache_read": 0.4,
+            "cache_write": 5,
+            "tier": {
+              "type": "context",
+              "size": 272000
+            }
+          }
+        ],
+        "context_over_200k": {
+          "input": 4,
+          "output": 18,
+          "cache_read": 0.4,
+          "cache_write": 5
+        }
+      }
+    },
+    {
+      "id": "gpt-6-astra",
+      "canonicalID": "openai/gpt-6-astra",
+      "provider": "openai",
+      "recordKey": "gpt-6-astra",
+      "protocol": "responses",
+      "reasoningSupported": "supported",
+      "reasoningOptions": [
+        {
+          "type": "effort",
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      ],
+      "levels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "limit": {
+        "context": 1050000,
+        "input": 922000,
+        "output": 128000
+      },
+      "tools": true,
+      "input": [
+        "text",
+        "image",
+        "pdf"
+      ],
+      "output": [
+        "text"
+      ],
+      "piLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "cost": {
+        "input": 10,
+        "output": 50,
+        "cache_read": 1,
+        "cache_write": 12.5,
+        "tiers": [
+          {
+            "input": 20,
+            "output": 75,
+            "cache_read": 2,
+            "cache_write": 25,
+            "tier": {
+              "type": "context",
+              "size": 272000
+            }
+          }
+        ],
+        "context_over_200k": {
+          "input": 20,
+          "output": 75,
+          "cache_read": 2,
+          "cache_write": 25
+        }
+      }
+    },
+    {
+      "id": "gpt-6-luna",
+      "canonicalID": "openai/gpt-6-luna",
+      "provider": "openai",
+      "recordKey": "gpt-6-luna",
+      "protocol": "responses",
+      "reasoningSupported": "supported",
+      "reasoningOptions": [
+        {
+          "type": "effort",
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      ],
+      "levels": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "limit": {
+        "context": 1050000,
+        "input": 922000,
+        "output": 128000
+      },
+      "tools": true,
+      "input": [
+        "text",
+        "image",
+        "pdf"
+      ],
+      "output": [
+        "text"
+      ],
+      "piLevels": [
+        "off",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "cost": {
+        "input": 0.1,
+        "output": 0.5,
+        "cache_read": 0.01,
+        "cache_write": 0.125,
+        "tiers": [
+          {
+            "input": 0.2,
+            "output": 0.75,
+            "cache_read": 0.02,
+            "cache_write": 0.25,
+            "tier": {
+              "type": "context",
+              "size": 272000
+            }
+          }
+        ],
+        "context_over_200k": {
+          "input": 0.2,
+          "output": 0.75,
+          "cache_read": 0.02,
+          "cache_write": 0.25
+        }
+      }
+    },
+    {
+      "id": "gpt-6-sol",
+      "canonicalID": "openai/gpt-6-sol",
+      "provider": "openai",
+      "recordKey": "gpt-6-sol",
+      "protocol": "responses",
+      "reasoningSupported": "supported",
+      "reasoningOptions": [
+        {
+          "type": "effort",
+          "values": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      ],
+      "levels": [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "limit": {
+        "context": 1050000,
+        "input": 922000,
+        "output": 128000
+      },
+      "tools": true,
+      "input": [
+        "text",
+        "image",
+        "pdf"
+      ],
+      "output": [
+        "text"
+      ],
+      "piLevels": [
+        "off",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "cost": {
+        "input": 2,
+        "output": 10,
+        "cache_read": 0.2,
+        "cache_write": 2.5,
+        "tiers": [
+          {
+            "input": 4,
+            "output": 15,
+            "cache_read": 0.4,
+            "cache_write": 5,
+            "tier": {
+              "type": "context",
+              "size": 272000
+            }
+          }
+        ],
+        "context_over_200k": {
+          "input": 4,
+          "output": 15,
+          "cache_read": 0.4,
+          "cache_write": 5
+        }
+      }
+    },
+    {
+      "id": "gpt-6.1-sol",
+      "canonicalID": "openai/gpt-6.1-sol",
+      "provider": "openai",
+      "recordKey": "gpt-6.1-sol",
+      "protocol": "responses",
+      "reasoningSupported": "supported",
+      "reasoningOptions": [
+        {
+          "type": "effort",
+          "values": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        }
+      ],
+      "levels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "limit": {
+        "context": 1050000,
+        "input": 922000,
+        "output": 128000
+      },
+      "tools": true,
+      "input": [
+        "text",
+        "image",
+        "pdf"
+      ],
+      "output": [
+        "text"
+      ],
+      "piLevels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "cost": {
+        "input": 2,
+        "output": 10,
+        "cache_read": 0.1,
+        "cache_write": 2.5,
+        "tiers": [
+          {
+            "input": 4,
+            "output": 15,
+            "cache_read": 0.2,
+            "cache_write": 5,
+            "tier": {
+              "type": "context",
+              "size": 272000
+            }
+          }
+        ],
+        "context_over_200k": {
+          "input": 4,
+          "output": 15,
+          "cache_read": 0.2,
+          "cache_write": 5
+        }
+      }
+    },
+    {
+      "id": "hy4-preview",
+      "canonicalID": "tencent/hy4-preview",
+      "provider": "tencent-tokenhub",
+      "recordKey": "hy4-preview",
+      "protocol": "chat",
+      "reasoningSupported": "supported",
+      "reasoningOptions": [
+        {
+          "type": "toggle"
+        },
+        {
+          "type": "effort",
+          "values": [
+            "none",
+            "high"
+          ]
+        }
+      ],
+      "levels": [
+        "none",
+        "high"
+      ],
+      "limit": {
+        "context": 1024000,
+        "output": 64000
+      },
+      "tools": true,
+      "input": [
+        "text"
+      ],
+      "output": [
+        "text"
+      ],
+      "piLevels": [
+        "off",
+        "high"
+      ],
+      "cost": {
+        "input": 0.834,
+        "output": 2.501,
+        "cache_read": 0.042
+      }
+    },
+    {
+      "id": "kimi-k2.7-code",
+      "canonicalID": "moonshotai/kimi-k2.7-code",
+      "provider": "moonshotai",
+      "recordKey": "kimi-k2.7-code",
+      "protocol": "responses",
+      "reasoningSupported": "supported",
+      "reasoningOptions": [],
+      "levels": [],
+      "limit": {
+        "context": 262144,
+        "output": 262144
+      },
+      "tools": true,
+      "input": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output": [
+        "text"
+      ],
+      "piLevels": [],
+      "cost": {
+        "input": 0.95,
+        "output": 4,
+        "cache_read": 0.19
+      }
+    },
+    {
+      "id": "kimi-k3",
+      "canonicalID": "moonshotai/kimi-k3",
+      "provider": "moonshotai",
+      "recordKey": "kimi-k3",
+      "protocol": "chat",
+      "reasoningSupported": "supported",
+      "reasoningOptions": [
+        {
+          "type": "effort",
+          "values": [
+            "low",
+            "high",
+            "max"
+          ]
+        }
+      ],
+      "levels": [
+        "low",
+        "high",
+        "max"
+      ],
+      "limit": {
+        "context": 1048576,
+        "output": 1048576
+      },
+      "tools": true,
+      "input": [
+        "text",
+        "image",
+        "video"
+      ],
+      "output": [
+        "text"
+      ],
+      "piLevels": [
+        "low",
+        "high",
+        "max"
+      ],
+      "cost": {
+        "input": 3,
+        "output": 15,
+        "cache_read": 0.3,
+        "cache_write": 3
+      }
+    },
+    {
+      "id": "mimo-v2.6-flash",
+      "canonicalID": "xiaomi/mimo-v2.6-flash",
+      "provider": "xiaomi",
+      "recordKey": "mimo-v2.6-flash",
+      "protocol": "chat",
+      "reasoningSupported": "supported",
+      "reasoningOptions": [
+        {
+          "type": "toggle"
+        }
+      ],
+      "levels": [],
+      "limit": {
+        "context": 1048576,
+        "output": 131072
+      },
+      "tools": true,
+      "input": [
+        "text",
+        "image",
+        "audio",
+        "video"
+      ],
+      "output": [
+        "text"
+      ],
+      "piLevels": [],
+      "cost": {
+        "input": 0.14,
+        "output": 0.28,
+        "cache_read": 0.0028
+      }
+    },
+    {
+      "id": "mimo-v2.6-pro",
+      "canonicalID": "xiaomi/mimo-v2.6-pro",
+      "provider": "xiaomi",
+      "recordKey": "mimo-v2.6-pro",
+      "protocol": "chat",
+      "reasoningSupported": "supported",
+      "reasoningOptions": [
+        {
+          "type": "toggle"
+        }
+      ],
+      "levels": [],
+      "limit": {
+        "context": 1048576,
+        "output": 131072
+      },
+      "tools": true,
+      "input": [
+        "text",
+        "image",
+        "audio",
+        "video"
+      ],
+      "output": [
+        "text"
+      ],
+      "piLevels": [],
+      "cost": {
+        "input": 0.435,
+        "output": 0.87,
+        "cache_read": 0.0036
+      }
+    }
+  ]
+}

@@ -28,13 +28,6 @@ export interface PublicationWithheldModel {
     readonly previouslyPublished: boolean;
     readonly retryable: boolean;
 }
-/** A field-level evidence fact worth showing to the user. */
-export interface PublicationFieldFact {
-    readonly model: string;
-    readonly field: string;
-    readonly status: string;
-    readonly resolution: string;
-}
 /** Adapter-visible slice of the Core publication + catalog partition. */
 export interface PublicationSummary {
     readonly discovered: number;
@@ -45,8 +38,6 @@ export interface PublicationSummary {
     readonly partial: boolean;
     readonly unusable: boolean;
     readonly regressions: readonly string[];
-    readonly discrepancies: readonly PublicationFieldFact[];
-    readonly conflicts: readonly PublicationFieldFact[];
     readonly failureKind?: string;
     readonly acknowledgement: {
         readonly notify: boolean;

@@ -210,26 +210,15 @@ endpoint 里发现了模型，不等于这个模型已经可以被安全使用�
 
 如果你之前用过的模型**现在**被 withheld，这是一次 regression，插件会在诊断中明确写出「此前可用、现已撤下」以及原因，并按可用性变化给出提醒；它**不会**自动把你的请求切到另一个模型，也不会静默继续使用失去可信配置的模型。已经发出的请求不会被打断。
 
-**metadata 暂时不可用时，插件会保护已经验证过的配置。** 如果该模型此前完整通过过可信发布标准，且身份（provider / canonical 身份）没有变化、也没有出现新的高权威矛盾事实，插件会继续使用这份**此前验证过的完整配置**（LKG），诊断中标注其来源时间与年龄。LKG 不是猜测，也不是「降级模型」：它就是一份曾经整体成立的可信配置。它没有固定过期时间——是否继续使用由身份、provider、schema 与 live 事实是否一致决定，而不是由年龄决定。LiteLLM 已经不再提供的模型不会因为存在 LKG 而重新出现。
+**models.dev 暂时不可用时，插件保留此前成功配置。** 同 endpoint/credential/协议 scope 和 model_name 的合法 LKG 保留原能力与档位；内部 route、base_model、deployment ID 与价格变化不会使其失效。诊断展示来源时间与年龄。成功目录已删除模型或认证失败仍撤下模型。升级后旧 publication schema8 / snapshot1 不回放，下一次成功发现重建为9/2。
 
-**如果整个 endpoint 当前没有任何模型可以安全发布**，诊断会明确写出「endpoint 连接成功，但本轮没有任何模型达到可信发布标准」并提示刷新（Retry）与诊断入口，而不是看起来像插件没有反应。
+Core 以模型名称和可信 canonical 关系自动匹配，按 **官方服务商 → OpenCode → OpenRouter** 选择一条完整 models.dev 记录。不要求证明实际请求发往哪家服务商，不需要配置 models_dev_provider。API 名称与 canonical 名不同（如 deepseek-v4.1-flash → deepseek-flash）按官方关系匹配；仅非精确别名查找排除 deprecated 记录，精确旧 API 名仍有效。
 
-**恢复是自动的**：被 withheld 的模型继续参与正常发现与刷新，一旦重新达到可信标准就自动回到 `/models`，无需你再次批准。
+推理支持和可选档位分别保留。仅声明的 reasoning_options 映射到 variants/settings，不给无档位模型增加默认档位。OpenCode 2.0.16 的 Model.Info 没有独立 reasoning 布尔字段，审计保留 Core 的 supported/unsupported 判定；最终 host variants 保持准确。每个 GPT 使用自己的记录。已有 Messages 预算控制保持不变。
 
-诊断中还会显示**已裁决的字段差异**：例如 LiteLLM 的描述性上限与 models.dev 该模型的内禀上限不同，插件会采用更权威的来源并记录这次差异，而不是因此把模型判为不可用；无法按权威裁决的冲突则列为**未决冲突**并说明 withheld 原因。
+价格仅为所选记录的参考值；缺失、零价或错误值归0，不表示免费，也不影响能力、模型发布、限制和缓存恢复。旧 contextTierCap 配置仍接受但忽略，不再将 GPT1050000 截断到272k。
 
-“最近成功发现”“下次允许重试”等绝对时间按**当前运行 OpenCode 的宿主机器时区**显示，并附带 UTC 偏移；内部 discovery/snapshot/cache 时间仍保持标准 UTC/epoch。
-
-### Canonical catalog 行为变化
-
-诊断/TUI 的模型明细新增（Core 提供则显示，否则省略）：canonical 身份与证据、serving 状态与 provider/record、推理档位状态（unknown 附 `models_dev_provider` 恢复提示）、operator-configuration 键（明确不是 enforcement）、可声明的诊断候选、catalog 形状。
-
-OpenCode 现从 `https://models.dev/catalog.json` 获取 canonical registry 与 serving 记录（同一 snapshot）：
-
-- 恢复 serving 值需要同时声明 `models_dev_provider` **且** wire id 精确命中该 provider 的某条记录；仅声明 provider 而无精确 SKU（如 DeepSeek 的 relation-only SKU）仍用 canonical 值。DeepSeek 输出因此为 384000（此前 serving SKU 值 393216 仅 serving 证明后可用）；kimi-k3 输出为 131072（此前 first-party serving 值 1048576 不再当内禀发布）。
-- serving 未证明时推理档位一律 unknown、无可选档位；`litellm_params` 非价格键（含 `reasoning_effort`、`max_tokens` 系）是 operator configuration，不收窄、不产生档位；价格按声明 → 已证明 serving 逐组件解析。
-- serving 缺字段（如 `base_model_omit` 删除的 `limit.input`）不再用 canonical 回填，有同维度 LiteLLM 声明则补缺，否则 unknown。
-- LKG 为 schema 8（group-wide proof）：升级后首轮 outage 期间旧条目不恢复，下一轮 live 自动重捕获。
+默认诊断显示配置状态、实际来源、推理支持/档位及实际缺口；主动审计增加公开 canonical/record 引用和快照来源，只导出最终注册字段，不复制原始响应、URL、路由或credential。
 
 终端 TUI 中的诊断卡片提供 **[关闭]**，关闭只隐藏当前会话里的当前诊断结果；再次执行 `/litellm-diagnostics` 会显示新的结果。当前诊断卡片依赖 OpenCode 终端 TUI；Desktop / Web 等不加载 TUI 卡片的客户端不会显示该卡片。
 
@@ -309,7 +298,7 @@ Core Commit      649bc84f
 | 选项 | 默认值 | 说明 |
 |---|---:|---|
 | `pollInterval` | `300` | 模型发现轮询间隔，单位秒；最小 30 |
-| `contextTierCap` | `true` | 按第一个非零输入价格阶梯截断上下文窗口 |
+| `contextTierCap` | `true` | 兼容接受但忽略；价格不再截断限制 |
 | `protocolOverrides` | `{}` | legacy 单 endpoint 模式按 LiteLLM `model_name` 覆盖协议；显式模式放到各 endpoint 内 |
 | `endpoints` | 未设置 | 启用显式多 endpoint 模式；对象 key 为 endpoint id，每项至少包含 `baseUrl` |
 | `conversationFeedback` | `false` | 为 audit export 向会话提交反馈；开启后会触发一次会话/模型处理 |
@@ -351,15 +340,13 @@ Core Commit      649bc84f
 | 正常启动 | 若有兼容的持久化 snapshot，先恢复上次模型，再联网校正 |
 | 模型清单变化 | 整体更新 LiteLLM provider；内容未变化时不重复 reload |
 | LiteLLM 暂时不可达 / 超时 / 429 / 5xx | 保留 last-known-good，后续重试；诊断显示 `stale` |
-| models.dev 不可达 | 按 catalog 形状不可用处理：LiteLLM 声明完整者仍发布，其余 withheld（有效 LKG 可恢复）；reasoning variants 暂缺 |
+| models.dev 不可达 | 有效 LKG 保留完整能力/档位；缺少合法配置的模型 withheld，后续重试 |
 | Key 无效（401 / 403） | 撤下旧模型 |
 | model-info 最终 404 | 撤下旧模型 |
 | 成功返回空清单 | 撤下旧模型 |
 | 断开 LiteLLM 连接 | 撤下 provider 模型 |
 
-`/v1/model/info` 是模型发现的事实来源；`/v1/models` 不作为发现源。embedding、图像生成等非对话模型不会注册。内禀事实只来自 canonical registry（`catalog.models`）；serving 覆盖只在运维者声明 `models_dev_provider` **且** wire id 精确命中该 provider 记录时生效。未证明的 provider 记录（OpenCode、OpenRouter、同名、变体）不提供任何发布事实，只作诊断候选。
-
-模型上限按共享发现规则合并：总 context 与最大 input 分开处理；Core diagnostics 会保留 models.dev 未命中的私有模型用于解释，但若最终仍无法得到正数 context/output，OpenCode 不会把该模型发布成 `context: 0` / `output: 0` 的不可用配置。
+`/v1/model/info` 提供可见模型名，`/v1/models` 不作为发现源。非对话模型继续过滤。Core 选中的单条 models.dev 记录提供工具、输入/输出模态、推理选项和 context/input/output；字段缺失与明确 false 分开处理。只有关键能力明确、已知模态及正数 context/output 的模型正常注册，其余保留具体诊断；价格不是准入条件。
 
 ## 升级与回滚
 

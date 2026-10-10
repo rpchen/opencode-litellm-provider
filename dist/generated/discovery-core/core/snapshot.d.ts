@@ -1,5 +1,5 @@
 import { type BuildOptions, type ModelSpec } from "./build.js";
-export declare const DISCOVERY_SNAPSHOT_SCHEMA_VERSION: 1;
+export declare const DISCOVERY_SNAPSHOT_SCHEMA_VERSION: 2;
 export declare const ENDPOINT_ID_PATTERN: RegExp;
 /** Stable user-facing endpoint identifiers shared by host adapters. */
 export declare function isEndpointID(value: unknown): value is string;

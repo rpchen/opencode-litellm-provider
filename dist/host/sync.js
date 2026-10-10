@@ -378,6 +378,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                 status: "stale",
                 lastSuccessfulDiscoveryAt: previousPersisted.discoveredAt,
                 view: restoredView,
+                cacheSource: "snapshot",
             };
             snapshot.diagnostics = {
                 cache: createDiscoveryCacheDiagnostics({
@@ -548,6 +549,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                     nextRetryAt: coordinated.nextRetryAt,
                 }),
             };
+            snapshot.audit = { ...snapshot.audit, discovery: coordinated.value.diagnostics, cacheSource: snapshot.diagnostics.cache?.source, lkgIDs: publication?.lkgIDs };
         }
         catch (error) {
             if (disposed || identity !== nextIdentity)

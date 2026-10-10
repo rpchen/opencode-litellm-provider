@@ -1,7 +1,7 @@
 import type { ConnectionInfo } from "@opencode/client";
 import { Model, Plugin, Provider } from "@opencode/plugin";
-import type { ModelSpec } from "../core/build.js";
-import type { DiscoveryCacheDiagnostics, DiscoveryDiagnostics } from "../generated/discovery-core/index.js";
+import { type ModelSpec } from "../core/build.js";
+import type { DiscoveryCacheDiagnostics, DiscoveryDiagnostics, ModelSpec as DiscoveryModelSpec } from "../generated/discovery-core/index.js";
 import { type EndpointIdentity } from "../endpoints.js";
 import { type EndpointState } from "./endpoint-state.js";
 import type { PublicationState, PublicationSummary } from "./publication.js";
@@ -23,12 +23,16 @@ export interface RegistrationView {
     readonly info: Provider.Info;
     readonly models: readonly Model.Info[];
     readonly protocols: Readonly<Record<string, ModelSpec["protocol"]>>;
+    readonly reasoning: Readonly<Record<string, DiscoveryModelSpec["reasoningSupported"]>>;
     readonly releaseUnits: Readonly<Record<string, NonNullable<ModelSpec["releaseUnit"]>>>;
 }
 export interface AuditSnapshot {
     readonly status: DiscoveryStatus;
     readonly lastSuccessfulDiscoveryAt?: string;
     readonly view?: RegistrationView;
+    readonly discovery?: DiscoveryDiagnostics;
+    readonly cacheSource?: string;
+    readonly lkgIDs?: readonly string[];
 }
 export interface ProviderDiagnosticsSnapshot {
     readonly discovery?: DiscoveryDiagnostics;
@@ -44,7 +48,7 @@ export interface ProviderSnapshot {
     registrationView?: RegistrationView;
     audit?: AuditSnapshot;
     diagnostics?: ProviderDiagnosticsSnapshot;
-    /** Per-endpoint publication controller memory (LKG store + degraded acceptance). */
+    /** Per-endpoint publication controller memory (LKG, published baseline and notification). */
     publicationState?: PublicationState;
     /**
      * Canonical endpoint state: desired × validation × credential × applied.

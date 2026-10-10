@@ -16,10 +16,20 @@ function variantSettings(settings) {
     }
     return result;
 }
-function modelRecord(model, view) {
+function modelRecord(model, view, snapshot) {
     const id = String(model.id);
+    const diagnostic = snapshot.discovery?.models.find(item => item.id === id);
     return {
         id,
+        reasoningSupported: view.reasoning[id],
+        ...(diagnostic ? { metadata: {
+                canonicalID: diagnostic.quality.identity.canonicalModelID,
+                provider: diagnostic.quality.metadataSource?.providerID,
+                recordKey: diagnostic.quality.metadataSource?.recordID,
+                source: snapshot.lkgIDs?.includes(id) ? "last-known-good" : "models.dev",
+                reasoningSupported: view.reasoning[id],
+                reasoningLevels: model.variants.map(item => String(item.id)),
+            } } : {}),
         modelID: String(model.modelID),
         providerID: String(model.providerID),
         name: model.name,
@@ -61,6 +71,7 @@ export function createAuditReport(snapshot, now = new Date()) {
         exportedAt: now.toISOString(),
         lastSuccessfulDiscoveryAt: snapshot.lastSuccessfulDiscoveryAt ?? null,
         status: snapshot.status,
+        source: snapshot.cacheSource,
         runtimeIdentity: {
             pluginVersion: identity.pluginVersion,
             artifactDigest: identity.artifactDigest,
@@ -82,7 +93,7 @@ export function createAuditReport(snapshot, now = new Date()) {
             activation: view.info.activation,
             package: view.info.package,
         } : null,
-        models: view?.models.map((model) => modelRecord(model, view)) ?? [],
+        models: view?.models.map((model) => modelRecord(model, view, snapshot)) ?? [],
     };
 }
 export function createMultiEndpointAuditReport(endpoints, now = new Date()) {
