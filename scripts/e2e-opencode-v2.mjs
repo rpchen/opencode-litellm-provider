@@ -1018,7 +1018,9 @@ export default {
     const ref={id,providerID:"litellm",...(variant===undefined?{}:{variant})}
     api("POST",`/api/session/${requestSession}/model`,"--data",JSON.stringify({model:ref}))
     const selected=payload(jsonOutput(api("GET",`/api/session/${requestSession}`),"session.get"))
-    assert.deepEqual(selected.model,ref,"real session stores the selected model and declared variant")
+    // The host normalizes an omitted selection to a neutral default marker;
+    // it does not add a Model.Info variant or a reasoning request parameter.
+    assert.deepEqual(selected.model,{...ref,variant:variant??"default"},"real session stores the selected model and declared variant")
     const before=defaultMock.requests.length
     const started=Date.now()
     api("POST",`/api/session/${requestSession}/prompt`,"--data",JSON.stringify({text:"Reply ok. Do not call any tools."}))
@@ -1046,7 +1048,10 @@ export default {
       checkedRequests++
     }
   }
-  for(const expected of oracle.models)for(const level of expected.levels)await requestModel(expected.id,level,expected.protocol)
+  for(const expected of oracle.models) {
+    if(expected.levels.length===0) await requestModel(expected.id,undefined,expected.protocol)
+    else for(const level of expected.levels) await requestModel(expected.id,level,expected.protocol)
+  }
   await requestModel("e2e-no-effort",undefined,"chat")
   await requestModel("e2e-disabled",undefined,"chat")
   for(const level of ["high","max"])await requestModel("e2e-messages",level,"messages")
