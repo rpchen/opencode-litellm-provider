@@ -9,7 +9,7 @@
 ## ADDED Requirements
 
 ### Requirement: OpenCode preserves selected limits and reference prices
-OpenCode SHALL 保留Core固定三层来源得到的limits、原模型身份与参考价；不再保留LL价格优先。
+OpenCode SHALL 保留Core选中整条记录的limits、model_name身份与该记录参考价或0；不再保留LL价格优先。
 
 #### Scenario: [T28] 后备元数据
 - **WHEN** 官方缺失，Core选择OpenCode或OpenRouter

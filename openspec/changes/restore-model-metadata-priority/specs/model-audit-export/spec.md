@@ -20,7 +20,7 @@
 ## ADDED Requirements
 
 ### Requirement: Metadata provenance audit
-OpenCode SHALL 在现有主动导出中以allowlist增加Core canonical ID、实际选中公开record key/provider、字段来源、选项未知/明确为空与快照来源。MUST NOT 复制raw LiteLLM/models.dev、route、URL、credential或任意扩展字段；报告保留实际注册值和原模型名，不自动导出。
+OpenCode SHALL 在现有主动导出中以allowlist增加Core canonical ID、实际选中公开record key/provider、所选整记录来源、实际推理选项与快照来源。MUST NOT 复制raw LiteLLM/models.dev、route、URL、credential或任意扩展字段；报告保留实际注册值和原模型名，不自动导出。
 
 #### Scenario: [T23] 安全可追溯
 - **WHEN** 用户主动导出且原始输入藏有测试secret/URL/route

@@ -9,7 +9,7 @@
 ## ADDED Requirements
 
 ### Requirement: 元数据不可用时消费 Core 恢复结果
-OpenCode SHALL 在catalog失败时消费Core的合法LKG、完整LL或withheld结果，保留既有catalog缓存/重试及刷新触发；MUST NOT 因本轮未取得catalog而无条件删除LKG档位或注册不完整默认模型。成功空LiteLLM目录和auth失败仍按既有规则撤下。
+OpenCode SHALL 在catalog失败时消费Core的既有合法LKG或未配置结果，保留既有catalog缓存/重试及刷新触发；MUST NOT 因本轮未取得catalog而无条件删除LKG档位或注册不完整默认模型。成功空LiteLLM目录和auth失败仍按既有规则撤下。
 
 #### Scenario: [T25] catalog超时
 - **WHEN** 上轮成功，本轮metadata失败

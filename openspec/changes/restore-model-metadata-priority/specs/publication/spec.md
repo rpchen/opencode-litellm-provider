@@ -54,10 +54,10 @@ OpenCode SHALL 保持Core明确tools布尔值；unknown不正常注册，不再�
 - **THEN** 正常注册且tools=false
 
 ### Requirement: Host handling of metadata outages
-OpenCode SHALL 消费Core完整LL/合法LKG/withheld结果，保留source和age、retry与具体缺口；低优先描述及价格变化不是失效条件。只持久化publishable中立结果，auth/删除/身份协议改变不得复活旧模型。
+OpenCode SHALL 消费Core既有目录故障/合法LKG/withheld结果，保留source和age、retry与具体缺口；低优先描述及价格变化不是失效条件。只持久化publishable中立结果，保留既有auth、成功空清单、模型删除和scope隔离；内部route/base_model/deployment ID变化不得使同model_name缓存失效。
 
 #### Scenario: [T18] catalog失败
-- **WHEN** Core允许同身份关键配置LKG
+- **WHEN** Core允许同scope/model_name的有效关键配置LKG
 - **THEN** 继续注册并显示上次成功来源
 
 #### Scenario: [T16] 价格故障

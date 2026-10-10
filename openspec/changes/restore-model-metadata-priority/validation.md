@@ -1,8 +1,7 @@
-# 设计验证
+# 修订验证与审查边界
 
-本仓库 `openspec validate --all --strict --no-interactive`：24 passed / 0 failed。
-`npm run test:openspec-closure`：32/32测试通过，历史archive检查0 mismatches。
+本次仅修订同名change。实施任务未完成，源码、dist、canonical specs、历史archive与版本保持不变。新行为的真实宿主E2E在获准实施后执行，不能把现有代码CI或合成数据检查称为新行为已验收。
 
-设计材料完整，业务/真实宿主测试尚未执行；源代码、dist、provenance、版本、canonical及历史archive均不修改。任务保持未实施状态，不归档、不合并、不发布。
+本仓库 strict：24/24。`openspec validate --all --strict --no-interactive` 通过；`npm run test:openspec-closure` 为32/32，历史检查0 mismatches。具体结果与跨仓库一致性见Core同名change/validation.md，逐Scenario计划见scenario-evidence.md。
 
-跨仓库审计、16模型oracle、数据一致性验证、38项问题及Retrospective见[Core同名change](https://github.com/rpchen/litellm-discovery-core/tree/codex/restore-model-metadata-priority/openspec/changes/restore-model-metadata-priority)。本仓库Scenario计划见scenario-evidence.md；真实宿主门禁在获批实施后执行。
+更新现有Draft PR，不合并、不归档、不发布。README产品行为未变：No README change；实施时说明contextTierCap废弃和快照升级。
