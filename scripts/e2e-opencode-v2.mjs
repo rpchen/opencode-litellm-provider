@@ -1030,7 +1030,8 @@ export default {
       if(Date.parse(state.time?.idle??"")>=started || (typeof state.time?.idle==="number"&&state.time.idle>=started)){finished=state;break}
     }
     assert(finished,`${id}/${variant??"default"}: actual host turn did not finish`)
-    assert.equal(finished.outcome,"succeeded",`${id}/${variant??"default"}: SDK turn failed`)
+    if(finished.outcome!=="succeeded") api("GET",`/api/session/${requestSession}/context`)
+    assert.equal(finished.outcome,"succeeded",`${id}/${variant??"default"}: SDK turn failed; session=${sanitize(JSON.stringify(finished))}; requests=${sanitize(JSON.stringify(defaultMock.requests.slice(before)))}`)
     const requests=defaultMock.requests.slice(before).filter(request=>request.body.model===id)
     assert(requests.length>0,`${id}/${variant??"default"}: SDK never reached LiteLLM`)
     for(const request of requests){

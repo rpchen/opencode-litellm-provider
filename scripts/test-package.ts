@@ -4,6 +4,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync,
 import os from "node:os"
 import { fileURLToPath } from "node:url"
 import path from "node:path"
+import { officialCatalog } from "../test/fixtures/catalog.js"
 
 const root = realpathSync(fileURLToPath(new URL("..", import.meta.url)))
 const workspace = mkdtempSync(path.join(os.tmpdir(), "opencode-package-contract-"))
@@ -109,15 +110,20 @@ try {
   run(npm, ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=false",
     remote ?? path.join(packages, artifact.filename), `@opencode/plugin@${peerVersion}`], consumer)
   cpSync(path.join(root, "scripts", "installed-consumer.mjs"), path.join(consumer, "probe.mjs"))
-  // The v7-era fixture (provider map) is preserved in-repo for the legacy
-  // dist era; the catalog fixture exercises Core v8. The probe picks by the
-  // installed dist's PUBLICATION_SCHEMA_VERSION.
-  const legacyFixture = path.join(root, "test/fixtures/models-dev-legacy-provider-map.json")
+  // Complete synthetic API records keep this installed-entry test focused on
+  // package loading, protocol mapping and lifecycle with the current Core.
+  const modelsDev = officialCatalog({
+    "e2e/glm-5.3": { limit: { context: 200000, output: 32000 }, tool_call: true, reasoning: true,
+      reasoning_options: [{ type: "effort", values: ["low", "high", "max"] }], modalities: { input: ["text"], output: ["text"] } },
+    "e2e/claude-db": { limit: { context: 200000, output: 64000 }, tool_call: true, reasoning: true,
+      reasoning_options: [{ type: "budget_tokens", max: 64000 }], modalities: { input: ["text", "image"], output: ["text"] } },
+    "e2e/claude-bedrock": { limit: { context: 200000, output: 64000 }, tool_call: true, reasoning: false,
+      modalities: { input: ["text"], output: ["text"] } },
+  })
   writeFileSync(path.join(consumer, "verification-input.json"), JSON.stringify({
     name: manifest.name, version: manifest.version, peerVersion, distributionDigests,
     litellm: JSON.parse(readFileSync(path.join(root, "test/fixtures/litellm-model-info.json"), "utf8")),
-    modelsDev: JSON.parse(readFileSync(path.join(root, "test/fixtures/models-dev.json"), "utf8")),
-    modelsDevLegacy: existsSync(legacyFixture) ? JSON.parse(readFileSync(legacyFixture, "utf8")) : undefined,
+    modelsDev,
   }) + "\n")
   const probeOutput = run(process.execPath, [path.join(consumer, "probe.mjs")], consumer)
   process.stdout.write(probeOutput)
