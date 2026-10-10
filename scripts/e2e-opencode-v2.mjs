@@ -1035,7 +1035,11 @@ export default {
     assert(requests.length>0,`${id}/${variant??"default"}: SDK never reached LiteLLM`)
     for(const request of requests){
       assert.equal(request.path,protocol==="responses"?"/v1/responses":protocol==="messages"?"/v1/messages":"/v1/chat/completions")
-      const effort=request.body.reasoning_effort??request.body.reasoning?.effort
+      // OpenCode's native Responses SDK preserves initial effort for prompt
+      // caching and lowers later session changes as configuration_update items
+      // (effort-updates.js and openai-responses.js). Check the effective wire value.
+      const updates=protocol==="responses" ? request.body.input.filter(item=>item.type==="configuration_update") : []
+      const effort=protocol==="responses" && updates.length ? updates.at(-1).reasoning.effort : request.body.reasoning_effort??request.body.reasoning?.effort
       if(protocol==="messages") { assert.equal(request.body.thinking?.type,"enabled");assert.equal(request.body.thinking?.budget_tokens,variant==="max"?64000:16000) }
       else assert.equal(effort,variant,`${id}: exact requested reasoning effort`)
       if(variant===undefined){assert.equal(request.body.thinking,undefined);assert.equal(request.body.reasoning,undefined);assert.equal(request.body.reasoning_effort,undefined)}
