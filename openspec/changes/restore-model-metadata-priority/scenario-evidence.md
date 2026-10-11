@@ -14,6 +14,7 @@
 | model-audit-export | 内容与注册快照一致 | 无推理档位或未知字段 | test/metadata-priority.test.ts — supported-empty and unsupported preserve empty variants；test/audit.test.ts allowlist | PASS |
 | model-audit-export | 内容与注册快照一致 | 发布日期保留注册原值 | test/audit.test.ts — 字符串、数值、缺失及无效日期保留注册数值并分别标注 | PASS |
 | model-audit-export | Metadata provenance audit | [T23] 安全可追溯 | test/metadata-priority.test.ts — Core to snapshot to RPC/TUI diagnostics and audit retains public records, hides raw secret/URL/route；test/audit.test.ts — 凭据、连接、上游原文和扩展设置不进入报告 | PASS |
+| model-audit-export | 标记发现状态与连接边界 | 短暂网络故障 | test/sync.test.ts — 网络类失败保留上次结果，认证失败清空；reload 失败不标记成功发现，同指纹后续重试注册（audit/diagnostics 当前cache来源一致，旧view/成功时间保留）；scripts/e2e-opencode-v2.mjs — 既有HTTP500→stale实际导出source | 本地 PASS；真实宿主结果见新HEAD CI |
 | model-discovery | 消费 Core 整记录配置 | [T01] 完整16项 | test/metadata-priority.test.ts — 16 final host configurations preserve all declared fields and no extra variants；scripts/e2e-opencode-v2.mjs real host registry/picker | PASS |
 | model-discovery | 消费 Core 整记录配置 | [T08] 内部信息变化 | test/metadata-priority.test.ts — prices do not affect publishing; outage retains original model_name despite route changes; deletion removes models；test/publication.test.ts — metadata failure with valid LKG still registers with LKG marking；real host catalog failure/deletion | PASS |
 | model-discovery | 消费 Core 整记录配置 | [T10] 明确能力值 | test/metadata-priority.test.ts — supported-empty and unsupported preserve empty variants; tools false is explicit and unknown is withheld | PASS |

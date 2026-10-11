@@ -1119,7 +1119,8 @@ export default {
   servedModels=servedFixture.data
   await waitForRefreshAfter(Date.now(),"network recovery baseline")
   mockFailStatus=500
-  await waitForAuditStatus("stale","the network failure")
+  const networkStaleAudit = await waitForAuditStatus("stale","the network failure")
+  assert(networkStaleAudit.source === "stale", "network-failure audit source must agree with diagnostics stale cache")
   assert(hostModels().includes("litellm/multi-endpoint-model"),"network failure retains last good models")
   mockFailStatus=0
   await waitForAuditStatus("ready","network recovery")

@@ -38,6 +38,12 @@ Ubuntu CI安装准确2.0.16，OpenCode自身plugin installer安装不可变Git�
 
 候选`4663f9251113f471d3196b1118ef822174e4d9ef`的[CI 38068474541](https://github.com/rpchen/opencode-litellm-provider/actions/runs/38068474541)为SUCCESS，两个必需job均通过。Linux完整301/301；真实宿主16/16最终注册/picker、63个Chat/Responses/Messages请求全部通过，包含3个无档位实际型号和额外支持/不支持/Messages控制。日志随后确认价格/critical/LKG/恢复/删除/network/auth/通知重启、endpoint完整操作、legacy迁移和ghostless启动均通过。最终文档提交的HEAD仍执行相同门禁，不把旧候选冒充当前HEAD。
 
+## Review 5481244464 最小修复
+
+两个已有失败分支在生成 diagnostics 后，将同次 cache.source 同步到 audit.cacheSource；spread 保留旧 view、配置及 lastSuccessfulDiscoveryAt，不新增状态或缓存策略。README 仅改写 withheld 原因的旧 deployment proof 说明，保留唯一 canonical 匹配失败、关键元数据缺失与非法元数据。
+
+test/sync.test.ts 的既有网络故障断言在旧实现失败（stale/network），修复后与 audit 相关20项通过；既有 reload 失败用例也核对两份当前缓存来源一致。真实 OpenCode 脚本在既有 HTTP500→stale 阶段检查实际导出报告 source=stale。完整门禁及最新不可变候选的真实宿主结果以 PR #63 新 HEAD CI checks 与审查描述为准；冻结16项、variants、请求、快照策略和原 E2E 边界不变。
+
 ## Review 边界
 
 PR #63交代码Review；不合并、不打tag、不发布。5.2/5.3等待归档及授权合并/finish，Core涉及宿主关闭任务不提前勾选。最终候选与CI看PR最新HEAD checks，不把历史候选等同后续提交。
