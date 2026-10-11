@@ -15,24 +15,6 @@ export function createPublicationState() {
     return { store: createLastKnownGoodStore(), previouslyPublished: new Set() };
 }
 export function summarizePublication(publication, catalogFacts, failureKind) {
-    const facts = (id, assessment) => [
-        ...assessment.discrepancies.map((item) => ({
-            model: id,
-            field: item.field,
-            status: item.status,
-            resolution: item.resolution,
-        })),
-        ...assessment.conflicts.map((item) => ({
-            model: id,
-            field: item.field,
-            status: item.status,
-            resolution: item.resolution,
-        })),
-    ];
-    const allFacts = [
-        ...publication.publishable.flatMap((entry) => facts(entry.spec.id, entry.assessment)),
-        ...publication.blocked.flatMap((entry) => facts(entry.spec.id, entry.assessment)),
-    ];
     const lkgDetail = publication.publishable
         .map((entry) => entry.assessment.lkgDetail)
         .find((detail) => detail !== undefined);
@@ -60,8 +42,6 @@ export function summarizePublication(publication, catalogFacts, failureKind) {
         partial: catalogFacts.partial,
         unusable: catalogFacts.unusable,
         regressions: catalogFacts.regressions.map((entry) => entry.id),
-        discrepancies: allFacts.filter((fact) => fact.status === "resolved-discrepancy"),
-        conflicts: allFacts.filter((fact) => fact.status === "unresolved-conflict"),
         ...(failureKind === undefined ? {} : { failureKind }),
         acknowledgement: { notify: false, reason: "unchanged", fingerprint: catalogFacts.fingerprint },
     };

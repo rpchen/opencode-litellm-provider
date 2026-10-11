@@ -34,18 +34,6 @@ const withheldModel = {
   additionalProperties: false,
 } as const
 
-const fieldFact = {
-  type: "object",
-  properties: {
-    model: { type: "string" },
-    field: { type: "string" },
-    status: { type: "string" },
-    resolution: { type: "string" },
-  },
-  required: ["model", "field", "status", "resolution"],
-  additionalProperties: false,
-} as const
-
 const acknowledgement = {
   type: "object",
   properties: {
@@ -68,8 +56,6 @@ const summary = {
     partial: { type: "boolean" },
     unusable: { type: "boolean" },
     regressions: { type: "array", items: { type: "string" } },
-    discrepancies: { type: "array", items: fieldFact },
-    conflicts: { type: "array", items: fieldFact },
     failureKind: { type: "string" },
     acknowledgement,
   },

@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { buildFeedbackMessage, FEEDBACK_MARKER } from '../src/host/audit-feedback.js'
 import { createAuditReport } from '../src/host/audit.js'
 import { buildModelSpecs } from '../src/core/build.js'
-import litellmFixture from './fixtures/litellm-model-info.json' with { type: 'json' }
-import modelsDevFixture from './fixtures/models-dev.json' with { type: 'json' }
+import litellmFixture from './fixtures/metadata-priority/synthetic-discovery.json' with { type: 'json' }
+import modelsDevFixture from './fixtures/metadata-priority/modelsdev-subset.json' with { type: 'json' }
 import { createRegistrationView, type ProviderSnapshot } from '../src/host/register.js'
 
 // 从固定 LiteLLM /v1/model/info 样本构造注册视图，再生成审查报告与对话反馈消息，
@@ -29,7 +29,7 @@ describe('对话反馈与审查报告的一致性（固定 fixtures）', () => {
       status: 'ready',
       modelCount: report.models.length,
     })
-    expect(report.models.length).toBeGreaterThan(5)
+    expect(report.models.length).toBe(16)
     expect(message).toContain('模型数：' + String(report.models.length))
     expect(message).toContain('正常')
   })

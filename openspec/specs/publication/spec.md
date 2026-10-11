@@ -1,10 +1,7 @@
 # publication Specification
 
 ## Purpose
-OpenCode consumes the Core trustworthy-publication verdicts without
-reimplementing policy: only configured, LKG-configured, or explicitly
-degraded models register; host tool flags stay conservative; failures
-never produce pseudo-complete models; acceptance stays labeled degraded.
+OpenCode 消费 Core 模型配置与发布结果，保留完整能力、限制、可选推理档位和参考价；只注册 configured/configured-lkg，不用宿主默认值扩展未知能力。
 
 ## Requirements
 

@@ -11,15 +11,7 @@ const consumerManifest = JSON.parse(readFileSync(path.join(consumer, "package.js
 assert.equal(consumerManifest.name, "isolated-opencode-provider-consumer", "probe must execute from the external consumer")
 const input = JSON.parse(readFileSync(path.join(consumer, "verification-input.json"), "utf8"))
 const installed = realpathSync(path.join(consumer, "node_modules", input.name))
-// Era-aware catalog fixture: the committed dist pins one discovery-core era.
-// Core v8 (adopt-modelsdev-canonical-catalog) consumes the catalog shape
-// ({ models, providers }); the legacy v7 dist consumes the provider map.
-// The probe must exercise the INSTALLED dist with the fixture of ITS era —
-// feeding a catalog shape to a v7 dist (or vice versa) would test shape
-// mismatches instead of the publication contract.
-const corePublication = await installedModule("dist/generated/discovery-core/core/publication.js").catch(() => undefined)
-const coreSchemaVersion = Number(corePublication?.PUBLICATION_SCHEMA_VERSION ?? 0)
-const modelsDev = coreSchemaVersion >= 8 ? input.modelsDev : (input.modelsDevLegacy ?? input.modelsDev)
+const modelsDev = input.modelsDev
 function assertInside(parent, child) {
   const relative = path.relative(parent, child)
   assert(relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative), "module resolved outside the isolated consumer")
@@ -175,10 +167,8 @@ try {
   assert.equal(Object.isFrozen(registration.models), true)
   assert.equal(JSON.stringify(registration).includes("sk-fixture-only"), false)
   const models = new Map(registration.models.map((model) => [model.id, model]))
-  // Trusted publication partition: only fully evidenced groups reach the host.
-  // The fixture's gpt-5.5 group declares disagreeing output limits, so it stays
-  // blocked instead of silently taking a minimum, and invalid-fields keeps its
-  // illegal/unknown metadata out of the normal model list.
+  // Only the three complete synthetic API records are publishable. The other
+  // fixture names lack a selected complete record in this package-only catalog.
   assert.deepEqual([...models.keys()].sort(), ["claude-bedrock", "claude-db", "glm-5.3"])
   assert.equal(models.has("gpt-5.5"), false)
   assert.equal(models.has("invalid-fields"), false)

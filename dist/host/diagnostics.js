@@ -110,51 +110,21 @@ export function formatPublicationLines(summary) {
     }
     if (summary.withheld.length > 5)
         out.push(`……另有 ${summary.withheld.length - 5} 个 withheld 模型`);
-    for (const fact of summary.discrepancies.slice(0, 5)) {
-        out.push(`已裁决差异：${fact.model} · ${fact.field} · ${fact.resolution}`);
-    }
-    for (const fact of summary.conflicts.slice(0, 5)) {
-        out.push(`未决冲突：${fact.model} · ${fact.field} · ${fact.resolution}`);
-    }
     return out;
 }
-export function formatModelDetails(discovery, limit = 5) {
+/** Render selected metadata and actual configured options. */
+export function formatModelDetails(discovery, limit = 5, registered = [], lkgIDs = []) {
     const models = discovery?.models ?? [];
-    if (models.length === 0)
+    if (!models.length)
         return [];
     const lines = ["模型明细："];
     for (const model of models.slice(0, limit)) {
-        const quality = model.quality ?? {};
-        const parts = [`${model.id} · 部署 ${model.deploymentCount ?? 1}`];
-        const canonical = quality.identity?.canonicalModelID;
-        if (canonical) {
-            parts.push(`canonical ${canonical}${quality.identity?.canonicalEvidence ? `（${quality.identity.canonicalEvidence}）` : ""}`);
-        }
-        else if (quality.identity?.canonicalStatus && quality.identity.canonicalStatus !== "proven") {
-            parts.push(`identity ${quality.identity.canonicalStatus}`);
-        }
-        const serving = quality.serving;
-        if (serving?.status && serving.status !== "unproven") {
-            parts.push(`serving ${serving.status}${serving.providerID ? ` ${serving.providerID}${serving.recordID ? ` → ${serving.recordID}` : ""}` : ""}`);
-        }
-        if (quality.reasoningLevelsState === "unknown") {
-            parts.push("档位 unknown（声明 models_dev_provider 可恢复）");
-        }
-        else if (quality.reasoningLevelsState === "known") {
-            const levels = model.publication?.reasoningLevels;
-            parts.push(`档位 known[${levels && levels.length > 0 ? levels.join(",") : "无可选档"}]`);
-        }
-        lines.push(parts.join(" · "));
-        const operatorKeys = quality.operatorConfigurationKeys ?? [];
-        if (operatorKeys.length > 0)
-            lines.push(`  operator configuration：${operatorKeys.join("、")}（非 enforcement，只诊断）`);
-        const candidates = quality.diagnosticCandidates ?? [];
-        if (candidates.length > 0) {
-            lines.push(`  候选声明：${candidates.map((item) => `${item.providerID}/${item.recordID}`).join("、")}`);
-        }
-        if (quality.catalogKind && quality.catalogKind !== "complete") {
-            lines.push(`  catalog：${quality.catalogKind}（canonical 不可用，仅 LiteLLM 声明 + LKG）`);
-        }
+        const spec = registered.find(item => item.id === model.id);
+        const usingLKG = lkgIDs.includes(model.id);
+        const support = spec?.reasoningSupported ?? model.publication.reasoningState;
+        const levels = spec ? spec.variants.map(item => item.id) : model.publication.reasoningLevels;
+        const reasoning = support === "unsupported" ? "不支持" : support === "supported" ? (levels.length ? levels.join(",") : "支持，无可选档位") : "待配置";
+        lines.push(`${model.id} · ${usingLKG ? "configured-lkg" : model.publication.status} · 来源 ${usingLKG ? "前次配置" : model.quality.metadataSource?.providerID ?? "未匹配"} · 推理 ${reasoning}`);
     }
     if (models.length > limit)
         lines.push(`……另有 ${models.length - limit} 个模型`);
@@ -191,7 +161,7 @@ export function createDiagnosticsLines(snapshot, now = Date.now(), timezoneOffse
     if (snapshot.diagnostics?.note)
         lines.push(`说明：${snapshot.diagnostics.note}`);
     lines.push(...formatPublicationLines(snapshot.diagnostics?.publication));
-    lines.push(...formatModelDetails(snapshot.diagnostics?.discovery));
+    lines.push(...formatModelDetails(snapshot.diagnostics?.discovery, 5, snapshot.models, snapshot.diagnostics?.publication?.lkgIDs));
     lines.push(`Core：${build.coreBranch}@${build.coreSHA}`);
     const identity = getRuntimeIdentity();
     lines.push("Runtime Identity", `Plugin Version   ${identity.pluginVersion}`, `Artifact         ${shortArtifactDigest(identity)}`, `Core Commit      ${shortCoreCommit(identity)}`);

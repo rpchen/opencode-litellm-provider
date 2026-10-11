@@ -1,22 +1,4 @@
-/**
- * Host-independent models.dev record selection and reasoning variant extraction.
- *
- * Canonical catalog model (D3–D5):
- * - Canonical identity is proven only against the canonical registry
- *   (`catalog.models`) through deterministic evidence; see `resolve.ts`.
- * - Serving records are selected only under a proven serving provider
- *   (`models_dev_provider`) by exact parsed-key match; see `resolve.ts`.
- * - Unproven provider records (OpenCode, OpenRouter, unique-match,
- *   first-party, same-name) NEVER supply publication facts. They appear only
- *   as diagnostic candidates.
- * - `resolveInheritedRecord` field inheritance is DELETED: intrinsic facts
- *   come only from the canonical registry entry; a serving record is the
- *   final serving view.
- *
- * This module keeps the shared record-reader helpers and the deprecated
- * selection entry points as thin shims over the single resolver so existing
- * callers keep compiling; new code must use `resolveModel()` directly.
- */
+/** Compatibility projection of the selected model metadata. */
 import { type DeploymentGroup } from "./litellm.js";
 import type { Protocol } from "./protocol.js";
 export interface ModelsDevRecord extends Record<string, unknown> {
@@ -56,12 +38,7 @@ export interface SelectedModelRecord {
      */
     recordCanonicalID?: string;
 }
-/**
- * Whether provider-scoped models.dev pricing can be treated as a plausible
- * fallback for the deployed model. Only proven serving records (explicit
- * provider, and legacy canonical-original) may serve as a price source;
- * reseller/unique fallbacks must never masquerade as route pricing.
- */
+/** Compatibility projection of the selected model metadata. */
 export declare function canUseSelectedModelsDevPrice(selected: SelectedModelRecord | undefined): boolean;
 export interface ModelVariant {
     id: string;
@@ -78,13 +55,7 @@ export interface ReasoningSupportResolution {
  * not strip semantic suffixes such as "-free", dates, sizes, or provider tiers.
  */
 export declare function canonicalModelID(value: string): string;
-/**
- * Deterministic canonical relations a provider-scoped record may declare to
- * point at the canonical model it serves. Only `canonical_model_id` /
- * `base_model` carry canonical-namespace meaning; `inherits` /
- * `equivalent_to` / `equivalents` never prove identity (0 occurrences in
- * the real catalog) and are inert.
- */
+/** Compatibility projection of the selected model metadata. */
 export interface RecordRelationTargets {
     /** Preferred canonical identity the record declares, route prefix kept. */
     readonly canonical?: string;
@@ -98,27 +69,14 @@ export declare function candidateModelIDs(group: DeploymentGroup): string[];
  * and never participates in trusted identity resolution.
  */
 export declare function legacyFamilyCompatibilityProvider(group: DeploymentGroup): string | undefined;
-/**
- * Trusted identity resolution (compat shim over the single resolver).
- *
- * Only a proven serving record under a declared `models_dev_provider`,
- * resolved by exact parsed-key match, is returned. Canonical-only identity
- * carries no provider record by design, so this returns `undefined` for it;
- * callers that need canonical identity must use `resolveModel()`.
- */
+/** Compatibility projection of the selected model metadata. */
 export declare function selectModelsDevRecord(group: DeploymentGroup, catalog: unknown): SelectedModelRecord | undefined;
 /**
- * Trusted-publication reasoning evidence from a record: explicit
- * `reasoning`, else the presence of `reasoning_options`. `undefined` means
- * the record declares nothing.
+ * Explicit reasoning support; options never imply support.
  */
 export declare function modelsDevReasoning(selected: SelectedModelRecord | undefined): boolean | undefined;
 export declare function resolveReasoningSupport(group: DeploymentGroup, selected: SelectedModelRecord | undefined): ReasoningSupportResolution;
-/**
- * Reasoning variants from a PROVEN serving record's `reasoning_options`.
- * Callers must only pass the resolved serving record; unproven records,
- * `reasoning_effort`, and `allowed_openai_params` never produce variants.
- */
+/** Compatibility projection of the selected model metadata. */
 export declare function buildVariants(selected: SelectedModelRecord | undefined, protocol: Protocol): ModelVariant[];
 export declare function releaseTimestamp(selected: SelectedModelRecord | undefined): number;
 /** Unknown-aware capability state: `unknown` means no trusted evidence. */
@@ -128,9 +86,7 @@ export interface ReasoningStateResolution {
     readonly source: ReasoningSupportSource;
     readonly conflict: boolean;
 }
-/**
- * Tri-state reasoning support, independent from variant levels.
- */
+/** Compatibility projection of the selected model metadata. */
 export declare function resolveReasoningState(group: DeploymentGroup, selected: SelectedModelRecord | undefined): ReasoningStateResolution;
 export interface ReasoningLevelsResolution {
     /** Whether level metadata was explicitly declared (possibly empty). */
@@ -138,10 +94,7 @@ export interface ReasoningLevelsResolution {
     /** Selectable level ids; empty is legal alongside supported reasoning. */
     readonly values: readonly string[];
 }
-/**
- * Reasoning levels from a record's `reasoning_options`. Only meaningful for
- * proven serving records; see `resolve.ts` for the authority rule.
- */
+/** Compatibility projection of the selected model metadata. */
 export declare function resolveReasoningLevels(selected: SelectedModelRecord | undefined, protocol: Protocol): ReasoningLevelsResolution;
 export type SelectionOutcomeKind = "matched" | "unmatched" | "ambiguous";
 export interface DetailedSelection {
@@ -153,13 +106,9 @@ export interface DetailedSelection {
     /** Provider ids involved when the outcome is ambiguous. */
     readonly ambiguousProviders: readonly string[];
 }
-/**
- * Group-wide explicit provider evidence. Distinct explicit
- * `models_dev_provider` values inside one deployment group mean the host
- * model identity cannot be stated as one fact: that is a conflict, not a
- * first-deployment choice.
- */
-export declare function groupExplicitProviderConflict(group: DeploymentGroup): {
+/** Compatibility projection of the selected model metadata. */
+/** Deprecated compatibility helper: provider declarations no longer affect metadata. */
+export declare function groupExplicitProviderConflict(_group: DeploymentGroup): {
     providers: string[];
 } | undefined;
 export type GroupIdentityStatus = "known" | "unknown" | "conflict";
@@ -170,28 +119,15 @@ export interface GroupIdentityEvidence {
     /** Why the group cannot be trusted; defined for unknown/conflict. */
     readonly reason?: string;
 }
-/**
- * Group identity evidence. Every deployment must carry positive identity
- * evidence; an identity-less member is never filtered out. `model_name`
- * never substitutes for per-deployment evidence.
- */
-export declare function groupIdentityEvidence(group: DeploymentGroup, catalog: unknown): GroupIdentityEvidence;
+/** Compatibility projection of the selected model metadata. */
+export declare function groupIdentityEvidence(group: DeploymentGroup, _catalog: unknown): GroupIdentityEvidence;
 /**
  * Compatibility wrapper over `groupIdentityEvidence`.
  */
 export declare function groupIdentityConflict(group: DeploymentGroup, catalog: unknown): string | undefined;
-/**
- * Detailed selection outcome (compat shim over the single resolver).
- *
- * `matched` with a `selected` record happens ONLY for a proven serving
- * provider with an exactly resolved record (`explicit-provider`).
- * Canonical-only identity, unproven providers, relation-only matches,
- * and reseller/unique records never produce a selection.
- */
+/** Compatibility projection of the selected model metadata. */
 export declare function selectModelsDevRecordDetailed(group: DeploymentGroup, catalog: unknown): DetailedSelection;
-/**
- * Tri-state aggregation for one capability across deployments.
- */
+/** Existing declaration aggregation used only when no record is selected. */
 export declare function aggregateTriState(deploymentValues: readonly (boolean | undefined)[], modelLevel?: boolean): {
     state: CapabilityState;
     conflict: boolean;
@@ -205,12 +141,5 @@ export interface InheritedRecord {
     /** Field names inherited from another declared identity. */
     readonly inheritedFields: readonly string[];
 }
-/**
- * DELETED (D5): cross-provider field inheritance. Intrinsic facts come only
- * from the canonical registry entry; serving records are final views.
- * Kept as a deprecated stub returning `undefined` so stale callers fail
- * open in the safe direction (no inheritance) instead of crashing.
- *
- * @deprecated Do not use. Resolved by `resolveModel()`; always `undefined`.
- */
+/** Compatibility projection of the selected model metadata. */
 export declare function resolveInheritedRecord(selected: SelectedModelRecord | undefined, catalog: unknown): InheritedRecord | undefined;

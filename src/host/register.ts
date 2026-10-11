@@ -1,7 +1,7 @@
 import type { ConnectionInfo } from "@opencode/client"
 import { Model, Plugin, Provider } from "@opencode/plugin"
-import type { ModelSpec } from "../core/build.js"
-import type { DiscoveryCacheDiagnostics, DiscoveryDiagnostics } from "../generated/discovery-core/index.js"
+import { hasOperationalLimits, type ModelSpec } from "../core/build.js"
+import type { DiscoveryCacheDiagnostics, DiscoveryDiagnostics, ModelSpec as DiscoveryModelSpec } from "../generated/discovery-core/index.js"
 import { PROTOCOL_PACKAGES } from "../core/protocol.js"
 import { endpointIdentity, type EndpointIdentity } from "../endpoints.js"
 import { canPublish, type EndpointState } from "./endpoint-state.js"
@@ -40,6 +40,7 @@ export interface RegistrationView {
   readonly info: Provider.Info
   readonly models: readonly Model.Info[]
   readonly protocols: Readonly<Record<string, ModelSpec["protocol"]>>
+  readonly reasoning: Readonly<Record<string, DiscoveryModelSpec["reasoningSupported"]>>
   readonly releaseUnits: Readonly<Record<string, NonNullable<ModelSpec["releaseUnit"]>>>
 }
 
@@ -47,6 +48,9 @@ export interface AuditSnapshot {
   readonly status: DiscoveryStatus
   readonly lastSuccessfulDiscoveryAt?: string
   readonly view?: RegistrationView
+  readonly discovery?: DiscoveryDiagnostics
+  readonly cacheSource?: string
+  readonly lkgIDs?: readonly string[]
 }
 
 export interface ProviderDiagnosticsSnapshot {
@@ -64,7 +68,7 @@ export interface ProviderSnapshot {
   registrationView?: RegistrationView
   audit?: AuditSnapshot
   diagnostics?: ProviderDiagnosticsSnapshot
-  /** Per-endpoint publication controller memory (LKG store + degraded acceptance). */
+  /** Per-endpoint publication controller memory (LKG, published baseline and notification). */
   publicationState?: PublicationState
   /**
    * Canonical endpoint state: desired × validation × credential × applied.
@@ -113,7 +117,7 @@ function toModelInfo(spec: ModelSpec, endpoint: EndpointIdentity): Model.Info {
     providerID,
     name: spec.name,
     package: spec.package,
-    capabilities: spec.capabilities,
+    capabilities: { tools: spec.capabilities.tools, input: [...spec.capabilities.input], output: [...spec.capabilities.output] },
     variants: spec.variants.map((variant) => ({
       id: variant.id as Model.VariantID,
       settings: variant.settings,
@@ -140,7 +144,7 @@ function freezeDeep<T>(value: T, seen = new WeakSet<object>()): T {
 }
 
 export function createRegistrationView(models: readonly ModelSpec[], apiBaseURL: string, endpoint: EndpointIdentity = DEFAULT_IDENTITY): RegistrationView {
-  const specs = structuredClone(models) as ModelSpec[]
+  const specs = structuredClone(models).filter(hasOperationalLimits)
   const protocols = Object.fromEntries(specs.map((spec) => [spec.id, spec.protocol]))
   const releaseUnits = Object.fromEntries(specs.map((spec) => [
     spec.id,
@@ -158,6 +162,7 @@ export function createRegistrationView(models: readonly ModelSpec[], apiBaseURL:
     } as unknown as Provider.Info,
     models: specs.map((spec) => toModelInfo(spec, endpoint)),
     protocols,
+    reasoning: Object.fromEntries(specs.map((spec) => [spec.id, spec.reasoningSupported])),
     releaseUnits,
   })
 }

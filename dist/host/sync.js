@@ -378,6 +378,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                 status: "stale",
                 lastSuccessfulDiscoveryAt: previousPersisted.discoveredAt,
                 view: restoredView,
+                cacheSource: "snapshot",
             };
             snapshot.diagnostics = {
                 cache: createDiscoveryCacheDiagnostics({
@@ -453,8 +454,6 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
             if (coordinated.source === "stale") {
                 const message = coordinated.error instanceof Error ? coordinated.error.message : String(coordinated.error);
                 logger.warn(`LiteLLM 发现失败，使用 last-known-good：${redact(message, resolved.key)}`);
-                if (snapshot.audit?.view)
-                    snapshot.audit = { ...snapshot.audit, status: "stale" };
                 snapshot.diagnostics = {
                     discovery: coordinated.value.diagnostics ?? snapshot.diagnostics?.discovery,
                     publication: coordinated.value.publication ?? snapshot.diagnostics?.publication,
@@ -467,6 +466,8 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                     }),
                     note: "刷新失败，保留上次成功结果。",
                 };
+                if (snapshot.audit?.view)
+                    snapshot.audit = { ...snapshot.audit, status: "stale", cacheSource: snapshot.diagnostics.cache?.source };
                 return;
             }
             const { models, fingerprint: nextFingerprint } = coordinated.value;
@@ -548,6 +549,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                     nextRetryAt: coordinated.nextRetryAt,
                 }),
             };
+            snapshot.audit = { ...snapshot.audit, discovery: coordinated.value.diagnostics, cacheSource: snapshot.diagnostics.cache?.source, lkgIDs: publication?.lkgIDs };
         }
         catch (error) {
             if (disposed || identity !== nextIdentity)
@@ -567,8 +569,6 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
             else {
                 const message = error instanceof Error ? error.message : String(error);
                 logger.warn(`LiteLLM 发现失败，保留上次结果：${redact(message, resolved.key)}`);
-                if (snapshot.audit?.view)
-                    snapshot.audit = { ...snapshot.audit, status: "stale" };
                 const state = coordinator.state(nextIdentity);
                 snapshot.diagnostics = {
                     discovery: snapshot.diagnostics?.discovery,
@@ -582,6 +582,8 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                     }),
                     note: "发现失败；详细错误已通过宿主日志记录。",
                 };
+                if (snapshot.audit?.view)
+                    snapshot.audit = { ...snapshot.audit, status: "stale", cacheSource: snapshot.diagnostics.cache?.source };
                 // Classify into the frozen taxonomy so /litellm-diagnostics can show
                 // "Enabled · Error" with a reason distinct from "Enabled · Not applied".
                 const appliedCategory = (() => {

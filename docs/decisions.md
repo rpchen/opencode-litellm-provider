@@ -11,10 +11,10 @@
 | 模型清单来源 | 只取 `/v1/model/info` 中的真实部署；没有元数据的名字不注册 | `/v1/models`、`/model_group/info` 会列出团队白名单里已删除部署的残留名字（实测 `gpt-5.5`、`gpt-5.3-codex-spark`） |
 | 协议判定 | 用户覆盖 → Anthropic 上游 / Claude 家族走 Messages → `supported_endpoints`（多个时 responses 优先）→ `mode: responses` → 其余 Chat；`supported_endpoints` 与 `mode` 冲突时以前者为准 | `supported_endpoints` 是 LiteLLM 官方的端点能力字段 |
 | 不做协议探测 | **不对模型发试探请求**，只按规则判定；判错时用 `protocolOverrides` 兜底 | 选对协议只是为了尽量原样透传；LiteLLM 会做协议转换，选得不理想也能调用。逐个探测速度不可接受 |
-| 推理档位 | 以 models.dev 为准：原厂记录（含 `-cn` 等备选）→ OpenCode Zen（`opencode`）→ 唯一 provider；不使用 LiteLLM 的 `supports_*_reasoning_effort` | |
+| 推理档位 | 只取 Core 按官方 → OpenCode → OpenRouter 选择的单条记录 reasoning_options，独立保留支持与档位 | restore-model-metadata-priority 已批准 |
 | budget 类档位 | 有最大预算时生成 `high`（min(16000, max)）与 `max`；**models.dev 没写上限时也生成 `high` = 16000** | 与旧脚本不同（旧脚本没写上限时不生成）；目前 models.dev 的 Claude 都写了上限，实际不触发 |
-| 上下文窗口 | 按 LiteLLM 阶梯价字段（`*_above_<N>k_tokens`、`tiered_pricing`）截断到首个阶梯点，默认开启、可关闭；**不读 Codex `models_cache.json`** | 目的是不越过价格阶梯（如 GPT 超过 272K 价格大涨） |
-| 基线规则 | 保留模态信任名单（DeepSeek/Kimi/MiMo/Qwen）、完整家族表与 `-cn` 备选、`models_dev_provider` 覆盖、mode 缺失时按名字排除图像模型 | 继承 `opencode-litellm-config-sync` 行为 |
+| 上下文窗口 | 完整保留 Core 选中记录的 context/input/output，不按价格截断；contextTierCap 忽略，不读 Codex models_cache.json | 价格仅是参考值 |
+| 基线规则 | 以 model_name 与可信 canonical 关系自动匹配；删除 serving proof、家族/模态补齐和 provider 配置前提 | 执行已批准 Core 契约 |
 | 显示名 | 原样使用 `model_name` | 与调用名一致 |
 | 验证时机 | **不做前置 spike**；宿主相关假设（协议包能否加载、表单与地址投影、`add` 整体替换、档位参数、连接变更事件）全部在最后的验收阶段确认，不符时调整实现并更新 design | 用户现在手工配置的 litellm provider 已证明 OpenCode 能连 LiteLLM、档位能生效 |
 | 真实环境测试凭据 | 使用 `~/.agents/skills/opencode-litellm-config-sync/.env` 的 `LITELLM_BASE_URL` / `LITELLM_API_KEY`，只在内存中使用 | 不读 `~/.config/opencode` 里用户自己的 Key |
@@ -66,8 +66,8 @@
 ## Discovery quality 与宿主发布边界（2026-09-29）
 
 - 插件的核心目标是让 OpenCode 正确使用模型能力，不承担计费职责。protocol、context/input/output、modalities、tools、reasoning 的正确性优先于价格完整性。
-- models.dev provider 选择由共享 Core 维护：canonical 原厂 → OpenRouter → OpenCode → 全局唯一记录；宿主仓库不得复制选择算法，也不得靠新增硬编码模型家族修复新模型。
-- OpenRouter/OpenCode 仅作为能力 fallback 时，其价格不得覆盖 LiteLLM deployment price。
+- models.dev provider 选择由共享 Core 维护：官方服务商 → OpenCode → OpenRouter；宿主仓库不得复制选择算法，也不得靠新增硬编码模型家族修复新模型。
+- 参考价格只取选中记录；缺失/错误归0，不改变能力、发布或LKG。
 - Core 可以保留未知 limits 的 neutral model 用于 diagnostics，但 OpenCode 不得发布 `context <= 0` 或 `output <= 0` 的宿主模型。
 - 任何这类边界变更必须有 Core 测试和 Core → OpenCode 纵向 adapter 测试。
 
@@ -99,3 +99,7 @@
 ## 异步准备生命周期修复（2026-10-03）
 
 复审指出上一轮仍有三处 P2 异步生命周期缺陷和一处回归时序失效，本轮集中修复：门禁准备结果按仓库与准备轮次隔离，较早轮次的回调不得覆盖较新轮次的门禁结论；宿主连接关闭（EOF）或 SIGINT/SIGTERM 后进入关闭状态，取消在跑准备并立即释放已建立与正在建立的 native 会话；启动根解析、宿主上报根归一化与工作区清单扫描移出协议进程，initialize/tools/list 不因慢扫描阻塞且扫描期间的查询仍等门禁结果。回归侧把排队 barrier 注入实现自身锁前的 `services.repository` 读取（旧实现才会真实失败），历史回放只替换 `api()` 签名与函数体并保留旧状态机其余部分。共享脚本、Git API fixture、历史回放与共享回归在四仓库逐字节同步；workspace 客户端与客户端回归保持 workspace 专属。详细协议与回归入口见 docs/codebase-memory.md。
+
+## restore-model-metadata-priority 实施（2026-10-11）
+
+Core #34 squash merge SHA cf797e953eb1f6de8e7c3e0fd5e98094398c26f9；Pi #55 与本仓库 #63 固定同一 SHA。以16项冻结 fixture 验收实际注册/选择/请求，不验证 serving provider；复用原协议、endpoint、凭据、activation与缓存入口，publication9/snapshot2 经成功发现迁移。Model.Info无 reasoning 布尔字段，保留 Core 判定于审计视图，与 variants 分开；不为 SDK 创造未声明档位。本PR仅代码Review，合并/发版另行授权。

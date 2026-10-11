@@ -1,4 +1,5 @@
 import { Model, Provider } from "@opencode/plugin";
+import { hasOperationalLimits } from "../core/build.js";
 import { PROTOCOL_PACKAGES } from "../core/protocol.js";
 import { endpointIdentity } from "../endpoints.js";
 import { canPublish } from "./endpoint-state.js";
@@ -39,7 +40,7 @@ function toModelInfo(spec, endpoint) {
         providerID,
         name: spec.name,
         package: spec.package,
-        capabilities: spec.capabilities,
+        capabilities: { tools: spec.capabilities.tools, input: [...spec.capabilities.input], output: [...spec.capabilities.output] },
         variants: spec.variants.map((variant) => ({
             id: variant.id,
             settings: variant.settings,
@@ -66,7 +67,7 @@ function freezeDeep(value, seen = new WeakSet()) {
     return Object.freeze(value);
 }
 export function createRegistrationView(models, apiBaseURL, endpoint = DEFAULT_IDENTITY) {
-    const specs = structuredClone(models);
+    const specs = structuredClone(models).filter(hasOperationalLimits);
     const protocols = Object.fromEntries(specs.map((spec) => [spec.id, spec.protocol]));
     const releaseUnits = Object.fromEntries(specs.map((spec) => [
         spec.id,
@@ -84,6 +85,7 @@ export function createRegistrationView(models, apiBaseURL, endpoint = DEFAULT_ID
         },
         models: specs.map((spec) => toModelInfo(spec, endpoint)),
         protocols,
+        reasoning: Object.fromEntries(specs.map((spec) => [spec.id, spec.reasoningSupported])),
         releaseUnits,
     });
 }

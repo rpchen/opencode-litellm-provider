@@ -1,3 +1,4 @@
+import { officialCatalog } from "./fixtures/catalog.js"
 import { describe, expect, test } from "bun:test"
 import type { ConnectionInfo } from "@opencode/client"
 import type { ModelSpec } from "../src/core/build.js"
@@ -62,6 +63,7 @@ function spec(id: string): ModelSpec {
     package: "chat-package",
     capabilities: { tools: true, input: ["text"], output: ["text"] },
     variants: [],
+    reasoningSupported: "unsupported",
     released: 0,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     limit: { context: 100, input: 100, output: 10 },
@@ -146,7 +148,10 @@ function harness(
       fetches += 1
       return nextFetch()
     },
-    getModelsDev: async () => (modelsDevCatalog ?? {}),
+    getModelsDev: async () => {
+      if (typeof modelsDevCatalog === "object" && modelsDevCatalog && "models" in modelsDevCatalog) return officialCatalog((modelsDevCatalog as { models: Record<string, Record<string, unknown>> }).models)
+      return modelsDevCatalog ?? {}
+    },
     ...(useCoreDiagnostics ? {} : {
       buildModels: (response: unknown) => {
         const input = response as { model?: string; models?: string[] }
@@ -301,7 +306,7 @@ describe("发现循环", () => {
     // (v7 returned {} and the LiteLLM-only branch published directly).
     // Protocol mixing stays the point; the catalog only keeps the model
     // registerable.
-    const coreV8 = (PUBLICATION_SCHEMA_VERSION as number) === 8
+    const coreV8 = true
     const h = harness(undefined, true, undefined, coreV8
       ? {
         models: {
@@ -360,7 +365,7 @@ describe("发现循环", () => {
       reason: "mixed-fallback",
     })
     expect(h.snapshot.diagnostics?.discovery?.stats.protocolFallbacks).toBe(1)
-    expect(h.snapshot.diagnostics?.discovery?.modelsDev.status).toBe("degraded")
+    expect(h.snapshot.diagnostics?.discovery?.modelsDev.status).toBe("ok")
     expect(h.snapshot.diagnostics?.cache?.source).toBe("network")
     await h.loop.dispose()
   })
@@ -413,7 +418,7 @@ describe("发现循环", () => {
     })
     await h.loop.trigger()
     expect(h.snapshot.models.map((model) => model.id)).toEqual(["model-a"])
-    expect(h.snapshot.audit).toEqual({ status: "stale", view, lastSuccessfulDiscoveryAt: successful })
+    expect(h.snapshot.audit).toMatchObject({ status: "stale", cacheSource: "stale", view, lastSuccessfulDiscoveryAt: successful })
     expect(h.snapshot.diagnostics?.cache?.source).toBe("stale")
     const staleDiagnostics = createDiagnosticsLines(h.snapshot).join("\n")
     expect(staleDiagnostics).not.toContain("sk-first")
@@ -539,6 +544,8 @@ describe("发现循环", () => {
     await h.loop.trigger()
     expect(h.snapshot.audit?.view).toBe(previous?.view)
     expect(h.snapshot.audit?.lastSuccessfulDiscoveryAt).toBe(previous?.lastSuccessfulDiscoveryAt)
+    expect(h.snapshot.audit?.cacheSource).toBe("stale")
+    expect(h.snapshot.audit?.cacheSource).toBe(h.snapshot.diagnostics?.cache?.source)
     expect(h.reloads).toBe(2)
     h.setReload(async () => {})
     await h.loop.trigger()

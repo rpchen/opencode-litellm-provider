@@ -41,14 +41,6 @@ export interface PublicationWithheldModel {
   readonly retryable: boolean
 }
 
-/** A field-level evidence fact worth showing to the user. */
-export interface PublicationFieldFact {
-  readonly model: string
-  readonly field: string
-  readonly status: string
-  readonly resolution: string
-}
-
 /** Adapter-visible slice of the Core publication + catalog partition. */
 export interface PublicationSummary {
   readonly discovered: number
@@ -59,8 +51,6 @@ export interface PublicationSummary {
   readonly partial: boolean
   readonly unusable: boolean
   readonly regressions: readonly string[]
-  readonly discrepancies: readonly PublicationFieldFact[]
-  readonly conflicts: readonly PublicationFieldFact[]
   readonly failureKind?: string
   readonly acknowledgement: {
     readonly notify: boolean
@@ -87,24 +77,6 @@ export function summarizePublication(
   catalogFacts: CatalogPublication,
   failureKind?: string,
 ): PublicationSummary {
-  const facts = (id: string, assessment: PublicationResult["blocked"][number]["assessment"]) => [
-    ...assessment.discrepancies.map((item) => ({
-      model: id,
-      field: item.field,
-      status: item.status,
-      resolution: item.resolution,
-    })),
-    ...assessment.conflicts.map((item) => ({
-      model: id,
-      field: item.field,
-      status: item.status,
-      resolution: item.resolution,
-    })),
-  ]
-  const allFacts = [
-    ...publication.publishable.flatMap((entry) => facts(entry.spec.id, entry.assessment)),
-    ...publication.blocked.flatMap((entry) => facts(entry.spec.id, entry.assessment)),
-  ]
   const lkgDetail = publication.publishable
     .map((entry) => entry.assessment.lkgDetail)
     .find((detail): detail is string => detail !== undefined)
@@ -132,8 +104,6 @@ export function summarizePublication(
     partial: catalogFacts.partial,
     unusable: catalogFacts.unusable,
     regressions: catalogFacts.regressions.map((entry) => entry.id),
-    discrepancies: allFacts.filter((fact) => fact.status === "resolved-discrepancy"),
-    conflicts: allFacts.filter((fact) => fact.status === "unresolved-conflict"),
     ...(failureKind === undefined ? {} : { failureKind }),
     acknowledgement: { notify: false, reason: "unchanged", fingerprint: catalogFacts.fingerprint },
   }
