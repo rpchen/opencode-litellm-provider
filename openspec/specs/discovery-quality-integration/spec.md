@@ -12,17 +12,6 @@ OpenCode SHALL adapt PR8 Core model metadata without collapsing total context an
 - **WHEN** PR8 Core returns different `limit.context` and `limit.input` values for a discovered model
 - **THEN** the OpenCode model preserves both values unchanged while adding only the host SDK package mapping
 
-### Requirement: OpenCode receives operational limits from capability fallback
-OpenCode SHALL preserve non-zero Core token limits selected through models.dev provider fallback, and SHALL expose Core's provider-selection provenance unchanged: OpenCode ranks before OpenRouter, and a fallback selection never rewrites the canonical model identity.
-
-#### Scenario: hy4-preview original provider record is unavailable
-- **WHEN** Core selects an OpenCode fallback enrichment record (OpenCode ranks before OpenRouter) and returns positive context/input/output limits
-- **THEN** OpenCode preserves those limits unchanged while adding the expected SDK package and preserving explicit LiteLLM prices
-
-#### Scenario: fallback never rewrites the canonical identity
-- **WHEN** Core selects an OpenCode or OpenRouter fallback record for a model whose deployment identity is a given canonical model name
-- **THEN** the OpenCode host model id and name stay the deployment's own identity (never `opencode/...` or `openrouter/...`)
-
 ### Requirement: OpenCode does not publish non-operational token limits
 OpenCode SHALL NOT publish a host model when Core reports a non-positive total context or output token limit.
 
@@ -37,3 +26,10 @@ OpenCode SHALL NOT publish a host model when Core reports a non-positive total c
 #### Scenario: operational limits are valid
 - **WHEN** both Core context and output limits are positive
 - **THEN** OpenCode preserves the model and adds the normal SDK package mapping
+
+### Requirement: OpenCode preserves selected limits and reference prices
+OpenCode SHALL 保留Core选中整条记录的limits、model_name身份与该记录参考价或0；不再保留LL价格优先。
+
+#### Scenario: [T28] 后备元数据
+- **WHEN** 官方缺失，Core选择OpenCode或OpenRouter
+- **THEN** 限制和价格按Core结果映射，ID不变

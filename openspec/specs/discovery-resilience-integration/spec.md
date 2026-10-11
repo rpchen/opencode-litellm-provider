@@ -5,17 +5,6 @@ OpenCode 对 Core discovery-resilience 与 trusted-publication 事实的宿主�
 
 ## Requirements
 
-### Requirement: Adapter consumes Core publication facts without re-deriving policy
-The plugin SHALL consume Core's publication partition, catalog facts, withheld reasons, evidence resolutions, and acknowledgement decision verbatim, and SHALL NOT re-derive completeness, conflict, eligibility, or authority judgments locally.
-
-#### Scenario: Read-only publication RPC
-- **WHEN** a client calls the `litellm-publication` RPC
-- **THEN** only a read-only `state` method exists; there is no acceptance or override method, and no event can change what is registered
-
-#### Scenario: Conflict-blocked groups stay withheld
-- **WHEN** Core reports a model withheld for an unresolved conflict
-- **THEN** the model stays unregistered with status and conflict fields visible in diagnostics
-
 ### Requirement: Partial catalog availability is published immediately
 The plugin SHALL register every model Core reports publishable in the same round, regardless of how many other models are withheld, and SHALL require no user action for that publication.
 
@@ -71,3 +60,10 @@ The plugin SHALL present a model published from a trusted snapshot as previously
 #### Scenario: LKG provenance is visible
 - **WHEN** a model is published from LKG
 - **THEN** diagnostics reports that the current metadata refresh is unavailable, the configuration comes from a previously verified result, and the snapshot's fetch time and age
+
+### Requirement: Consume one Core publication result
+OpenCode SHALL 透传Core publication、catalog、withheld、来源和通知决定，不重新推断完整性、冲突、价格权威或serving provider；同一结果提供给注册和诊断。
+
+#### Scenario: [T31] 只有Core判定
+- **WHEN** Core返回部分可发布模型及原因
+- **THEN** 宿主只注册该集合，UI与审计解释一致

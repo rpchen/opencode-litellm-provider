@@ -5,88 +5,50 @@ OpenCode 消费 Core 模型配置与发布结果，保留完整能力、限制�
 
 ## Requirements
 
-### Requirement: Publication partition governs registration
-OpenCode SHALL register only models Core reports as `configured` or `configured-lkg`, and SHALL keep every other discovered model out of OpenCode registration with its status and complete reason list visible in diagnostics. No user confirmation, acceptance, or override exists or may be added: a withheld model cannot be moved into the published set by any OpenCode action.
+### Requirement: Current Core configuration cache
+OpenCode SHALL 从同一Core resolution best-effort捕获schema9内存LKG，不复制兼容算法；持久化中立snapshot为schema2。旧schema经成功发现重建，seeding/存储失败不得使成功发现失败。
 
-#### Scenario: Complete models register normally
-- **WHEN** discovery returns Core-configured models
-- **THEN** they register with correct limits, input, cost, and protocol mapping
+#### Scenario: [T19] 策略迁移
+- **WHEN** 存在8/1旧条目且目录中断
+- **THEN** 不回放旧策略；成功刷新后捕获9/2
 
-#### Scenario: Incomplete models never disguise as normal
-- **WHEN** a discovered model is missing limits or has unknown key capabilities
-- **THEN** it does not register and diagnostics names its status plus missing/unknown/illegal fields
+### Requirement: Core publication controls host registration
+OpenCode SHALL 仅注册Core configured/configured-lkg，完整保留原ID、limits、capabilities、variants与参考cost。其他模型保留具体诊断；禁止确认/acceptance把withheld转成published。有限正context/output守卫继续存在。低优先LL描述差异不否定Core固定来源选择。
 
-#### Scenario: Operational guard stays as second layer
-- **WHEN** any spec with non-positive context or output reaches the host mapper
-- **THEN** it is excluded from registration regardless of publication state
+#### Scenario: [T01] 完整16模型
+- **WHEN** Core处理固定16项返回配置
+- **THEN** 逐字段等于Core oracle，DeepSeekFlash输出393216
 
-#### Scenario: Withheld models stay withheld without any user action
-- **WHEN** a model is withheld and the user takes no action, or executes any available command
-- **THEN** the registration view is unchanged and there is no acceptance method on the publication RPC
+#### Scenario: [T03] 合法后备记录
+- **WHEN** Core采用OpenCode/OpenRouter且LL描述不同
+- **THEN** 照常消费，不要求证明实际provider
 
-#### Scenario: DeepSeek official provider limits reach the OpenCode host model
-- **WHEN** the endpoint serves `deepseek-v4.1-flash` and the Core publication resolves the canonical identity `deepseek/deepseek-v4.1-flash` to the official `deepseek` provider record (`selectionSource: canonical-original`, `limit.output = 393216`)
-- **THEN** the registered OpenCode model carries `limit.output = 393216` and `limit.context = 1000000`, never the OpenRouter reseller serving limit `943718`
+#### Scenario: [T30] 非法关键上限
+- **WHEN** 不正或非有限context/output误入mapper
+- **THEN** 不注册
 
-#### Scenario: Reseller fallback conflicts stay withheld
-- **WHEN** no official provider record is provable and the fallback-selected OpenRouter record's serving limit conflicts with the endpoint's own declarations
-- **THEN** the model is blocked, `limit.output = 943718` never reaches OpenCode registration, and diagnostics report the unresolved conflict
+### Requirement: Explicit OpenCode tool capability
+OpenCode SHALL 保持Core明确tools布尔值；unknown不正常注册，不再用disabled把未知模型伪装为完整，也不得采用SDK默认true。
 
-#### Scenario: Fallback never rewrites the canonical identity
-- **WHEN** discovery selects a fallback record for a model whose deployment identity is a given canonical model name
-- **THEN** the host model id stays the deployment's own identity (never prefixed with the metadata provider namespace)
+#### Scenario: [T30] tools未知
+- **WHEN** Core工具能力未知且无有效LKG
+- **THEN** 模型withheld
 
-### Requirement: Conservative host tool mapping
-The plugin SHALL map `unknown` tool support to disabled and SHALL never
-enable host tool calling from unevidenced metadata.
+#### Scenario: [T10] tools明确false
+- **WHEN** 其他关键能力完整
+- **THEN** 正常注册且tools=false
 
-#### Scenario: Degraded entry with unknown tools
-- **WHEN** an entry reports unknown tool support
-- **THEN** its registered capabilities disable tools while diagnostics still reports tools unknown
+### Requirement: Host handling of metadata outages
+OpenCode SHALL 消费Core既有目录故障/合法LKG/withheld结果，保留source和age、retry与具体缺口；低优先描述及价格变化不是失效条件。只持久化publishable中立结果，保留既有auth、成功空清单、模型删除和scope隔离；内部route/base_model/deployment ID变化不得使同model_name缓存失效。
 
-### Requirement: Failures and LKG are visible and safe
-The plugin SHALL classify metadata failures with the Core taxonomy,
-SHALL substitute only valid LKG snapshots (identity/schema/conflict
-checked by Core, never TTL-expired), and SHALL show live-vs-LKG
-selection with provenance and age, failure kind, retry state, withheld
-reasons, and field-level evidence facts. A descriptive LiteLLM metadata
-difference Core resolved into a discrepancy SHALL NOT be presented as a
-failure and SHALL NOT discard a trusted snapshot.
+#### Scenario: [T18] catalog失败
+- **WHEN** Core允许同scope/model_name的有效关键配置LKG
+- **THEN** 继续注册并显示上次成功来源
 
-#### Scenario: Live failure with valid LKG
-- **WHEN** the metadata source fails but a provably belonging complete snapshot exists
-- **THEN** the model still registers with LKG provenance and diagnostics marks the LKG selection with age and reason
+#### Scenario: [T16] 价格故障
+- **WHEN** 仅价格缺失或错误
+- **THEN** 不撤下，不触发能力regression
 
-#### Scenario: Live failure without valid LKG
-- **WHEN** no valid snapshot exists
-- **THEN** the model stays withheld with the failure kind and reason visible, and no default-filled model registers
-
-#### Scenario: Retry recovery
-- **WHEN** a retry fetch returns complete trustworthy metadata
-- **THEN** the model returns to normally configured state
-
-#### Scenario: Snapshot persists only normally publishable specs
-- **WHEN** a discovery round completes with withheld entries present
-- **THEN** the persisted snapshot holds publishable specs only, and no withheld or previously accepted model survives into it
-
-#### Scenario: Descriptive discrepancy keeps the trusted snapshot
-- **WHEN** Core reports a resolved discrepancy for a model otherwise served from LKG
-- **THEN** the model stays registered from the trusted snapshot and diagnostics shows both the discrepancy and the LKG provenance
-
-### Requirement: LKG 以 schema 8 同 resolution 派生
-
-扩展 SHALL 在 seeding 时把 live catalog 与 options 透传给 Core，使 LKG 条目由
-通过 gate 的同一 resolution 派生（`PUBLICATION_SCHEMA_VERSION = 8` 的
-group-wide proof composition）；seeding 保持 best-effort。内存中已存在的 v7
-及更早条目 SHALL 被 Core 判不兼容（fail closed），下一轮 live 自动重捕获为
-v8。OpenCode 不复制 proof 判定、不持久化 LKG 条目。
-
-#### Scenario: seeding 产出 v8 条目
-
-- **WHEN** 某模型本轮 `configured` 且 Core 为 schema 8
-- **THEN** store 中的条目 `schemaVersion` 为 8 且对未变更的 live 输入验证通过
-
-#### Scenario: 旧条目 fail closed 后重捕获
-
-- **WHEN** store 中存在 v7 条目且 catalog 中断
-- **THEN** 本轮不恢复该条目；catalog 恢复后的首轮 live 自动捕获 v8 条目
+#### Scenario: [T20] 模型已删除
+- **WHEN** 成功live目录无该模型
+- **THEN** 不从快照恢复

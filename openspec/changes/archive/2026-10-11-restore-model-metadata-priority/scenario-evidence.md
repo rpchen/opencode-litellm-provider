@@ -1,6 +1,6 @@
 # Scenario 自动化证据
 
-沿用 Core T01–T34，T05/T06撤回。冻结输入、公开catalog和oracle从合并Core逐字节复制，未修改验收预期。具体命令、安装身份、CI结果及测试环境限制见implementation.md。候选`4663f9251113f471d3196b1118ef822174e4d9ef`的[完整CI与真实OpenCode2.0.16 E2E](https://github.com/rpchen/opencode-litellm-provider/actions/runs/38068474541)均通过，301/301测试、16/16配置和63个实际SDK请求。后续文档HEAD由本PR最新checks相同门禁复验。
+沿用 Core T01–T34，T05/T06撤回。冻结输入、公开catalog和oracle从合并Core逐字节复制，未修改验收预期。具体命令、安装身份、CI结果及测试环境限制见implementation.md。审核通过的 OpenCode #63 HEAD 008d728786d1c7c7d3b66d92227c06a00e5d29da 的[CI与真实 OpenCode 2.0.16 E2E](https://github.com/rpchen/opencode-litellm-provider/actions/runs/38097388382)均通过；合并 main SHA d205122d07f90493be6682f9053f0c1c3b5a3780 的[CI与真实 E2E](https://github.com/rpchen/opencode-litellm-provider/actions/runs/38101504070)也均通过。测试继续逐项验证冻结模型配置、声明的推理档位与实际 SDK 请求；未修改验收预期。
 
 | Capability | Requirement | Scenario / Matrix | 自动化证据 | 结果 |
 |---|---|---|---|---|

@@ -44,6 +44,8 @@ Ubuntu CI安装准确2.0.16，OpenCode自身plugin installer安装不可变Git�
 
 test/sync.test.ts 的既有网络故障断言在旧实现失败（stale/network），修复后与 audit 相关20项通过；既有 reload 失败用例也核对两份当前缓存来源一致。真实 OpenCode 脚本在既有 HTTP500→stale 阶段检查实际导出报告 source=stale。完整门禁及最新不可变候选的真实宿主结果以 PR #63 新 HEAD CI checks 与审查描述为准；冻结16项、variants、请求、快照策略和原 E2E 边界不变。
 
-## Review 边界
+## 收尾证据（2026-10-11）
 
-PR #63交代码Review；不合并、不打tag、不发布。5.2/5.3等待归档及授权合并/finish，Core涉及宿主关闭任务不提前勾选。最终候选与CI看PR最新HEAD checks，不把历史候选等同后续提交。
+OpenCode #63 经审核 HEAD 008d728786d1c7c7d3b66d92227c06a00e5d29da squash 合并为 main SHA d205122d07f90493be6682f9053f0c1c3b5a3780。PR checks run 38097388382 的 CI 与真实 OpenCode 2.0.16 E2E 均成功；main SHA 的完整 CI/E2E run 38101504070、main 索引发布 run 38101999407 均成功，finish_codebase_task 返回 READY。Core provenance 保持 cf797e953eb1f6de8e7c3e0fd5e98094398c26f9。
+
+此次归档只关闭已实施并验收的 change、同步 canonical specs；v0.10.1 版本更新在独立 Release PR 中执行，不改变冻结模型验收或 Core provenance。
