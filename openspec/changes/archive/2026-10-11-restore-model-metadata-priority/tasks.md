@@ -1,6 +1,6 @@
 # Tasks
 
-Core #34 已授权合并，稳定 SHA cf797e953eb1f6de8e7c3e0fd5e98094398c26f9；Pi #55 实施及真实宿主 CI 已通过，按顺序进入 OpenCode 实施。共享测试矩阵和16模型oracle位于Core同名change，具体Scenario映射在本仓库scenario-evidence.md。
+Core #34、Pi #55、OpenCode #63 已按审核通过的 HEAD squash 合并；插件构建固定使用 Core SHA cf797e953eb1f6de8e7c3e0fd5e98094398c26f9，两个宿主的完整 CI 与真实 E2E 均通过。此次收尾只归档本 change 并同步 canonical specs；共享测试矩阵和16模型oracle位于Core同名change，具体Scenario映射在本仓库scenario-evidence.md。
 
 ## 1. 设计与依赖
 
@@ -28,7 +28,7 @@ Core #34 已授权合并，稳定 SHA cf797e953eb1f6de8e7c3e0fd5e98094398c26f9�
 ## 5. 完成门禁
 
 - [x] 5.1 运行verify:dist、test:delivery、typecheck、test、test:tui-render、test:distribution、test:package、Real OpenCode2.0.16 E2E和validate:spec、test:openspec-closure、test:release-metadata；记录具体命令、退出码及未执行项。
-- [ ] 5.2 仅实现和证据齐全后CLI archive新change，再strict/closure；PR依赖Core与Pi验证结果，不得自动合并。
-- [ ] 5.3 获授权合并后finish_codebase_task核对准确main/index字节；Release另行授权，固定provenance不得跟随新main重建。
+- [x] 5.2 实现和证据齐全后使用CLI archive新change，完成strict/closure；归档PR按本次明确授权与仓库门禁合入。
+- [x] 5.3 OpenCode #63 合并后finish_codebase_task核对准确main/index字节；v0.10.1 Release按单独PR执行并沿用固定provenance，不跟随后续main重建。
 
-实施验收候选4663f92的CI38068474541为SUCCESS：301/301与真实OpenCode2.0.16的16/16配置、63请求、完整endpoint/恢复/迁移通过。证据见implementation.md/scenario-evidence.md。5.2/5.3等待代码Review和授权合并收尾，Core宿主关闭任务不提前勾选，历史archive不改。
+收尾证据（2026-10-11）：OpenCode #63 经审核 HEAD 008d728786d1c7c7d3b66d92227c06a00e5d29da 合并为 main SHA d205122d07f90493be6682f9053f0c1c3b5a3780；其 CI/真实 OpenCode 2.0.16 E2E run 38097388382，以及该 main SHA 的 CI/E2E run 38101504070 均成功。main 索引发布 run 38101999407 成功，finish_codebase_task 返回 READY。详细证据见 implementation.md/scenario-evidence.md；历史 archive 未改，v0.10.1 保持独立 Release 阶段。

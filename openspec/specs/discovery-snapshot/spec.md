@@ -5,17 +5,6 @@ Defines how OpenCode persists and restores endpoint-bound discovery snapshots, v
 
 ## Requirements
 
-### Requirement: durable compatible restore
-OpenCode SHALL use plugin-scoped durable storage to restore a Core discovery snapshot when that snapshot is compatible with the current endpoint fingerprint.
-
-#### Scenario: warm startup
-- **WHEN** startup finds a compatible persisted snapshot
-- **THEN** OpenCode registers the restored models as stale before the network refresh completes
-
-#### Scenario: endpoint mismatch
-- **WHEN** the stored snapshot belongs to a different URL, credential, or result-affecting option set
-- **THEN** OpenCode does not register its models
-
 ### Requirement: neutral persisted models
 OpenCode SHALL persist the Core-neutral model representation rather than host-only model fields.
 
@@ -43,3 +32,18 @@ Snapshot storage failures SHALL NOT fail model discovery or provider registratio
 #### Scenario: write failure
 - **WHEN** durable storage rejects a snapshot write
 - **THEN** OpenCode logs a warning and keeps the successful in-memory discovery result
+
+### Requirement: OpenCode current-policy snapshot restore
+OpenCode SHALL 仅在Core接受schema2及关键完整性、endpoint/credential/结果相关scope一致时恢复中立模型；contextTierCap与price不决定scope或可用性。保持plugin durable storage、stale标记及既有endpoint-state门禁。 旧schema不恢复；价格错误由Core归零，关键损坏仍拒绝。
+
+#### Scenario: [T19] 旧策略不回放
+- **WHEN** 只有schema1快照
+- **THEN** 等待成功刷新重建，不暴露旧空档位/cap
+
+#### Scenario: [T21] scope不兼容
+- **WHEN** credential、endpoint或协议选项改变
+- **THEN** 不恢复旧模型
+
+#### Scenario: [T19] 价格损坏
+- **WHEN** 关键配置与指纹合法但cost损坏
+- **THEN** 恢复能力并显示参考价0
