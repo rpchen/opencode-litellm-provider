@@ -8,8 +8,9 @@ context: |
 
   项目：opencode-litellm-provider —— 通过公开 GitHub Git package 分发的 OpenCode v2 插件，不发布 npm。
   用户只填 LiteLLM 地址 + API Key，即自动发现并注册 provider / 协议 / 模型 / 能力 / 推理档位。
-  业务基线以 openspec/specs 与 docs/decisions.md 为准：LiteLLM 优先、models.dev 仅补缺且只取一方记录，
-  使用 LiteLLM 价格阶梯截断上下文；禁止读取 Codex models_cache.json；无 variants 是合法终态。
+  业务基线遵循已批准 restore-model-metadata-priority：LiteLLM 提供 model_name 发现入口，
+  Core 按官方 → OpenCode → OpenRouter 选一条 models.dev 记录提供完整能力；价格可缺失或0，不截断限制、不影响发布/LKG。
+  不要求 serving proof 或 models_dev_provider；支持推理与可选档位分别处理；禁止读取 Codex models_cache.json。
 
   宿主无关的发现、协议、元数据与指纹仅在 rpchen/litellm-discovery-core 维护，经公共入口消费。
   src/generated/discovery-core 和 src/core 是构建生成、Git 忽略的源码/转接，不手工维护或提交。

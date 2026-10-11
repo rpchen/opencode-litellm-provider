@@ -100,50 +100,6 @@ export declare const publicationRpc: {
                             readonly type: "string";
                         };
                     };
-                    readonly discrepancies: {
-                        readonly type: "array";
-                        readonly items: {
-                            readonly type: "object";
-                            readonly properties: {
-                                readonly model: {
-                                    readonly type: "string";
-                                };
-                                readonly field: {
-                                    readonly type: "string";
-                                };
-                                readonly status: {
-                                    readonly type: "string";
-                                };
-                                readonly resolution: {
-                                    readonly type: "string";
-                                };
-                            };
-                            readonly required: readonly ["model", "field", "status", "resolution"];
-                            readonly additionalProperties: false;
-                        };
-                    };
-                    readonly conflicts: {
-                        readonly type: "array";
-                        readonly items: {
-                            readonly type: "object";
-                            readonly properties: {
-                                readonly model: {
-                                    readonly type: "string";
-                                };
-                                readonly field: {
-                                    readonly type: "string";
-                                };
-                                readonly status: {
-                                    readonly type: "string";
-                                };
-                                readonly resolution: {
-                                    readonly type: "string";
-                                };
-                            };
-                            readonly required: readonly ["model", "field", "status", "resolution"];
-                            readonly additionalProperties: false;
-                        };
-                    };
                     readonly failureKind: {
                         readonly type: "string";
                     };

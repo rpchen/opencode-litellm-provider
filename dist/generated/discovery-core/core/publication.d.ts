@@ -1,30 +1,9 @@
-/**
- * Trusted model-capability publication loop.
- *
- * Single business source of truth for answering: "is this discovered
- * model's metadata reliable enough to publish as a fully configured
- * model?" Covers completeness/publishability policy, false-vs-unknown
- * semantics, deterministic single-resolver derivation, failure taxonomy,
- * TTL-free Last Known Good (schema 8 proof composition), evidence source
- * authority, resolved discrepancies vs unresolved conflicts, and
- * field-level provenance.
- *
- * D9 invariant: the publication assessment is derived from the single
- * `ResolvedModel`. There is no independent parsing here.
- *
- * The publication gate is never relaxed. There is no user confirmation,
- * override, or degraded-publication path: a model that cannot be proven
- * trustworthy is withheld, while every other model of the same endpoint
- * is published normally.
- *
- * No I/O, no timers, no host SDK imports. Adapters consume the verdicts
- * without reimplementing policy.
- */
+/** Publication and recovery use the selected whole-record configuration. */
+import { type BuildOptions, type ModelSpec } from "./build.js";
+import type { FieldResolution } from "./evidence.js";
 import { type DeploymentGroup } from "./litellm.js";
 import { aggregateTriState, type CapabilityState, type DetailedSelection, type SelectedModelRecord } from "./modelsdev.js";
 import { resolveModel, toModelSpec, type FieldBasis, type ResolvedModel } from "./resolve.js";
-import { type BuildOptions, type ModelSpec } from "./build.js";
-import type { FieldResolution } from "./evidence.js";
 export type { CapabilityState };
 /** Per-model configuration state. Names are domain semantics, not wire enums. */
 export type ModelConfigurationStatus = "configured" | "configured-lkg" | "discovered-incomplete" | "unmatched" | "ambiguous" | "metadata-unavailable" | "invalid-metadata";
@@ -88,9 +67,9 @@ export interface LimitAssessment {
     readonly provenance: PublicationFieldProvenance;
     /** Evidence resolution for this dimension, including any resolved discrepancy. */
     readonly resolution: FieldResolution;
-    /** True when lower-authority evidence disagreed and authority resolved it. */
+    /** Deprecated compatibility field; selected records are never merged. */
     readonly discrepancy: boolean;
-    /** Narrowest proven endpoint runtime constraint for this dimension, if any. */
+    /** Deprecated compatibility field; runtime constraints no longer narrow metadata. */
     readonly deploymentConstraint?: number;
 }
 export interface ModalityAssessment {
@@ -125,28 +104,12 @@ export interface CompletenessAssessment {
     readonly failure?: MetadataFailure;
     readonly usingLKG: boolean;
     readonly lkgDetail?: string;
-    /** Canonical identity, parse metadata, and serving status from the resolver. */
-    readonly resolvedIdentity?: {
-        readonly status: ResolvedModel["identity"]["status"];
+    readonly resolvedIdentity?: ResolvedModel["identity"];
+    readonly metadataSource?: {
+        readonly providerID: string;
+        readonly recordID: string;
         readonly canonicalModelID?: string;
-        readonly evidence: ResolvedModel["identity"]["evidence"];
-        readonly adapterSegment?: string;
-        readonly customLLMProvider?: string;
     };
-    readonly resolvedServing?: {
-        readonly status: ResolvedModel["serving"]["status"];
-        readonly providerID?: string;
-        readonly recordID?: string;
-    };
-    /** Per-field basis for every resolved field. */
-    readonly fieldBasis?: Readonly<Record<string, FieldBasis>>;
-    /** Non-pricing litellm_params keys, listed as operator configuration. */
-    readonly operatorConfigurationKeys?: readonly string[];
-    readonly diagnosticCandidates?: ReadonlyArray<{
-        providerID: string;
-        recordID: string;
-        why: string;
-    }>;
     readonly catalogKind?: ResolvedModel["catalogKind"];
     readonly reasoningLevelsState?: "unknown" | "known";
 }
@@ -164,27 +127,17 @@ export declare function assessModelConfiguration(group: DeploymentGroup, catalog
 export declare function assessmentFromResolved(resolved: ResolvedModel, failure?: MetadataFailure): CompletenessAssessment;
 /** True only for `configured` and `configured-lkg`. This is the whole gate. */
 export declare function isNormallyPublishable(status: ModelConfigurationStatus): boolean;
-/**
- * Schema 8: proof records the composition that produced the stored spec,
- * group-wide. Whole-spec restore or nothing; never per-field merges.
- * v7 and older entries fail closed without migration.
- */
-export declare const PUBLICATION_SCHEMA_VERSION: 8;
+/** Schema 9 stores whole critical configuration; old policy caches require refresh. */
+export declare const PUBLICATION_SCHEMA_VERSION: 9;
 export interface LastKnownGoodCapabilityVerdict {
     readonly tools: CapabilityState;
     readonly reasoning: CapabilityState;
     readonly inputModalitiesKnown: boolean;
     readonly outputModalitiesKnown: boolean;
-    /** Actual modality sets when known, so live evidence can conflict-check them. */
+    /** Captured modality sets must match the stored configuration. */
     readonly inputModalities: readonly string[];
     readonly outputModalities: readonly string[];
-    /**
-     * Captured limit facts used for live conflict detection. Each value is
-     * compared only against the same dimension: `context` is total context
-     * (models.dev `limit.context`), `input` is input capacity
-     * (`limit.input` / LiteLLM `max_input_tokens`), `output` is the
-     * output limit. Never compared across dimensions.
-     */
+    /** Captured context, optional input capacity and output match the stored spec. */
     readonly context: number;
     readonly input: number;
     readonly output: number;
@@ -193,14 +146,8 @@ export interface LastKnownGoodEntry {
     readonly schemaVersion: typeof PUBLICATION_SCHEMA_VERSION;
     /** Stable LiteLLM model name this entry was captured for. */
     readonly modelName: string;
-    /**
-     * Provider-aware stable identity of the captured group (sorted union
-     * of every deployment's identity ids, `|`-joined). LKG validity compares
-     * this first; the proof multiset re-proves the per-deployment evidence.
-     */
-    readonly stableIdentity: string;
-    /** Group-wide proof composition (D10). Captured from the resolution. */
-    readonly proof: ResolvedModel["proof"];
+    /** Integrity of identity, protocol and critical configuration only. */
+    readonly configurationFingerprint: string;
     readonly fetchedAt: string;
     readonly fetchedAtEpochMs: number;
     readonly spec: ModelSpec;
@@ -257,30 +204,8 @@ export interface ConfigurationWithLKG {
     readonly lkg?: LastKnownGoodEntry;
     readonly lkgValidation?: LKGValidation;
 }
-/**
- * Validate a stored entry against the current discovery inputs.
- * Age is reported but never a validity condition.
- *
- * Group-wide whole-entry re-proof (D10), in two modes:
- * - outage (catalog `unavailable`/`providers-only`): the registry and
- *   serving records cannot be re-read, so the stored identityKind,
- *   registryDigest, and recordDigest stand as captured. Re-proved per
- *   component: the deployment-evidence multiset (deploymentID +
- *   normalizedInputs, item by item, order-independent), every stored
- *   serving declaration against the live deployments' declared providers,
- *   the enforcement fingerprint (empty while D7a is unpromoted), and the
- *   LiteLLM fingerprint recomputed from the live group. Restore is the
- *   whole stored spec or nothing.
- * - live (catalog `complete`): additionally the live resolution's proof
- *   must agree item by item — same identityKinds and canonicalModelIDs,
- *   same registryDigest, same serving recordDigest.
- */
+/** Publication and recovery use the selected whole-record configuration. */
 export declare function validateLastKnownGood(entry: LastKnownGoodEntry, group: DeploymentGroup, selected: SelectedModelRecord | undefined, now?: number, options?: BuildOptions, catalog?: unknown): LKGValidation;
-/**
- * Resolve the final configuration, substituting valid LKG only when live
- * metadata is incomplete/unavailable AND a provably belonging entry exists
- * whose stored spec itself passes completeness.
- */
 export declare function resolveConfigurationWithLKG(assessment: CompletenessAssessment, group: DeploymentGroup, catalog: unknown, options: BuildOptions, store: LastKnownGoodStore, now?: number): ConfigurationWithLKG;
 export declare function describeAssessment(assessment: CompletenessAssessment): string;
 export interface PublishableEntry {
@@ -320,6 +245,5 @@ export declare function buildPublicationResult(litellmResponse: unknown, catalog
 export declare function hostReasoningFlag(assessment: CompletenessAssessment): boolean;
 /** Host-transport mapping for a publishable tool state. Conservative-disable when unknown. */
 export declare function hostToolsFlag(assessment: CompletenessAssessment, legacyTools: boolean): boolean;
-export { aggregateTriState };
+export { aggregateTriState, resolveModel, toModelSpec };
 export type { FieldBasis, ResolvedModel };
-export { resolveModel, toModelSpec };

@@ -1,22 +1,11 @@
-import { buildModelSpecs as discoverModelSpecs, buildPublicationResult, hasOperationalLimits as coreHasOperationalLimits, hostToolsFlag, modelFingerprint as discoveryFingerprint, } from "../generated/discovery-core/index.js";
+import { buildModelSpecs as discoverModelSpecs, buildPublicationResult, hasOperationalLimits as coreHasOperationalLimits, modelFingerprint as discoveryFingerprint, } from "../generated/discovery-core/index.js";
 import { PROTOCOL_PACKAGES } from "./protocol.js";
 export function toOpenCodeModelSpec(spec) {
-    const { id, name, protocol, ...metadata } = spec;
-    return { id, name, protocol, package: PROTOCOL_PACKAGES[protocol], ...metadata };
+    return { ...spec, package: PROTOCOL_PACKAGES[spec.protocol] };
 }
-/**
- * Map one Core publication entry to its host shape.
- *
- * Conservative tool mapping: `unknown` tool support (possible only on
- * user-accepted degraded entries) registers as disabled, while
- * diagnostics still reports the Core `unknown` verdict.
- */
+/** Map Core's configured partition without re-deriving capabilities. */
 export function toOpenCodeModelSpecWithPublication(entry) {
-    const mapped = toOpenCodeModelSpec(entry.spec);
-    const tools = hostToolsFlag(entry.assessment, entry.spec.capabilities.tools);
-    if (tools === mapped.capabilities.tools)
-        return mapped;
-    return { ...mapped, capabilities: { ...mapped.capabilities, tools } };
+    return toOpenCodeModelSpec(entry.spec);
 }
 export const hasOperationalLimits = coreHasOperationalLimits;
 export function buildModelSpecs(litellmResponse, modelsDevCatalog, options) {
@@ -26,8 +15,7 @@ export function buildModelSpecs(litellmResponse, modelsDevCatalog, options) {
 }
 /**
  * Partition discovery through the Core publication policy and map only
- * publishable entries (configured, configured-lkg, user-accepted
- * degraded) to host shapes, keeping the operational-limits guard as
+ * publishable entries (configured and configured-lkg) to host shapes, keeping the operational-limits guard as
  * defense in depth. Blocked models never reach the returned list.
  */
 export function buildPublicationModels(litellmResponse, modelsDevCatalog, options, publication = {}) {

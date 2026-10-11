@@ -7,9 +7,10 @@
  */
 import type { ModelCapabilities, ModelCost, ModelLimits } from "./capabilities.js";
 import type { CapabilityState, ModelVariant } from "./modelsdev.js";
-import { type Protocol } from "./protocol.js";
+import type { Protocol } from "./protocol.js";
 import { toModelSpec } from "./resolve.js";
 export interface BuildOptions {
+    /** Deprecated: accepted but ignored; prices never narrow capabilities. */
     contextTierCap: boolean;
     protocolOverrides: Readonly<Record<string, Protocol>>;
 }
@@ -40,6 +41,10 @@ export type { CapabilityState } from "./modelsdev.js";
  * must not publish zero context/output limits to their hosts.
  */
 export declare function hasOperationalLimits(spec: Pick<ModelSpec, "limit">): boolean;
+/** Shared existing critical-content checks for publication caches and snapshots. */
+export declare function hasValidCriticalConfiguration(value: unknown): value is ModelSpec;
 export declare function buildModelSpecs(litellmResponse: unknown, modelsDevCatalog: unknown, options: BuildOptions): ModelSpec[];
 export declare function modelFingerprint(models: readonly ModelSpec[]): string;
+/** Cache integrity for model identity, protocol and capabilities, excluding display metadata. */
+export declare function criticalModelFingerprint(models: readonly ModelSpec[]): string;
 export { toModelSpec };

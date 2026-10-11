@@ -14,10 +14,8 @@ if (!packageSpec || !/^(github:rpchen\/opencode-litellm-provider|git\+file:\/\/\
   throw new Error("E2E_PACKAGE_SPEC must pin this repository to a full Git commit")
 }
 const fixture = JSON.parse(readFileSync(path.join(root, "test/fixtures/litellm-model-info.json"), "utf8"))
-// [REAL-HOST-E2E] models.dev is deliberately unreachable in this gate (see the proxy
-// env below), so every capability dimension the trusted publication policy requires
-// must be declared by the served endpoint metadata. Only the served payload changes;
-// the shared fixture file stays the unit-test baseline.
+// Preserve the existing lifecycle input while the selected complete catalog
+// records below provide model capabilities. Do not mutate shared fixtures.
 const FULL_CAPABILITY_DECLARATIONS = {
   supports_function_calling: true,
   supports_reasoning: false,
@@ -63,151 +61,37 @@ const opencodeConfig = path.join(config, "opencode")
 const opencodeConfigFile = path.join(opencodeConfig, "opencode.jsonc")
 for (const dir of [project, home, config, data, cache, state, opencodeConfig]) mkdirSync(dir, { recursive: true })
 
-/**
- * Deterministic models.dev catalog. The real host stays real; only the metadata
- * content is fixed, so the gate never depends on what the public service
- * happens to return today. The plugin points at it through the documented
- * `modelsDevUrl` option.
- *
- * Era-aware serving: the committed dist pins one discovery-core era. A Core
- * v8 dist consumes the catalog shape ({ models, providers }); the legacy v7
- * dist consumes the provider map. Both shapes are served under their canonical
- * paths so the INSTALLED dist always meets the fixture of its own era — the
- * failure mode under review was a catalog shape hitting a v7 dist
- * (`catalogAvailable` false → "models.dev：degraded"), which tests a shape
- * mismatch instead of the publication gate.
- *
- * v8: the served catalog is the repository's own models-dev fixture (the unit
- * test baseline) merged with the e2e-only identities (vendora/vendorb/resolved
- * and `openai/multi-endpoint-model`). Under the frozen dimension-isolation
- * rule (G30) a LiteLLM-only group cannot publish, so every model the E2E
- * expects to register needs a canonical registry entry keyed by its exact
- * wire id.
- */
-const fixtureCatalog = JSON.parse(
-  readFileSync(path.join(root, "test", "fixtures", "models-dev.json"), "utf8"),
-)
-const catalogueEntries = () => ({
-  models: {
-    ...fixtureCatalog.models,
-    // G30: register via the canonical registry under its exact wire id. The
-    // record deliberately omits tool_call/reasoning so the model's completeness
-    // depends on the live declarations — which is what makes the declaration
-    // change below a fail-closed LKG rejection instead of a silent no-op.
-    "openai/multi-endpoint-model": {
-      modalities: { input: ["text"], output: ["text"] },
-      limit: { context: 128_000, output: 16_000 },
-    },
-    "vendora/coding-model": {
-      tool_call: true,
-      reasoning: false,
-      modalities: { input: ["text"], output: ["text"] },
-      limit: { context: 200_000, output: 64_000 },
-    },
-    "resolved/e2e-discrepancy-model": {
-      tool_call: true,
-      reasoning: false,
-      modalities: { input: ["text", "image"], output: ["text"] },
-      limit: { context: 400_000, output: 512_000 },
-    },
-    // Schema-8 LKG recovery: the registry supplies the gated capability
-    // dimensions, so this model's completeness depends on the LIVE catalog —
-    // which is exactly what makes an injected catalog outage fall back to the
-    // captured LKG entry instead of re-publishing LiteLLM-only declarations.
-    "vendora/lkg-recovery-model": {
-      tool_call: true,
-      reasoning: false,
-      modalities: { input: ["text"], output: ["text"] },
-      limit: { context: 200_000, output: 64_000 },
-    },
-  },
-  providers: {
-    ...fixtureCatalog.providers,
-    vendora: {
-      models: {
-        "coding-model": {
-          id: "coding-model",
-          canonical_model_id: "vendora/coding-model",
-          tool_call: true,
-          reasoning: false,
-          modalities: { input: ["text"], output: ["text"] },
-          limit: { context: 200_000, output: 64_000 },
-        },
-        // Serving record for the schema-8 LKG recovery model (see the models
-        // registry entry above): proves the LKG provenance down to the record.
-        "lkg-recovery-model": {
-          id: "lkg-recovery-model",
-          canonical_model_id: "vendora/lkg-recovery-model",
-          tool_call: true,
-          reasoning: false,
-          modalities: { input: ["text"], output: ["text"] },
-          limit: { context: 200_000, output: 64_000 },
-        },
-      },
-    },
-    vendorb: {
-      models: {
-        // Deliberately incomplete: the identity resolves reliably, but the record
-        // cannot make the model publishable on its own.
-        "coding-model": { id: "coding-model", tool_call: true },
-      },
-    },
-    resolved: {
-      models: {
-        "e2e-discrepancy-model": {
-          id: "e2e-discrepancy-model",
-          canonical_model_id: "resolved/e2e-discrepancy-model",
-          tool_call: true,
-          reasoning: false,
-          modalities: { input: ["text", "image"], output: ["text"] },
-          limit: { context: 400_000, output: 512_000 },
-        },
-      },
-    },
-  },
-})
-
-/** Legacy v7 provider-map shape served to dists pinned before the catalog era. */
-const legacyProviderMap = () => ({
-  vendora: {
-    models: {
-      "coding-model": {
-        id: "coding-model",
-        tool_call: true,
-        reasoning: false,
-        modalities: { input: ["text"], output: ["text"] },
-        limit: { context: 200_000, output: 64_000 },
-      },
-    },
-  },
-  vendorb: {
-    models: {
-      // Deliberately incomplete: the identity resolves reliably, but the record
-      // cannot make the model publishable on its own.
-      "coding-model": { id: "coding-model", tool_call: true },
-    },
-  },
-  resolved: {
-    models: {
-      "e2e-discrepancy-model": {
-        id: "e2e-discrepancy-model",
-        // The authoritative-intrinsic grading the scenario depends on
-        // requires a canonical relation proof (frozen fallback-authority
-        // semantics); the deployment routes this namespace explicitly.
-        canonical_model_id: "resolved/e2e-discrepancy-model",
-        tool_call: true,
-        reasoning: false,
-        modalities: { input: ["text", "image"], output: ["text"] },
-        limit: { context: 400_000, output: 512_000 },
-      },
-    },
-  },
-})
+// Fixed public records and complete synthetic records for existing lifecycle cases.
+const frozenDiscovery = JSON.parse(readFileSync(path.join(root,"test/fixtures/metadata-priority/synthetic-discovery.json"),"utf8"))
+const frozenCatalog = JSON.parse(readFileSync(path.join(root,"test/fixtures/metadata-priority/modelsdev-subset.json"),"utf8"))
+const oracle = JSON.parse(readFileSync(path.join(root,"test/fixtures/metadata-priority/expected-16.json"),"utf8"))
+const baselineCatalog = structuredClone(frozenCatalog)
+const addRecord = (name, context, output, reasoning = false, reasoning_options = []) => {
+  const canonical = "e2e/"+name
+  const record = {id:name,canonical_model_id:canonical,limit:{context,output},tool_call:true,reasoning,reasoning_options,modalities:{input:["text"],output:["text"]}}
+  baselineCatalog.models[canonical] = structuredClone(record)
+  baselineCatalog.providers.e2e ??= {models:{}}
+  baselineCatalog.providers.e2e.models[name] = record
+}
+for(const row of servedFixture.data) {
+  const name = row.model_name
+  if(!name || oracle.models.some(model=>model.id===name) || ["shared-route","invalid-fields","minimax-m3"].includes(name))continue
+  if(baselineCatalog.providers.e2e?.models[name])continue
+  const context = typeof row.model_info.max_input_tokens === "number" ? row.model_info.max_input_tokens : 128000
+  const output = typeof row.model_info.max_output_tokens === "number" ? row.model_info.max_output_tokens : 16000
+  addRecord(name,context,output,row.model_info.supports_reasoning===true)
+}
+addRecord("invalid-fields",0,0)
+addRecord("minimax-m3",1000000,131072);delete baselineCatalog.providers.e2e.models["minimax-m3"].reasoning
+addRecord("e2e-no-effort",32000,4096,true)
+addRecord("e2e-disabled",32000,4096,false)
+addRecord("e2e-messages",200000,64000,true,[{type:"budget_tokens",max:64000}])
+let currentCatalog = structuredClone(baselineCatalog)
+const catalogueEntries = () => currentCatalog
 
 function startCatalogServer() {
   const bodies = new Map([
     ["/catalog.json", () => JSON.stringify(catalogueEntries())],
-    ["/api.json", () => JSON.stringify(legacyProviderMap())],
   ])
   let requests = 0
   let failures = 0
@@ -238,9 +122,7 @@ function startCatalogServer() {
       if (!address || typeof address === "string") return reject(new Error("catalog server did not bind TCP"))
       resolve({
         server,
-        // v8 dists request /catalog.json; v7 dists still request /api.json.
         url: `http://127.0.0.1:${address.port}/catalog.json`,
-        legacyUrl: `http://127.0.0.1:${address.port}/api.json`,
         requests: () => requests,
         failures: () => failures,
         setOutage: (flag) => { outage = flag },
@@ -257,7 +139,8 @@ function startLiteLLM(initialKey) {
   let acceptedRequests = 0
   let failedRequests = 0
   const keys = { expected: initialKey }
-  const server = createServer((req, res) => {
+  const modelRequests = []
+  const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1")
     if (url.pathname === "/v1/model/info" || url.pathname === "/model/info") {
       if (req.headers.authorization !== `Bearer ${keys.expected}`) {
@@ -278,6 +161,36 @@ function startLiteLLM(initialKey) {
       res.end(JSON.stringify({ data: servedModels }))
       return
     }
+    if (req.method === "POST" && ["/v1/chat/completions","/v1/responses","/v1/messages"].includes(url.pathname)) {
+      assert(req.headers.authorization === `Bearer ${keys.expected}` || req.headers["x-api-key"] === keys.expected,"actual request credential mismatch")
+      let raw=""; for await (const chunk of req) raw+=chunk
+      const body=JSON.parse(raw);modelRequests.push({path:url.pathname,body})
+      res.writeHead(200,{"content-type":"text/event-stream"})
+      const event=data=>res.write(`data: ${JSON.stringify(data)}\n\n`)
+      if(url.pathname==="/v1/responses") {
+        const item={id:"msg_e2e",type:"message",role:"assistant",status:"completed",content:[{type:"output_text",text:"ok",annotations:[]}]}
+        const response={id:"resp_e2e",object:"response",status:"completed",model:body.model,output:[item],usage:{input_tokens:1,output_tokens:1,total_tokens:2}}
+        event({type:"response.created",response:{...response,status:"in_progress",output:[]}})
+        event({type:"response.output_item.added",output_index:0,item:{...item,status:"in_progress",content:[]}})
+        event({type:"response.content_part.added",item_id:item.id,output_index:0,content_index:0,part:{type:"output_text",text:"",annotations:[]}})
+        event({type:"response.output_text.delta",item_id:item.id,output_index:0,content_index:0,delta:"ok"})
+        event({type:"response.output_item.done",output_index:0,item})
+        event({type:"response.completed",response})
+      } else if(url.pathname==="/v1/messages") {
+        for(const data of [
+          {type:"message_start",message:{id:"msg_e2e",type:"message",role:"assistant",model:body.model,content:[],usage:{input_tokens:1,output_tokens:0}}},
+          {type:"content_block_start",index:0,content_block:{type:"text",text:""}},
+          {type:"content_block_delta",index:0,delta:{type:"text_delta",text:"ok"}},
+          {type:"content_block_stop",index:0},
+          {type:"message_delta",delta:{stop_reason:"end_turn",stop_sequence:null},usage:{output_tokens:1}},
+          {type:"message_stop"}])res.write(`event: ${data.type}\ndata: ${JSON.stringify(data)}\n\n`)
+      } else {
+        event({id:"chat_e2e",object:"chat.completion.chunk",created:1,model:body.model,choices:[{index:0,delta:{role:"assistant",content:"ok"},finish_reason:null}]})
+        event({id:"chat_e2e",object:"chat.completion.chunk",created:1,model:body.model,choices:[{index:0,delta:{},finish_reason:"stop"}],usage:{prompt_tokens:1,completion_tokens:1,total_tokens:2}})
+        res.write("data: [DONE]\n\n")
+      }
+      res.end();return
+    }
     res.writeHead(404, { "content-type": "application/json" })
     res.end(JSON.stringify({ error: "not found" }))
   })
@@ -289,6 +202,7 @@ function startLiteLLM(initialKey) {
       resolve({
         server,
         baseUrl: `http://127.0.0.1:${address.port}`,
+        requests: modelRequests,
         acceptedRequests: () => acceptedRequests,
         failedRequests: () => failedRequests,
         keys,
@@ -443,8 +357,7 @@ function startAttachedTui(sessionID) {
     throw new Error(`util-linux script is required for the real terminal E2E: ${probe.error?.message ?? probe.stderr}`)
   }
 
-  // A tall PTY: the v8 diagnostics card grew (canonical/serving facts,
-  // discrepancies, conflicts and per-model details), so the Runtime Identity
+  // A tall PTY keeps model details and Runtime Identity visible;
   // block at the bottom must stay inside the painted viewport.
   const commandLine = `stty cols 120 rows 100; exec opencode --server ${openCodeServer.url} --session ${sessionID}`
   const child = spawn("script", ["-qefc", commandLine, "/dev/null"], {
@@ -621,20 +534,7 @@ async function dumpFailureDiagnostics() {
 try {
   catalogServer = await startCatalogServer()
   const catalogRequests = catalogServer.requests
-  // Era-aware modelsDevUrl: a Core v8 dist fetches /catalog.json, while a
-  // v7-era dist fetches /api.json. Point the option at the catalog path; if
-  // the committed dist is still pre-catalog, the v7 fetcher will hit its
-  // compiled-in default instead — so serve BOTH paths and let the era pick.
-  const distCoreEra = (() => {
-    try {
-      const publication = readFileSync(path.join(root, "dist", "generated", "discovery-core", "core", "publication.js"), "utf8")
-      const match = /PUBLICATION_SCHEMA_VERSION\s*=\s*(\d+)/u.exec(publication)
-      return match ? Number(match[1]) : 7
-    } catch {
-      return 7
-    }
-  })()
-  // [REAL-HOST-E2E] Schema-8 LKG positive recovery needs a genuine models.dev
+  // [REAL-HOST-E2E] Schema-9 LKG positive recovery needs a genuine models.dev
   // outage that Core can SEE. The delivered dist keeps a 6h in-memory catalog
   // cache (production trigger: TTL expiry) and OpenCode 2.0.16 is a compiled
   // binary without any preload seam, so a tiny companion plugin — loaded by the
@@ -711,11 +611,14 @@ export default {
 
   const e2eConfig = {
     $schema: "https://opencode.ai/config.json",
+    // The fake service emits a plain reply, not OpenCode's required compaction
+    // template. Keep the request matrix on the real SDK conversational path.
+    compaction: { auto: false },
     plugins: [{
       package: packageSpec,
       options: {
         pollInterval: 30,
-        modelsDevUrl: distCoreEra >= 8 ? catalogServer.url : catalogServer.legacyUrl,
+        modelsDevUrl: catalogServer.url,
         endpoints: {
           default: { baseUrl: defaultMock.baseUrl },
           company: { baseUrl: companyMock.baseUrl },
@@ -1073,440 +976,162 @@ export default {
     return output
   }
 
-  // 1) Complete metadata registers; toggle reasoning registers with no levels.
-  const baselineReport = defaultAuditReport(await exportAudit())
-  const baselineIds = baselineReport.models.map((model) => model.id)
-  assert(baselineIds.includes("glm-5.3"), `toggle reasoning model must register: ${JSON.stringify(baselineIds)}`)
-  const glmRecord = baselineReport.models.find((model) => model.id === "glm-5.3")
-  assert.deepEqual(glmRecord.variants, [], "toggle reasoning must register with no selectable levels")
-  assert(baselineIds.includes("multi-endpoint-model"), `LiteLLM-only complete model must register: ${JSON.stringify(baselineIds)}`)
-  for (const blocked of ["invalid-fields", "gpt-5.5", "shared-route"]) {
-    assert(!baselineIds.includes(blocked), `${blocked} must never enter the host model list: ${JSON.stringify(baselineIds)}`)
+  // Frozen final registry/picker configuration, real model selection and SDK requests.
+  const controls = [
+    { model_name:"e2e-no-effort", model_info:{mode:"chat"} },
+    { model_name:"e2e-disabled", model_info:{mode:"chat"} },
+    { model_name:"e2e-messages", litellm_params:{model:"anthropic/e2e-messages"}, model_info:{mode:"chat"} },
+  ]
+  servedModels = [...frozenDiscovery.data, ...controls]
+  currentCatalog = structuredClone(baselineCatalog)
+  await resetCatalogCache()
+  const matrixReport = await waitForRefreshAfter(Date.now(),"the frozen 16-model matrix")
+  const matrixIDs = matrixReport.models.map(model=>model.id)
+  assert.equal(matrixIDs.length,19,"all frozen models and the three controls register")
+  const actualModels = payload(jsonOutput(api("GET","/api/model"),"model.list"))
+  assert(Array.isArray(actualModels),"real host registry returns Model.Info[] for the picker")
+  for(const expected of oracle.models) {
+    const actual=actualModels.find(model=>model.providerID==="litellm" && model.id===expected.id)
+    assert(actual,`frozen model is missing from host registry: ${expected.id}`)
+    assert.equal(actual.modelID,expected.id)
+    assert.equal(actual.name,expected.id)
+    assert.deepEqual(actual.limit,{input:0,...expected.limit})
+    assert.deepEqual(actual.capabilities,{tools:expected.tools,input:expected.input,output:expected.output})
+    assert.deepEqual(actual.variants.map(variant=>variant.id),expected.levels,`${expected.id}: no default variants`)
+    const audit=matrixReport.models.find(model=>model.id===expected.id)
+    assert.equal(audit.reasoningSupported,expected.reasoningSupported)
+    assert.equal(audit.metadata.canonicalID,expected.canonicalID)
+    assert.equal(audit.metadata.provider,expected.provider)
+    assert.equal(audit.metadata.recordKey,expected.recordKey)
+    assert.equal(audit.protocol,expected.protocol)
+    assert.deepEqual(actual.cost[0],{input:expected.cost.input??0,output:expected.cost.output??0,cache:{read:expected.cost.cache_read??0,write:expected.cost.cache_write??0}})
   }
-
-  // 2) There is no user confirmation path at all, and every withheld model stays
-  //    withheld with its own reason visible in diagnostics.
-  const afterRejections = defaultAuditReport(await exportAudit())
-  for (const rejected of ["gpt-5.5", "shared-route", "invalid-fields"]) {
-    assert(
-      !afterRejections.models.some((model) => model.id === rejected),
-      `withheld ${rejected} must never register`,
-    )
+  assert.deepEqual(actualModels.find(model=>model.providerID==="litellm"&&model.id==="e2e-no-effort").variants,[])
+  assert.deepEqual(actualModels.find(model=>model.providerID==="litellm"&&model.id==="e2e-disabled").variants,[])
+  // OpenCode 2.0.16 Model.Info has tools/modalities and variants, but no reasoning
+  // boolean. The adapter preserves the independent Core verdict in its audit view.
+  assert.equal(matrixReport.models.find(model=>model.id==="e2e-no-effort").reasoningSupported,"supported")
+  assert.equal(matrixReport.models.find(model=>model.id==="e2e-disabled").reasoningSupported,"unsupported")
+  const requestSession=payload(jsonOutput(api("POST","/api/session","--data",JSON.stringify({title:"metadata request matrix"})),"session.create")).id
+  let checkedRequests=0
+  const requestModel = async (id,variant,protocol) => {
+    const ref={id,providerID:"litellm",...(variant===undefined?{}:{variant})}
+    api("POST",`/api/session/${requestSession}/model`,"--data",JSON.stringify({model:ref}))
+    const selected=payload(jsonOutput(api("GET",`/api/session/${requestSession}`),"session.get"))
+    // The host normalizes an omitted selection to a neutral default marker;
+    // it does not add a Model.Info variant or a reasoning request parameter.
+    assert.deepEqual(selected.model,{...ref,variant:variant??"default"},"real session stores the selected model and declared variant")
+    const before=defaultMock.requests.length
+    const started=Date.now()
+    api("POST",`/api/session/${requestSession}/prompt`,"--data",JSON.stringify({text:"Reply ok. Do not call any tools."}))
+    let finished
+    for(let attempt=0;attempt<100;attempt++) {
+      await sleep(200)
+      const state=payload(jsonOutput(api("GET",`/api/session/${requestSession}`),"session.get"))
+      if(Date.parse(state.time?.idle??"")>=started || (typeof state.time?.idle==="number"&&state.time.idle>=started)){finished=state;break}
+    }
+    assert(finished,`${id}/${variant??"default"}: actual host turn did not finish`)
+    if(finished.outcome!=="succeeded") api("GET",`/api/session/${requestSession}/context`)
+    assert.equal(finished.outcome,"succeeded",`${id}/${variant??"default"}: SDK turn failed; session=${sanitize(JSON.stringify(finished))}; requests=${JSON.stringify(defaultMock.requests.slice(before).map(request=>({path:request.path,model:request.body.model,reasoning_effort:request.body.reasoning_effort,reasoning:request.body.reasoning,thinking:request.body.thinking})))}`)
+    const requests=defaultMock.requests.slice(before).filter(request=>request.body.model===id)
+    assert(requests.length>0,`${id}/${variant??"default"}: SDK never reached LiteLLM`)
+    for(const request of requests){
+      assert.equal(request.path,protocol==="responses"?"/v1/responses":protocol==="messages"?"/v1/messages":"/v1/chat/completions")
+      // OpenCode's native Responses SDK preserves initial effort for prompt
+      // caching and lowers later session changes as configuration_update items
+      // (effort-updates.js and openai-responses.js). Check the effective wire value.
+      const updates=protocol==="responses" ? request.body.input.filter(item=>item.type==="configuration_update") : []
+      const effort=protocol==="responses" && updates.length ? updates.at(-1).reasoning.effort : request.body.reasoning_effort??request.body.reasoning?.effort
+      if(protocol==="messages") { assert.equal(request.body.thinking?.type,"enabled");assert.equal(request.body.thinking?.budget_tokens,variant==="max"?64000:16000) }
+      else assert.equal(effort,variant,`${id}: exact requested reasoning effort`)
+      if(variant===undefined){assert.equal(request.body.thinking,undefined);assert.equal(request.body.reasoning,undefined);assert.equal(request.body.reasoning_effort,undefined)}
+      checkedRequests++
+    }
   }
-  const rejectionDiagnostics = await diagnosticsThroughTui(/withheld[\s：:]*invalid-fields/u, "the withheld reasons")
-  assert(/withheld[\s：:]*shared-route/u.test(rejectionDiagnostics), `ambiguous group must stay withheld: ${rejectionDiagnostics}`)
-  assert(/withheld[\s：:]*gpt-5\.5/u.test(rejectionDiagnostics), `conflicting group must stay withheld: ${rejectionDiagnostics}`)
-  assert(
-    /withheld/u.test(rejectionDiagnostics),
-    `partial availability must state the withheld section: ${rejectionDiagnostics}`,
-  )
+  for(const expected of oracle.models) {
+    if(expected.levels.length===0) await requestModel(expected.id,undefined,expected.protocol)
+    else for(const level of expected.levels) await requestModel(expected.id,level,expected.protocol)
+  }
+  await requestModel("e2e-no-effort",undefined,"chat")
+  await requestModel("e2e-disabled",undefined,"chat")
+  for(const level of ["high","max"])await requestModel("e2e-messages",level,"messages")
+  console.log(`Real OpenCode metadata priority: 16/16 final registrations and picker lists; ${checkedRequests} actual Chat/Responses/Messages requests passed`)
 
-  // 3) A previously configured model's capability declarations change. Under
-  //    the frozen schema-8 semantics the stored LKG entry's LiteLLM fingerprint
-  //    no longer matches, so the whole entry fails closed: the model is
-  //    withdrawn and the operator must fix the declarations — never silently
-  //    substituted by a stale snapshot.
-  const strippedCapabilities = (entry) => ({
-    model_name: entry.model_name,
-    litellm_params: entry.litellm_params,
-    model_info: {
-      mode: entry.model_info.mode,
-      ...(entry.model_info.supported_endpoints ? { supported_endpoints: entry.model_info.supported_endpoints } : {}),
-      max_input_tokens: entry.model_info.max_input_tokens,
-      max_output_tokens: entry.model_info.max_output_tokens,
-    },
-  })
-  servedModels = servedFixture.data.map((entry) =>
-    entry.model_name === "multi-endpoint-model" ? strippedCapabilities(entry) : entry)
-  const failClosedReport = await waitForRefreshAfter(Date.now(), "the fail-closed declaration change")
-  assert(
-    !failClosedReport.models.some((model) => model.id === "multi-endpoint-model"),
-    `a changed declaration set must fail closed even with a stored LKG entry: ${JSON.stringify(failClosedReport.models.map((m) => m.id))}`,
-  )
-  assert(
-    !hostModels().includes("litellm/multi-endpoint-model"),
-    "the fail-closed model must leave the host CLI model list",
-  )
-  const failClosedDiagnostics = await diagnosticsThroughTui(
-    /Endpoint[\s：:]+default/u,
-    "the fail-closed declaration change",
-  )
-  assert(
-    /withheld[s：:]*multi-endpoint-model/u.test(failClosedDiagnostics),
-    `the withdrawn model must stay visible as withheld: ${failClosedDiagnostics}`,
-  )
-  assert(
-    !/使用已信任的前次完整配置（LKG）：multi-endpoint-model/u.test(failClosedDiagnostics),
-    `a changed declaration set must not be silently substituted from LKG: ${failClosedDiagnostics}`,
-  )
-  // Restore the declarations: the same identity re-publishes freshly.
-  servedModels = servedFixture.data
-  const restoredReport = await waitForRefreshAfter(Date.now(), "the declaration restoration")
-  assert(
-    restoredReport.models.some((model) => model.id === "multi-endpoint-model"),
-    "restored declarations must re-publish the model",
-  )
-  const restoredDeclarationDiagnostics = await diagnosticsThroughTui(
-    /Endpoint[\s：:]+default/u,
-    "the declaration restoration",
-  )
-  assert(
-    !/使用已信任的前次完整配置（LKG）：multi-endpoint-model/u.test(restoredDeclarationDiagnostics),
-    `restoration must be a fresh configuration, not LKG: ${restoredDeclarationDiagnostics}`,
-  )
+  // Prices do not withdraw or cap models, even with otherwise higher-priority data.
+  for(const provider of Object.values(currentCatalog.providers))for(const record of Object.values(provider.models))record.cost={input:-1,output:"bad"}
+  await resetCatalogCache()
+  const zeroPrice=await waitForRefreshAfter(Date.now(),"the price-only error")
+  assert.equal(zeroPrice.models.length,19)
+  for(const model of zeroPrice.models)assert.deepEqual(model.cost[0],{input:0,output:0,cache:{read:0,write:0}})
+  assert.deepEqual(publicationState().regressions,[])
+  for(const expected of oracle.models)assert.deepEqual(zeroPrice.models.find(model=>model.id===expected.id).limit,{input:0,...expected.limit})
 
-  // 4) A withheld model that becomes complete again is published automatically:
-  //    no user approval, no stored acceptance, no confirmation step.
-  const recoveryStartedAt = Date.now()
-  declare("minimax-m3", { supports_reasoning: true })
-  const recoveredWithheld = await waitForRefreshAfter(recoveryStartedAt, "the automatic recovery")
-  assert(
-    recoveredWithheld.models.some((model) => model.id === "minimax-m3"),
-    `the recovered model must register automatically: ${JSON.stringify(recoveredWithheld.models.map((m) => m.id))}`,
-  )
-  assert(
-    hostModels().includes("litellm/minimax-m3"),
-    "the recovered model must be visible in the host CLI model list",
-  )
-  const recoveryDiagnostics = await diagnosticsThroughTui(
-    /发现 \d+ · 可用 \d+ · withheld \d+/u,
-    "the recovered publication partition",
-  )
-  assert(
-    !/withheld[\s：:]*minimax-m3/u.test(recoveryDiagnostics),
-    `a recovered model must leave the withheld list: ${recoveryDiagnostics}`,
-  )
-  assert(
-    !/降级/u.test(recoveryDiagnostics),
-    `the degraded vocabulary must be gone from diagnostics: ${recoveryDiagnostics}`,
-  )
+  // Catalog outage + internal route/deployment changes preserve model_name LKG.
+  servedModels=[...frozenDiscovery.data.map(row=>({...row,litellm_params:{model:"private/changed"}})),...controls]
+  const failuresBefore=catalogServer.failures()
+  catalogServer.setOutage(true);await resetCatalogCache()
+  const lkg=await waitForPublicationState(state=>state.lkgIDs.length===19,"the genuine catalog outage")
+  assert(catalogServer.failures()>failuresBefore,"the live catalog really failed after cache invalidation")
+  assert.equal(lkg.publishable.length,19)
+  const lkgReport=await waitForRefreshAfter(Date.now(),"the catalog outage configuration")
+  assert.deepEqual(lkgReport.models.map(model=>({id:model.id,limit:model.limit,variants:model.variants})),zeroPrice.models.map(model=>({id:model.id,limit:model.limit,variants:model.variants})))
+  await diagnosticsThroughTui(/LKG 19/u,"LKG metadata summary")
+  catalogServer.setOutage(false);currentCatalog=structuredClone(baselineCatalog);await resetCatalogCache()
+  await waitForPublicationState(state=>state.publishable.length===19&&state.lkgIDs.length===0,"fresh recovery")
 
-  // 4b) Acknowledgement persistence across a real host restart. Suppression is
-  //     observable through diagnostics; the problem set itself stays visible.
-  const unusableModels = () =>
-    ["gap-a", "gap-b"].map((model_name) => ({
-      model_name,
-      litellm_params: { model: `custom/${model_name}` },
-      model_info: { mode: "chat" },
-    }))
+  // A successful live deletion wins over cached models.
+  servedModels=[]
+  const empty=await waitForRefreshAfter(Date.now(),"successful empty LiteLLM catalog")
+  assert.deepEqual(empty.models,[])
+  assert(!hostModels().includes("litellm/"),"deleted models must leave host registry")
 
-  servedModels = unusableModels()
-  await waitForRefreshAfter(Date.now(), "the unusable catalog state")
-  await diagnosticsThroughTui(/catalog 当前不可用/u, "the unusable catalog state")
+  // Missing/illegal critical metadata stays withheld; repairing its API record
+  // publishes automatically, without new acceptance or provider configuration.
+  servedModels=servedFixture.data
+  await resetCatalogCache()
+  const partial=await waitForRefreshAfter(Date.now(),"the partial lifecycle catalog")
+  assert(partial.models.length>0)
+  assert(!partial.models.some(model=>model.id==="invalid-fields"))
+  assert(!partial.models.some(model=>model.id==="minimax-m3"))
+  await diagnosticsThroughTui(/withheld[\s：:]*invalid-fields/u,"critical field withholding")
+  currentCatalog.providers.e2e.models["minimax-m3"].reasoning=false
+  await resetCatalogCache()
+  const repaired=await waitForRefreshAfter(Date.now(),"selected API record repair")
+  assert(repaired.models.some(model=>model.id==="minimax-m3"),"complete metadata registers without user acceptance")
 
-  // Restart the real host: a new plugin process restores the persisted memory.
-  openCodeServer.child.kill()
-  await sleep(1500)
-  openCodeServer = await startOpenCodeServer()
-  env.OPENCODE_PASSWORD = openCodeServer.password
-  await waitForRefreshAfter(Date.now(), "the post-restart discovery round")
-  // The suppression state is rendered in the same diagnostics card as the
-  // problem set, so assert both from one rendered snapshot.
-  const restoredDiagnostics = await diagnosticsThroughTui(
-    /catalog 当前不可用/u,
-    "the unusable catalog after restart",
-  )
-  assert(
-    /提醒状态：该问题集合已确认/u.test(restoredDiagnostics),
-    `the restored acknowledgement must suppress a repeated notice: ${restoredDiagnostics}`,
-  )
-  assert(/withheld[s：:]*gap-a/u.test(restoredDiagnostics), `the withheld reasons must survive the restart: ${restoredDiagnostics}`)
-  assert(/withheld[s：:]*gap-b/u.test(restoredDiagnostics), `the withheld reasons must survive the restart: ${restoredDiagnostics}`)
-
-  // Material change after the restart is surfaced again (no suppression line).
-  servedModels = [...unusableModels(), {
-    model_name: "gap-c",
-    litellm_params: { model: "custom/gap-c" },
-    model_info: { mode: "chat" },
-  }]
-  await waitForRefreshAfter(Date.now(), "the grown problem set")
-  const grownDiagnostics = await diagnosticsThroughTui(/withheld[s：:]*gap-c/u, "the grown problem set")
-  assert(
-    !/提醒状态：该问题集合已确认/u.test(grownDiagnostics),
-    `a materially bigger problem set must not stay suppressed: ${grownDiagnostics}`,
-  )
+  // Existing notification memory must survive a real host restart.
+  const unusableModels=()=>["gap-a","gap-b"].map(model_name=>({model_name,model_info:{mode:"chat"}}))
+  servedModels=unusableModels()
+  await waitForRefreshAfter(Date.now(),"the unusable catalog")
+  await diagnosticsThroughTui(/catalog 当前不可用/u,"unusable catalog diagnostics")
+  openCodeServer.child.kill();await sleep(1500)
+  openCodeServer=await startOpenCodeServer();env.OPENCODE_PASSWORD=openCodeServer.password
+  await waitForRefreshAfter(Date.now(),"post-restart discovery")
+  const restarted=await diagnosticsThroughTui(/catalog 当前不可用/u,"persisted notification acknowledgement")
+  assert(/提醒状态：该问题集合已确认/u.test(restarted),"same problem set stays quiet across restart")
+  servedModels=[...unusableModels(),{model_name:"gap-c",model_info:{mode:"chat"}}]
+  await waitForRefreshAfter(Date.now(),"the changed problem set")
+  const changed=await diagnosticsThroughTui(/withheld[\s：:]*gap-c/u,"new missing model")
+  assert(!/提醒状态：该问题集合已确认/u.test(changed),"material change is reported again")
   console.log("[ack persistence] surfaced -> restarted suppressed -> material change re-surfaced")
 
-  // 4c) Canonical identity change. Same visible model id, a different trusted
-  //     identity: the old snapshot must not carry over, and incomplete metadata
-  //     for the new identity must withdraw the model.
-  const codingModel = (provider, complete) => [{
-    model_name: "coding-model",
-    litellm_params: { model: `${provider}/coding-model` },
-    model_info: {
-      mode: "chat",
-      models_dev_provider: provider,
-      ...(complete
-        ? {
-          max_input_tokens: 200_000,
-          max_output_tokens: 64_000,
-          supports_function_calling: true,
-          supports_reasoning: false,
-          supports_vision: false,
-          supports_pdf_input: false,
-          supports_audio_input: false,
-          supports_video_input: false,
-          supports_audio_output: false,
-        }
-        : {}),
-    },
-  }]
-
-  servedModels = codingModel("vendora", true)
-  const identityStartedAt = Date.now()
-  const identityAPublication = await waitForRefreshAfter(identityStartedAt, "identity A publication")
-  assert(
-    identityAPublication.models.some((model) => model.id === "coding-model"),
-    `the model must publish under identity A: ${JSON.stringify(identityAPublication.models.map((m) => m.id))}`,
-  )
-  assert(hostModels().includes("litellm/coding-model"), "identity A must be visible in the host model list")
-  const identityADiagnostics = await diagnosticsThroughTui(
-    /Endpoint[\s：:]+default/u,
-    "the identity A publication",
-  )
-  assert(
-    !/withheld[\s：:]*coding-model/u.test(identityADiagnostics),
-    `identity A must not be withheld: ${identityADiagnostics}`,
-  )
-  assert(
-    !/使用已信任的前次完整配置（LKG）：coding-model/u.test(identityADiagnostics),
-    "identity A must be configured from fresh evidence",
-  )
-
-  // The trusted identity changes while the visible id stays the same, and the
-  // rebuilt metadata is incomplete.
-  servedModels = codingModel("vendorb", false)
-  const identityBPublication = await waitForRefreshAfter(Date.now(), "identity B publication")
-  assert(
-    !identityBPublication.models.some((model) => model.id === "coding-model"),
-    `the old snapshot must not carry the model across identities: ${JSON.stringify(identityBPublication.models.map((m) => m.id))}`,
-  )
-  assert(!hostModels().includes("litellm/coding-model"), "the withdrawn model must leave the host model list")
-  const identityBDiagnostics = await diagnosticsThroughTui(
-    /withheld[\s：:]*coding-model/u,
-    "the identity-change withholding",
-  )
-  assert(
-    /withheld[\s：:]*coding-model · discovered-incomplete/u.test(identityBDiagnostics),
-    `the identity change must withhold the model with its reason: ${identityBDiagnostics}`,
-  )
-  assert(
-    /此前可用、现已撤下：coding-model/u.test(identityBDiagnostics),
-    `the identity change must be reported as a regression: ${identityBDiagnostics}`,
-  )
-  assert(
-    !/使用已信任的前次完整配置（LKG）：coding-model/u.test(identityBDiagnostics),
-    `the identity A snapshot must not be reused for identity B: ${identityBDiagnostics}`,
-  )
-  console.log("[identity change] identity A published -> identity B withheld, old LKG not reused")
-
-  // 4d) Resolved discrepancy: LiteLLM descriptive metadata differs from the
-  //     authoritative models.dev intrinsic facts, and the deployment declares no
-  //     runtime constraint, so Core selects the authoritative values and keeps
-  //     the model publishable.
-  servedModels = [{
-    model_name: "e2e-discrepancy-model",
-    litellm_params: { model: "resolved/e2e-discrepancy-model" },
-    model_info: {
-      mode: "chat",
-      models_dev_provider: "resolved",
-      max_input_tokens: 400_000,
-      max_output_tokens: 131_072,
-      supports_function_calling: true,
-      supports_reasoning: false,
-      supports_vision: true,
-      supports_pdf_input: false,
-      supports_audio_input: true,
-      supports_video_input: false,
-      supports_audio_output: false,
-    },
-  }]
-  const discrepancyPublication = await waitForRefreshAfter(Date.now(), "the resolved discrepancy")
-  const discrepancyModel = discrepancyPublication.models.find((model) => model.id === "e2e-discrepancy-model")
-  assert(discrepancyModel, `the discrepancy model must be published: ${JSON.stringify(discrepancyPublication.models.map((m) => m.id))}`)
-  assert.equal(
-    discrepancyModel.limit.output,
-    512_000,
-    `the authoritative intrinsic output must be selected: ${JSON.stringify(discrepancyModel.limit)}`,
-  )
-  assert(
-    !discrepancyModel.capabilities.input.includes("audio"),
-    `the authoritative modality set must win: ${JSON.stringify(discrepancyModel.capabilities.input)}`,
-  )
-  assert(hostModels().includes("litellm/e2e-discrepancy-model"), "the discrepancy model must be visible in /models")
-  const discrepancyDiagnostics = await diagnosticsThroughTui(
-    /已裁决差异/u,
-    "the resolved discrepancy",
-  )
-  assert(
-    !/withheld[\s：:]*e2e-discrepancy-model/u.test(discrepancyDiagnostics),
-    `a resolved discrepancy must not withhold the model: ${discrepancyDiagnostics}`,
-  )
-  assert(
-    /e2e-discrepancy-model/u.test(discrepancyDiagnostics),
-    `diagnostics must name the model whose value was decided by authority: ${discrepancyDiagnostics}`,
-  )
-  assert(
-    !/未决冲突[\s：:]*e2e-discrepancy-model/u.test(discrepancyDiagnostics),
-    `a decidable difference must not be reported as an unresolved conflict: ${discrepancyDiagnostics}`,
-  )
-  assert(
-    !/invalid-metadata|discovered-incomplete[^+]*e2e-discrepancy-model/u.test(discrepancyDiagnostics),
-    `a resolved discrepancy must not be reported as incomplete or invalid: ${discrepancyDiagnostics}`,
-  )
-  assert(
-    catalogRequests() > 0,
-    "the real host must have fetched the configured deterministic models.dev catalog",
-  )
-  console.log("[resolved discrepancy] descriptive LiteLLM metadata resolved by authoritative models.dev facts")
-
-  servedModels = servedFixture.data
-
-  servedModels = servedFixture.data
-  await waitForRefreshAfter(Date.now(), "the restored fixture catalog")
-
-  // 5) A real metadata outage is reported, never hidden.
-  mockFailStatus = 500
-  await waitForAuditStatus("stale", "the metadata failure")
-  const failureDiagnostics = await diagnosticsThroughTui(/状态[\s：:]*使用\s*last-known-good/u, "the metadata failure")
-  assert(/failures=[1-9]\d*/u.test(failureDiagnostics), `failure counter must be visible: ${failureDiagnostics}`)
-  assert(
-    /下次允许重试/u.test(failureDiagnostics) || /刷新失败/u.test(failureDiagnostics),
-    `retry state must be visible: ${failureDiagnostics}`,
-  )
-  assert(hostModels().includes("litellm/multi-endpoint-model"), "the outage must keep the last good model list")
-
-  // 6) Retry recovery returns the endpoint to a normally configured state.
-  mockFailStatus = 0
-  const recoveredReport = await waitForAuditStatus("ready", "the retry recovery")
-  assert(recoveredReport.models.length > 0, "recovery must republish models")
-  await diagnosticsThroughTui(/状态[\s：:]*正常/u, "the retry recovery")
-
-  // 7) Schema-8 LKG positive recovery through the real host. A fully trusted
-  //    model publishes fresh (`configured`) and is captured as a schema-8 LKG
-  //    entry derived from the SAME resolution that passed the gate. Then the
-  //    models.dev catalog goes down FOR REAL (HTTP 500 from the deterministic
-  //    source) with the 6h catalog cache genuinely invalidated, so Core
-  //    re-fetches, loses the live source and substitutes the captured entry:
-  //    the model keeps registering with publication status `configured-lkg`
-  //    and `usingLKG=true` (projected into `lkgIDs`). The LiteLLM deployment
-  //    identity, the declarations and the LKG proof stay unchanged across the
-  //    outage — only the catalog availability changes. Restoring the catalog
-  //    re-proves the same configuration freshly: `configured` again, no LKG.
-  //    Nothing here checks a host stale snapshot, an un-cleared model list or
-  //    a mocked Core return value: every verdict comes from Core running in
-  //    the installed dist of the real OpenCode 2.0.16 host.
-  assert(distCoreEra >= 8, `the schema-8 LKG scenario requires a Core v8+ dist, got era ${distCoreEra}`)
-  const lkgRecoveryModel = {
-    model_name: "lkg-recovery-model",
-    // custom_llm_provider makes the wire id parse to its bare lookup key, so
-    // the provider record resolves the SKU and the LKG provenance names it.
-    litellm_params: { model: "vendora/lkg-recovery-model", custom_llm_provider: "vendora" },
-    // Limits-only declarations: the gated capability dimensions come from the
-    // canonical registry entry, so completeness requires the live catalog.
-    model_info: {
-      mode: "chat",
-      models_dev_provider: "vendora",
-      max_input_tokens: 200_000,
-      max_output_tokens: 64_000,
-    },
-  }
-  servedModels = [lkgRecoveryModel]
-  const captureStartedAt = Date.now()
-  const captureReport = await waitForRefreshAfter(captureStartedAt, "the schema-8 LKG capture round")
-  assert(
-    captureReport.models.some((model) => model.id === "lkg-recovery-model"),
-    `the complete trusted model must publish in the capture round: ${JSON.stringify(captureReport.models.map((m) => m.id))}`,
-  )
-  assert(hostModels().includes("litellm/lkg-recovery-model"), "the capture round must register the model in the real host")
-  const captureState = await waitForPublicationState(
-    (state) => state.publishable.some((model) => model.id === "lkg-recovery-model" && model.status === "configured"),
-    "the fresh configured capture",
-  )
-  assert(
-    !captureState.lkgIDs.includes("lkg-recovery-model"),
-    `the capture round must configure from fresh evidence: ${JSON.stringify(captureState)}`,
-  )
-  const captureDiagnostics = await diagnosticsThroughTui(
-    /发现 \d+ · 可用 1 · withheld 0 · LKG 0/u,
-    "the capture partition",
-  )
-  assert(
-    !/使用已信任的前次完整配置（LKG）/u.test(cardText(captureDiagnostics)),
-    `the capture round must not use LKG: ${captureDiagnostics}`,
-  )
-
-  // Real outage + cache invalidation. The failure counter below is the proof
-  // that the 6h cache did NOT mask the outage: with a warm cache the round
-  // would never touch the catalog source at all, and Core could not enter the
-  // LKG recovery path.
-  const outageStartedAt = Date.now()
-  const catalogFailuresBefore = catalogServer.failures()
-  assert(catalogServer.requests() > 0, "the capture round must have fetched the catalog live")
-  catalogServer.setOutage(true)
-  await resetCatalogCache()
-  const lkgState = await waitForPublicationState(
-    (state) => state.publishable.some((model) => model.id === "lkg-recovery-model" && model.status === "configured-lkg"),
-    "the schema-8 LKG recovery round",
-  )
-  assert(
-    lkgState.lkgIDs.includes("lkg-recovery-model"),
-    `usingLKG=true must project into lkgIDs: ${JSON.stringify(lkgState)}`,
-  )
-  assert(
-    catalogServer.failures() > catalogFailuresBefore,
-    "the outage round never re-fetched the catalog: the 6h cache masked the outage instead of Core entering the LKG path",
-  )
-  const lkgDetail = String(lkgState.lkgDetail ?? "")
-  assert.match(lkgDetail, /LKG originally fetched at /u, `the LKG source time must be visible: ${lkgDetail}`)
-  assert.match(lkgDetail, /via provider vendora -> model lkg-recovery-model/u, `the LKG source must be named: ${lkgDetail}`)
-  assert.match(lkgDetail, /live unavailable/u, `the LKG detail must state the live unavailability: ${lkgDetail}`)
-  const lkgFetchedAt = Date.parse(/LKG originally fetched at (\S+)/u.exec(lkgDetail)?.[1] ?? "")
-  assert(
-    Number.isFinite(lkgFetchedAt) && lkgFetchedAt >= captureStartedAt - 1_000 && lkgFetchedAt <= outageStartedAt + 30_000,
-    `the LKG entry must be the one captured in this round window: ${lkgDetail}`,
-  )
-  assert(
-    hostModels().includes("litellm/lkg-recovery-model"),
-    "the LKG-backed model must keep registering in the real host during the outage",
-  )
-  const lkgDiagnostics = await diagnosticsThroughTui(
-    /LKG 说明[\s：:]/u,
-    "the trusted LKG substitution",
-  )
-  const lkgCard = cardText(lkgDiagnostics)
-  assert(/使用已信任的前次完整配置（LKG）[\s：:]*lkg-recovery-model/u.test(lkgCard), `the LKG model must be named in diagnostics: ${lkgDiagnostics}`)
-  assert(/发现1·可用1·withheld0·LKG1/u.test(lkgCard), `the LKG partition must be visible: ${lkgDiagnostics}`)
-  assert(/viaprovidervendora->modellkg-recovery-model/u.test(lkgCard), `the LKG source must reach the diagnostics card: ${lkgDiagnostics}`)
-  assert(/liveunavailable/u.test(lkgCard), `the live-unavailable reason must reach the diagnostics card: ${lkgDiagnostics}`)
-  console.log("[schema-8 LKG] configured -> real catalog outage (cache genuinely re-fetched) -> configured-lkg (usingLKG) -> configured again")
-
-  // Restore the catalog: the next live round re-proves the same configuration
-  // from fresh evidence — no LKG label, no stale substitution.
-  catalogServer.setOutage(false)
-  await resetCatalogCache()
-  const recoveredLkgState = await waitForPublicationState(
-    (state) => state.publishable.some((model) => model.id === "lkg-recovery-model" && model.status === "configured"),
-    "the post-outage re-proof",
-  )
-  assert(
-    !recoveredLkgState.lkgIDs.includes("lkg-recovery-model"),
-    `recovery must stop using LKG: ${JSON.stringify(recoveredLkgState)}`,
-  )
-  const recoveredLkgDiagnostics = await diagnosticsThroughTui(
-    /发现 \d+ · 可用 1 · withheld 0 · LKG 0/u,
-    "the recovered publication partition",
-  )
-  assert(
-    !/使用已信任的前次完整配置（LKG）/u.test(cardText(recoveredLkgDiagnostics)),
-    `the recovered model must be freshly configured, not served from LKG: ${recoveredLkgDiagnostics}`,
-  )
-
-  servedModels = servedFixture.data
-  mockFailStatus = 0
-  console.log(
-    "Real OpenCode publication E2E passed: partial catalog, withheld reasons, fail-closed declaration change with fresh recovery, no confirmation path and metadata-failure diagnostics are verified through the real host.",
-  )
+  // Network failures retain last successful models; auth errors clear them.
+  servedModels=servedFixture.data
+  await waitForRefreshAfter(Date.now(),"network recovery baseline")
+  mockFailStatus=500
+  const networkStaleAudit = await waitForAuditStatus("stale","the network failure")
+  assert(networkStaleAudit.source === "stale", "network-failure audit source must agree with diagnostics stale cache")
+  assert(hostModels().includes("litellm/multi-endpoint-model"),"network failure retains last good models")
+  mockFailStatus=0
+  await waitForAuditStatus("ready","network recovery")
+  const previousKey=defaultMock.keys.expected
+  defaultMock.keys.expected="sk-injected-auth-failure"
+  await waitForAuditStatus("cleared-auth","authentication failure")
+  assert(!hostModels().includes("litellm/"),"authentication failure removes default endpoint models")
+  defaultMock.keys.expected=previousKey
+  await waitForAuditStatus("ready","authentication recovery")
+  currentCatalog=structuredClone(baselineCatalog)
+  console.log("Real OpenCode publication E2E passed: prices, critical metadata, route-independent LKG, recovery, deletion, network/auth and notification restart persistence verified")
 
   // ===== Phase 2: Endpoint Management UX over the real TUI (file-declared options, real PTY keys) =====
   await stopAttachedTui(tui).catch(() => {})
@@ -1528,7 +1153,7 @@ export default {
       "package": "${packageSpec}",
       "options": {
         "pollInterval": 30,
-        "modelsDevUrl": ${JSON.stringify(distCoreEra >= 8 ? catalogServer.url : catalogServer.legacyUrl)},
+        "modelsDevUrl": ${JSON.stringify(catalogServer.url)},
         "futureOption": { "keep": ["me"] },
         "endpoints": {
           // the company endpoint is untouched by this test
@@ -1765,7 +1390,7 @@ export default {
       "package": "${packageSpec}",
       "options": {
         "pollInterval": 30,
-        "modelsDevUrl": ${JSON.stringify(distCoreEra >= 8 ? catalogServer.url : catalogServer.legacyUrl)},
+        "modelsDevUrl": ${JSON.stringify(catalogServer.url)},
         "futureOption": { "keep": ["legacy"] },
         "protocolOverrides": { "demo-model": "chat" }
       }
@@ -1929,7 +1554,7 @@ export default {
       "package": "${packageSpec}",
       "options": {
         "pollInterval": 30,
-        "modelsDevUrl": ${JSON.stringify(distCoreEra >= 8 ? catalogServer.url : catalogServer.legacyUrl)}
+        "modelsDevUrl": ${JSON.stringify(catalogServer.url)}
       }
     }
   ]
@@ -2004,7 +1629,7 @@ export default {
   await stopAttachedTui(tg2)
   console.log("Real OpenCode 2.0.16 ghostless legacy E2E passed: Add starts inactive and no stale default activation")
 
-  console.log("Real OpenCode 2.0.16 E2E passed: startup recovery, native keyboard activation, endpoint-scoped diagnostics, credentials, providers, models and schema-8 LKG recovery (configured -> configured-lkg -> configured) are verified.")
+  console.log("Real OpenCode 2.0.16 E2E passed: startup recovery, native keyboard activation, endpoint-scoped diagnostics, credentials, providers, models and schema-9 LKG recovery (configured -> configured-lkg -> configured) are verified.")
 } catch (error) {
   await dumpFailureDiagnostics()
   throw error
