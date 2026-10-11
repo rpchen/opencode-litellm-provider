@@ -102,4 +102,4 @@
 
 ## restore-model-metadata-priority 实施（2026-10-11）
 
-Core #34 squash merge SHA cf797e953eb1f6de8e7c3e0fd5e98094398c26f9；Pi #55 与本仓库 #63 固定同一 SHA。以16项冻结 fixture 验收实际注册/选择/请求，不验证 serving provider；复用原协议、endpoint、凭据、activation与缓存入口，publication9/snapshot2 经成功发现迁移。Model.Info无 reasoning 布尔字段，保留 Core 判定于审计视图，与 variants 分开；不为 SDK 创造未声明档位。本PR仅代码Review，合并/发版另行授权。
+Core #34 squash merge SHA cf797e953eb1f6de8e7c3e0fd5e98094398c26f9；Pi #55 与本仓库 #63 固定同一 SHA。以16项冻结 fixture 验收实际注册/选择/请求，不验证 serving provider；复用原协议、endpoint、凭据、activation与缓存入口，publication9/snapshot2 经成功发现迁移。Model.Info无 reasoning 布尔字段，保留 Core 判定于审计视图，与 variants 分开；不为 SDK 创造未声明档位。OpenCode PR #63 于 2026-10-11 合并（merge SHA `d205122d07f90493be6682f9053f0c1c3b5a3780`），CI 与 Real OpenCode 2.0.16 E2E 均通过。`v0.10.1` 已发布，tag SHA `205299b6b152c46de92174dd7d6cd5a05919a244` 与当前 main 一致，main CI、索引发布和 Release workflow 均成功。

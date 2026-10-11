@@ -65,7 +65,6 @@ opencode plugin add github:rpchen/opencode-litellm-provider#v0.10.1
       "package": "github:rpchen/opencode-litellm-provider",
       "options": {
         "pollInterval": 300,
-        "contextTierCap": true,
         "endpoints": {
           "default": {
             "baseUrl": "https://personal.example",
@@ -152,7 +151,7 @@ endpoint id 是用户定义的稳定 ASCII slug，必须匹配 `[a-z0-9][a-z0-9-
 - 新增/修改/删除后插件会重新加载 endpoint，各 endpoint 的模型会短暂重新注册。
 - 旧的单 endpoint 用法（`/connect` 时填写地址）不在配置文件里：`default` 依然完整可管理——修改/替换 Key 前会先请你确认一次内部迁移，把现有地址迁移到 `options.endpoints.default`（integration、Key 不变，发现缓存重新生成）；删除则把迁移包含在最终删除确认里（确认后先迁移再立即删除），**取消删除不留任何改动**。新增第二个 endpoint 会先请你确认，再做同样的迁移。
 - 通过管理中心新增 endpoint 后，启用状态会固定为“明确选择的集合”；之后手工写进文件的新 endpoint 需要在管理中心里启用。
-- 仍需手工编辑配置文件：`protocolOverrides`、`pollInterval`、`contextTierCap`。endpoint ID 创建后不能直接改名；要换名请新增新 endpoint 并删除旧的。
+- 仍需手工编辑配置文件：`protocolOverrides`、`pollInterval`。endpoint ID 创建后不能直接改名；要换名请新增新 endpoint 并删除旧的。
 - 管理中心依赖终端 TUI；Desktop / Web 不加载 TUI 插件，请用配置文件和 `/connect`。
 
 停用会立即卸载该 endpoint 的运行时 provider/discovery loop，但保留配置、OpenCode 凭据和缓存；activation 是全局插件状态，默认全部启用。
@@ -298,7 +297,6 @@ Core Commit      cf797e95
 | 选项 | 默认值 | 说明 |
 |---|---:|---|
 | `pollInterval` | `300` | 模型发现轮询间隔，单位秒；最小 30 |
-| `contextTierCap` | `true` | 兼容接受但忽略；价格不再截断限制 |
 | `protocolOverrides` | `{}` | legacy 单 endpoint 模式按 LiteLLM `model_name` 覆盖协议；显式模式放到各 endpoint 内 |
 | `endpoints` | 未设置 | 启用显式多 endpoint 模式；对象 key 为 endpoint id，每项至少包含 `baseUrl` |
 | `conversationFeedback` | `false` | 为 audit export 向会话提交反馈；开启后会触发一次会话/模型处理 |
@@ -313,7 +311,6 @@ Core Commit      cf797e95
       "package": "github:rpchen/opencode-litellm-provider",
       "options": {
         "pollInterval": 120,
-        "contextTierCap": true,
         "protocolOverrides": {
           "glm-5.3": "chat",
           "gpt-5.5": "responses",
