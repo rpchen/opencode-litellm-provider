@@ -1083,6 +1083,11 @@ export default {
   assert.deepEqual(lkgReport.models.map(model=>({id:model.id,limit:model.limit,variants:model.variants})),zeroPrice.models.map(model=>({id:model.id,limit:model.limit,variants:model.variants})))
   await diagnosticsThroughTui(/LKG 19/u,"LKG metadata summary")
   catalogServer.setOutage(false);currentCatalog=structuredClone(baselineCatalog);await resetCatalogCache()
+  const recoveryModels=[...servedModels]
+  servedModels=recoveryModels.filter(row=>row.model_name!=="e2e-default-responses")
+  await waitForRefreshAfter(Date.now(),"successful model deletion before fresh LKG recovery")
+  servedModels=recoveryModels
+  await waitForRefreshAfter(Date.now(),"successful model re-add after catalog recovery")
   await waitForPublicationState(state=>state.publishable.length===19&&state.lkgIDs.length===0,"fresh recovery")
 
   // A successful live deletion wins over cached models.
