@@ -1067,28 +1067,20 @@ export default {
   assert.deepEqual(publicationState().regressions,[])
   for(const expected of oracle.models)assert.deepEqual(zeroPrice.models.find(model=>model.id===expected.id).limit,{input:0,...expected.limit})
 
-  // Delete and re-add one identity so the outage exercises the existing LKG path
-  // through the new-model demand trigger instead of a time-based refresh.
-  const lkgSeedModels=[...servedModels]
-  servedModels=lkgSeedModels.filter(row=>row.model_name!=="e2e-default-responses")
-  await waitForRefreshAfter(Date.now(),"successful model deletion before LKG re-add")
-  assert(!hostModels().includes("litellm/e2e-default-responses"),"deleted model must leave host registry before LKG re-add")
-  servedModels=lkgSeedModels.map(row=>row.model_name==="e2e-default-responses"?{...row,litellm_params:{model:"private/changed"}}:row)
+  // A stable model_name set reuses the registered configuration even when the
+  // internal route changes and the catalog endpoint is unavailable. No catalog
+  // request is expected here; LKG remains available for the existing network
+  // failure path below.
+  servedModels=servedModels.map(row=>({...row,litellm_params:{model:"private/changed"}}))
   const failuresBefore=catalogServer.failures()
   catalogServer.setOutage(true);await resetCatalogCache()
-  const lkg=await waitForPublicationState(state=>state.lkgIDs.length===19,"the genuine catalog outage")
-  assert(catalogServer.failures()>failuresBefore,"the live catalog really failed after cache invalidation")
-  assert.equal(lkg.publishable.length,19)
+  const unchanged=await waitForPublicationState(state=>state.publishable.length===19&&state.lkgIDs.length===0,"the unchanged model_name set")
+  assert.equal(catalogServer.failures(),failuresBefore,"unchanged model_name set must not fetch catalog")
+  assert.equal(unchanged.publishable.length,19)
   const lkgReport=await waitForRefreshAfter(Date.now(),"the catalog outage configuration")
   assert.deepEqual(lkgReport.models.map(model=>({id:model.id,limit:model.limit,variants:model.variants})),zeroPrice.models.map(model=>({id:model.id,limit:model.limit,variants:model.variants})))
-  await diagnosticsThroughTui(/LKG 19/u,"LKG metadata summary")
+  await diagnosticsThroughTui(/状态：正常/u,"unchanged model_name diagnostics")
   catalogServer.setOutage(false);currentCatalog=structuredClone(baselineCatalog);await resetCatalogCache()
-  const recoveryModels=[...servedModels]
-  servedModels=recoveryModels.filter(row=>row.model_name!=="e2e-default-responses")
-  await waitForRefreshAfter(Date.now(),"successful model deletion before fresh LKG recovery")
-  servedModels=recoveryModels
-  await waitForRefreshAfter(Date.now(),"successful model re-add after catalog recovery")
-  await waitForPublicationState(state=>state.publishable.length===19&&state.lkgIDs.length===0,"fresh recovery")
 
   // A successful live deletion wins over cached models.
   servedModels=[]
