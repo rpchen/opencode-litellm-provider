@@ -1099,6 +1099,10 @@ export default {
   await diagnosticsThroughTui(/withheld[\s：:]*invalid-fields/u,"critical field withholding")
   currentCatalog.providers.e2e.models["minimax-m3"].reasoning=false
   await resetCatalogCache()
+  const repairSeed=[...servedModels]
+  servedModels=repairSeed.filter(row=>row.model_name!=="minimax-m3")
+  await waitForRefreshAfter(Date.now(),"successful model deletion before selected-record repair")
+  servedModels=repairSeed
   const repaired=await waitForRefreshAfter(Date.now(),"selected API record repair")
   assert(repaired.models.some(model=>model.id==="minimax-m3"),"complete metadata registers without user acceptance")
 
