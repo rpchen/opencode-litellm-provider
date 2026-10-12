@@ -535,13 +535,13 @@ try {
   catalogServer = await startCatalogServer()
   const catalogRequests = catalogServer.requests
   // [REAL-HOST-E2E] Schema-9 LKG positive recovery needs a genuine models.dev
-  // outage that Core can SEE. The delivered dist keeps a 6h in-memory catalog
-  // cache (production trigger: TTL expiry) and OpenCode 2.0.16 is a compiled
+  // outage that Core can SEE. The delivered dist keeps an in-memory catalog
+  // cache and OpenCode 2.0.16 is a compiled
   // binary without any preload seam, so a tiny companion plugin — loaded by the
   // SAME real host into the SAME server process — clears that cache through the
   // INSTALLED package's own `dist/net/fetch.js` export
-  // (`resetModelsDevCacheForTest`): the in-process equivalent of the production
-  // TTL expiry. It never mocks a Core value and never serves fake data; the
+  // (`resetModelsDevCacheForTest`): the in-process cache reset used before a
+  // demand-triggered refresh. It never mocks a Core value and never serves fake data; the
   // outage itself is a real HTTP 500 from the deterministic catalog source.
   const catalogGuardDir = path.join(workspace, "e2e-catalog-guard")
   mkdirSync(catalogGuardDir, { recursive: true })
@@ -960,7 +960,7 @@ export default {
   // never straddle a wrap boundary.
   const cardText = (text) => text.replace(/[┃╹▀╻╺╸]/gu, "").replace(/\s+/gu, "")
 
-  // Clear the delivered dist's 6h models.dev catalog cache through the guard
+  // Clear the delivered dist's in-memory models.dev catalog cache through the guard
   // plugin's RPC. The response names the module that was reset: it must be the
   // INSTALLED candidate's `dist/net/fetch.js`, so the reset lands on the same
   // module instance the plugin's discovery loop uses.
@@ -990,6 +990,7 @@ export default {
   assert.equal(matrixIDs.length,19,"all frozen models and the three controls register")
   const actualModels = payload(jsonOutput(api("GET","/api/model"),"model.list"))
   assert(Array.isArray(actualModels),"real host registry returns Model.Info[] for the picker")
+  const baselinePrices = new Map(actualModels.filter(model=>model.providerID==="litellm").map(model=>[model.id,model.cost[0]]))
   for(const expected of oracle.models) {
     const actual=actualModels.find(model=>model.providerID==="litellm" && model.id===expected.id)
     assert(actual,`frozen model is missing from host registry: ${expected.id}`)
@@ -1057,17 +1058,22 @@ export default {
   for(const level of ["high","max"])await requestModel("e2e-messages",level,"messages")
   console.log(`Real OpenCode metadata priority: 16/16 final registrations and picker lists; ${checkedRequests} actual Chat/Responses/Messages requests passed`)
 
-  // Prices do not withdraw or cap models, even with otherwise higher-priority data.
+  // A stable model_name set reuses the registered configuration; price-only
+  // catalog changes do not trigger a metadata read.
   for(const provider of Object.values(currentCatalog.providers))for(const record of Object.values(provider.models))record.cost={input:-1,output:"bad"}
-  await resetCatalogCache()
   const zeroPrice=await waitForRefreshAfter(Date.now(),"the price-only error")
   assert.equal(zeroPrice.models.length,19)
-  for(const model of zeroPrice.models)assert.deepEqual(model.cost[0],{input:0,output:0,cache:{read:0,write:0}})
+  for(const model of zeroPrice.models)assert.deepEqual(model.cost[0],baselinePrices.get(model.id),"stable model_name must reuse the registered price")
   assert.deepEqual(publicationState().regressions,[])
   for(const expected of oracle.models)assert.deepEqual(zeroPrice.models.find(model=>model.id===expected.id).limit,{input:0,...expected.limit})
 
-  // Catalog outage + internal route/deployment changes preserve model_name LKG.
-  servedModels=[...frozenDiscovery.data.map(row=>({...row,litellm_params:{model:"private/changed"}})),...controls]
+  // Delete and re-add one identity so the outage exercises the existing LKG path
+  // through the new-model demand trigger instead of a time-based refresh.
+  const lkgSeedModels=[...servedModels]
+  servedModels=lkgSeedModels.filter(row=>row.model_name!=="e2e-default-responses")
+  await waitForRefreshAfter(Date.now(),"successful model deletion before LKG re-add")
+  assert(!hostModels().includes("litellm/e2e-default-responses"),"deleted model must leave host registry before LKG re-add")
+  servedModels=lkgSeedModels.map(row=>row.model_name==="e2e-default-responses"?{...row,litellm_params:{model:"private/changed"}}:row)
   const failuresBefore=catalogServer.failures()
   catalogServer.setOutage(true);await resetCatalogCache()
   const lkg=await waitForPublicationState(state=>state.lkgIDs.length===19,"the genuine catalog outage")
