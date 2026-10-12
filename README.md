@@ -213,6 +213,8 @@ endpoint 里发现了模型，不等于这个模型已经可以被安全使用�
 
 Core 以模型名称和可信 canonical 关系自动匹配，按 **官方服务商 → OpenCode → OpenRouter** 选择一条完整 models.dev 记录。不要求证明实际请求发往哪家服务商，不需要配置 models_dev_provider。API 名称与 canonical 名不同（如 deepseek-v4.1-flash → deepseek-flash）按官方关系匹配；仅非精确别名查找排除 deprecated 记录，精确旧 API 名仍有效。
 
+每次实际发现都会先获取 LiteLLM 的 `model_name` 集合。集合不变时直接复用 ProviderSnapshot 和注册配置，不重新匹配元数据，也不会因为时间经过而访问 models.dev；集合发生变化时只处理新增/删除项。新增模型先查本地 catalog，只有本地没有匹配记录时才请求最新 catalog。
+
 推理支持和可选档位分别保留。仅声明的 reasoning_options 映射到 variants/settings，不给无档位模型增加默认档位。OpenCode 2.0.16 的 Model.Info 没有独立 reasoning 布尔字段，审计保留 Core 的 supported/unsupported 判定；最终 host variants 保持准确。每个 GPT 使用自己的记录。已有 Messages 预算控制保持不变。
 
 价格仅为所选记录的参考值；缺失、零价或错误值归0，不表示免费，也不影响能力、模型发布、限制和缓存恢复。旧 contextTierCap 配置仍接受但忽略，不再将 GPT1050000 截断到272k。

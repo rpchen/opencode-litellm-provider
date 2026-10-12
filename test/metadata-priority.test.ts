@@ -82,14 +82,16 @@ describe("OpenCode state, diagnostics and recovery [T16 T18 T19 T20 T22 T23 T31]
       for (const provider of Object.values(badPrices.providers)) for (const record of Object.values(provider.models)) Object.assign(record, { cost: { input: -1, output: "bad" } })
       h.setCatalog(badPrices); await h.loop.trigger(true)
       expect(h.snapshot.models.map(({ cost, ...model }) => model)).toEqual(first.map(({ cost, ...model }) => model))
-      expect(h.snapshot.models.every(model => Object.values(model.cost).every(value => value === 0))).toBeTrue()
+      // A stable model_name set reuses the previously registered configuration;
+      // catalog changes alone are not a refresh trigger.
+      expect(h.snapshot.models).toEqual(first)
       expect(h.snapshot.diagnostics?.publication?.regressions).toEqual([])
       const changed = structuredClone(discovery)
       for (const entry of changed.data) Object.assign(entry, { litellm_params: { model: "private/changed" } })
       h.setLive(changed); h.setCatalog(new Error("catalog outage")); await h.loop.trigger(true)
       expect(h.snapshot.models).toHaveLength(16)
-      expect(h.snapshot.diagnostics?.publication?.lkgIDs).toHaveLength(16)
-      expect(createDiagnosticsLines(h.snapshot).join("\n")).toContain("deepseek-v4.1-flash · configured-lkg · 来源 前次配置 · 推理 low,high,max")
+      expect(h.snapshot.diagnostics?.publication?.lkgIDs ?? []).toHaveLength(0)
+      expect(createDiagnosticsLines(h.snapshot).join("\n")).toContain("deepseek-v4.1-flash · configured · 来源 deepseek")
       h.setLive({ data: [] }); await h.loop.trigger(true)
       expect(h.snapshot.models).toEqual([])
     } finally { await h.loop.dispose() }
