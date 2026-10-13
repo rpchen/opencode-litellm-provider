@@ -40,23 +40,42 @@ LiteLLM 请求成功但过滤后没有任何对话模型时，插件 SHALL 注�
 
 ### Requirement: models.dev catalog 来源、形状与 modelsDevUrl 语义
 
-OpenCode SHALL 从 `https://models.dev/catalog.json` 获取 models.dev 数据（单请求、
-`providers` 与 `models` 同 snapshot、同 TTL epoch、同 failure domain；60 s 超时、
-6 h TTL、60 s retry、失败降级为空对象并走 Core unavailable 路径的既有语义不变）。
-`modelsDevUrl` 仍接受自定义 http(s) 镜像，但镜像 MUST 为 catalog 形状；
-provider-only（`api.json` 形状）或不可用 payload 由 Core 按其 `catalog-input`
-契约处理，OpenCode 仅透传并在诊断中提示改用 catalog 形状。形状校验、registry
-可用性、identity、authority、merge 全在 Core。
+OpenCode SHALL 继续从 `https://models.dev/catalog.json`（或现有合法 `modelsDevUrl` 镜像）读取同一 catalog snapshot，并保留 60 秒超时、60 秒失败退避、失败降级为空对象和 Core 形状校验。成功 catalog SHALL 由本地内存 cache 保留，不再按固定 6 小时 TTL 过期；最新网络 catalog 只由新增模型的本地匹配未命中驱动。
 
 #### Scenario: 默认拉取 catalog 快照
 
-- **WHEN** 扩展刷新 models.dev 数据且未配置 `modelsDevUrl`
-- **THEN** 请求 `https://models.dev/catalog.json`，成功后同一 TTL 内复用，不再请求 `api.json`
+- **WHEN** 扩展首次发现至少一个需要元数据匹配的模型且未配置 `modelsDevUrl`
+- **THEN** 请求 `https://models.dev/catalog.json`，成功后复用本地快照，不请求 `api.json`
 
 #### Scenario: provider-only 镜像降级不断
 
 - **WHEN** `modelsDevUrl` 指向 provider-only 镜像
 - **THEN** Core 不做 canonical 解析，LiteLLM 完整者仍发布，其余 withheld + 有效 LKG 可恢复，诊断提示改用 catalog 形状
+
+#### Scenario: 模型列表不变
+
+- **WHEN** LiteLLM 成功返回的可注册 `model_name` 集合与上次成功发现相同
+- **THEN** OpenCode 复用 ProviderSnapshot 和注册视图，不重新执行 models.dev 匹配，也不请求 models.dev
+
+#### Scenario: 新增模型本地命中
+
+- **WHEN** LiteLLM 集合新增模型且本地 catalog 有该模型的可选记录
+- **THEN** 只处理新增模型并复用本地 catalog，不请求最新 catalog
+
+#### Scenario: 新增模型本地未命中
+
+- **WHEN** LiteLLM 集合新增模型且本地 catalog 没有该模型的可选记录
+- **THEN** 请求最新 catalog，并只用最新结果处理新增模型
+
+#### Scenario: 仅删除模型
+
+- **WHEN** LiteLLM 成功集合只删除已有模型而没有新增模型
+- **THEN** 撤销被删除模型的注册，未变化模型保持不变，且不请求 models.dev
+
+#### Scenario: 同名内部路由变化
+
+- **WHEN** `model_name` 不变但 route、`base_model` 或 deployment ID 变化
+- **THEN** 已注册配置保持不变，不触发元数据匹配或 models.dev 请求
 
 ### Requirement: 消费 Core 整记录配置
 OpenCode SHALL 仅消费Core以model_name按官方 → OpenCode → OpenRouter整记录生成的配置；MUST NOT 复制模型匹配、拼字段、取LL交集/最高价或要求内部身份及serving proof。base_model/route/deployment ID不同不新增发布阻断；原有协议/default/mixed-fallback/override不变。OpenCode保留Core tools、input/output与context/input/output；SDK默认值不得扩大能力。
@@ -102,3 +121,17 @@ OpenCode SHALL 保留model_name原样作为ID、请求名和显示名；只消�
 #### Scenario: [T17] 原272k价格阶梯
 - **WHEN** Core context为1050000
 - **THEN** 宿主不再截断；旧contextTierCap忽略。
+
+### Requirement: Recover transient metadata-withheld models on an unchanged set
+
+OpenCode SHALL reuse Core's incremental recovery candidates. When a prior successful LiteLLM response has a model withheld as `metadata-unavailable` because Core diagnostics reported a degraded models.dev catalog, a later network refresh MAY process that model again even when the `model_name` set is unchanged. Normally registered ProviderSnapshot models MUST remain reused. Stable unmatched, invalid-metadata and discovered-incomplete results MUST NOT cause additional metadata requests on an unchanged set.
+
+#### Scenario: Temporary catalog failure recovers without a model-set change
+
+- **WHEN** a newly added model was withheld as `metadata-unavailable` during a degraded catalog request and a later catalog request succeeds while LiteLLM returns the same `model_name` set
+- **THEN** OpenCode reprocesses the withheld model through Core, registers it if configured, and retains existing normally registered models without reprocessing them
+
+#### Scenario: Stable unmatched identity does not retry
+
+- **WHEN** a complete catalog has no matching record for a model and the catalog later gains a matching record while the LiteLLM `model_name` set remains unchanged
+- **THEN** OpenCode reuses the prior unmatched result and does not request or reprocess metadata until the model-name set changes

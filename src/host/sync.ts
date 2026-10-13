@@ -7,21 +7,28 @@ import {
   type DiscoveryDiagnostics,
 } from "../core/diagnostics.js"
 import {
-  buildPublicationResult,
   classifyMetadataFailure,
   capturedPublicationVerdict,
   createLastKnownGoodEntry,
   decideAcknowledgement,
   groupLiteLLMDeployments,
   lastKnownGoodKey,
+  mergeDiscoveryDiagnostics,
+  mergePublicationResults,
+  modelNameDelta,
+  modelNamesOfResponse,
+  needsCatalogRefresh,
   nextPublishedBaseline,
   parsePublicationMemory,
+  responseForModelNames,
   serializePublicationMemory,
   PUBLICATION_MEMORY_SCHEMA_VERSION,
+  temporaryMetadataFailureModelNames,
   type LastKnownGoodStore,
   type PublicationMemory,
   type MetadataFailure,
   type PublishableEntry,
+  type PublicationResult,
 } from "../generated/discovery-core/index.js"
 import { normalizeLiteLLMURL } from "../core/litellm.js"
 import { createDiscoveryCoordinator } from "../core/refresh.js"
@@ -50,7 +57,7 @@ import {
   type PublicationState,
   type PublicationSummary,
 } from "./publication.js"
-import { buildPublicationModels } from "./models.js"
+import { buildPublicationModels, toOpenCodeModelSpecWithPublication } from "./models.js"
 
 interface KeyCredential {
   type: "key"
@@ -61,6 +68,17 @@ interface KeyCredential {
 interface EventLike {
   type: string
   data?: unknown
+}
+
+interface CoordinatedDiscovery {
+  readonly modelNames: readonly string[]
+  readonly models: ModelSpec[]
+  readonly fingerprint: string
+  readonly diagnostics?: DiscoveryDiagnostics
+  readonly publication?: PublicationSummary
+  readonly catalog?: import("../generated/discovery-core/index.js").CatalogPublication
+  readonly snapshotSpecs?: ModelSpec[]
+  readonly publicationResult?: PublicationResult
 }
 
 export interface SyncContext {
@@ -136,9 +154,11 @@ function seedPublicationLKG(
   options: PluginOptions,
   publishable: readonly PublishableEntry[],
   now: number,
+  processedModelNames?: ReadonlySet<string>,
 ): void {
   const groups = new Map(groupLiteLLMDeployments(litellmResponse).map((item) => [item.modelName, item]))
   for (const entry of publishable) {
+    if (processedModelNames && !processedModelNames.has(entry.spec.id)) continue
     if (entry.assessment.status !== "configured") continue
     const group = groups.get(entry.spec.id)
     if (!group) continue
@@ -190,15 +210,7 @@ export function createDiscoveryLoop(
   const fetchCatalog = dependencies.getModelsDev ?? getModelsDevCatalog
   const buildModels = dependencies.buildModels ?? buildModelSpecs
   const fingerprint = dependencies.fingerprint ?? modelFingerprint
-  const coordinator = createDiscoveryCoordinator<{
-    models: ModelSpec[]
-    fingerprint: string
-    diagnostics?: DiscoveryDiagnostics
-    publication?: PublicationSummary
-    /** Core catalog facts (availability, regression, acknowledgement input). */
-    catalog?: import("../generated/discovery-core/index.js").CatalogPublication
-    snapshotSpecs?: ModelSpec[]
-  }>()
+  const coordinator = createDiscoveryCoordinator<CoordinatedDiscovery>()
   const abortEvents = new AbortController()
   snapshot.audit ??= { status: "disconnected" }
 
@@ -538,56 +550,118 @@ export function createDiscoveryLoop(
     }
 
     try {
+      const previous = coordinator.state(nextIdentity).value
       const coordinated = await coordinator.refresh(
         nextIdentity,
         async () => {
           const response = await fetchModelInfo(addresses, resolved.key, dependencies.fetchImpl)
-          let catalog: unknown
-          let catalogFailure: MetadataFailure | undefined
-          try {
-            catalog = await fetchCatalog({
-              fetchImpl: dependencies.fetchImpl,
-              logger,
-              ...(options.modelsDevUrl === undefined ? {} : { url: options.modelsDevUrl }),
-            })
-          } catch (error) {
-            catalog = {}
-            catalogFailure = classifyMetadataFailure(error)
-          }
+          const currentModelNames = modelNamesOfResponse(response)
           if (dependencies.buildModels) {
+            let catalog: unknown
+            try {
+              catalog = await fetchCatalog({
+                fetchImpl: dependencies.fetchImpl,
+                logger,
+                ...(options.modelsDevUrl === undefined ? {} : { url: options.modelsDevUrl }),
+              })
+            } catch {
+              catalog = {}
+            }
             const models = buildModels(response, catalog, options)
-            return { models, fingerprint: fingerprint(models) }
+            return { modelNames: currentModelNames, models, fingerprint: fingerprint(models) }
           }
+
+          const reusable = previous?.publicationResult ? previous : undefined
+          const delta = modelNameDelta(reusable?.modelNames ?? [], currentModelNames)
+          const currentPreviousPublication = reusable
+            ? mergePublicationResults(reusable.publicationResult!, undefined, new Set(currentModelNames))
+            : undefined
+          const recoveryNames = reusable && currentPreviousPublication
+            ? temporaryMetadataFailureModelNames(currentPreviousPublication, reusable.diagnostics!)
+            : []
+          const processedModelNames = new Set([...delta.added, ...recoveryNames])
+          const retainedModelNames = new Set(currentModelNames.filter((name) => !processedModelNames.has(name)))
+          if (reusable && processedModelNames.size === 0 && delta.removed.length === 0) return reusable
+
           const controller = snapshot.publicationState ??= createPublicationState()
           if (!publicationMemoryLoaded) {
             await loadPublicationMemory(controller)
             publicationMemoryLoaded = true
           }
-          const now = Date.now()
-          const { models, result } = buildPublicationModels(response, catalog, options, {
-            store: controller.store,
-            failure: catalogFailure,
-            now,
+          const responseToBuild = reusable ? responseForModelNames(response, processedModelNames) : response
+          let catalog: unknown = {}
+          let catalogFailure: MetadataFailure | undefined
+          const loadCatalog = (forceRefresh: boolean): Promise<unknown | undefined> => fetchCatalog({
+            fetchImpl: dependencies.fetchImpl,
+            logger,
+            ...(options.modelsDevUrl === undefined ? {} : { url: options.modelsDevUrl }),
+            cachedOnly: !forceRefresh,
+            forceRefresh,
           })
-          seedPublicationLKG(controller.store, response, catalog, options, result.publishable, now)
+          const now = Date.now()
+          let result: PublicationResult
+          if (processedModelNames.size === 0 && reusable) {
+            result = mergePublicationResults(reusable.publicationResult, undefined, retainedModelNames)
+          } else if (currentModelNames.length === 0 && !reusable) {
+            result = buildPublicationModels(response, catalog, options, { now }).result
+          } else {
+            let cached: unknown | undefined
+            try {
+              cached = await loadCatalog(false)
+            } catch {
+              // A failed cache read is followed by the demand-driven latest fetch.
+            }
+            if (cached !== undefined) catalog = cached
+            let addedResult = buildPublicationModels(responseToBuild, catalog, options, {
+              store: controller.store,
+              now,
+            }).result
+            if (needsCatalogRefresh(addedResult, processedModelNames)) {
+              try {
+                catalog = (await loadCatalog(true)) ?? {}
+              } catch (error) {
+                catalog = {}
+                catalogFailure = classifyMetadataFailure(error)
+              }
+              addedResult = buildPublicationModels(responseToBuild, catalog, options, {
+                store: controller.store,
+                failure: catalogFailure,
+                now,
+              }).result
+            }
+            result = reusable
+              ? mergePublicationResults(reusable.publicationResult, addedResult, retainedModelNames)
+              : addedResult
+          }
+          const models = result.publishable
+            .map((entry) => toOpenCodeModelSpecWithPublication(entry))
+            .filter(hasOperationalLimits)
+          seedPublicationLKG(controller.store, response, catalog, options, result.publishable, now, processedModelNames)
           // Published specs are the only persisted specs: a withheld model
           // never survives into a snapshot, and no user confirmation adds one.
           const snapshotSpecs = result.publishable
             .map((entry) => entry.spec)
             .map(toOpenCodeModelSpec)
             .filter(hasOperationalLimits)
-          const diagnosed = diagnoseModelSpecs(response, catalog, options)
+          const changedDiagnostics = reusable && processedModelNames.size > 0
+            ? diagnoseModelSpecs(responseToBuild, catalog, options).diagnostics
+            : undefined
+          const diagnostics = reusable
+            ? mergeDiscoveryDiagnostics(reusable.diagnostics!, changedDiagnostics, response, currentModelNames, processedModelNames)
+            : diagnoseModelSpecs(response, catalog, options).diagnostics
           const catalogFacts = catalogFactsFor(result, {
-            discovered: diagnosed.diagnostics.stats.models,
+            discovered: diagnostics.stats.models,
             previouslyPublished: controller.previouslyPublished,
           })
           return {
+            modelNames: currentModelNames,
             models,
             fingerprint: fingerprint(models),
-            diagnostics: diagnosed.diagnostics,
-            publication: summarizePublication(result, catalogFacts, catalogFailure?.kind),
+            diagnostics,
+            publication: summarizePublication(result, catalogFacts, catalogFailure?.kind ?? (processedModelNames.size === 0 ? reusable?.publication?.failureKind : undefined)),
             catalog: catalogFacts,
             snapshotSpecs,
+            publicationResult: result,
           }
         },
         {

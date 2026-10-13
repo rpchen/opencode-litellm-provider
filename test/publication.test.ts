@@ -312,7 +312,7 @@ describe("publication sync partition", () => {
     }
   })
 
-  test("a withheld model recovering is published automatically without user approval", async () => {
+  test("a stable model_name set reuses a withheld decision without rereading metadata", async () => {
     let complete = false
     // v8: recovery is the canonical registry gaining a complete entry for the
     // previously-withheld model (identity was unproven before; LiteLLM-only
@@ -335,21 +335,17 @@ describe("publication sync partition", () => {
       expect(h.snapshot.diagnostics?.publication?.withheld.map((model) => model.id)).toEqual(["pub-incomplete"])
       complete = true
       await h.loop.trigger(true)
-      expect(h.snapshot.models.map((model) => model.id).sort()).toEqual(["pub-complete", "pub-incomplete"])
-      expect(h.snapshot.diagnostics?.publication?.withheld).toEqual([])
+      expect(h.snapshot.models.map((model) => model.id).sort()).toEqual(["pub-complete"])
+      expect(h.snapshot.diagnostics?.publication?.withheld.map((model) => model.id)).toEqual(["pub-incomplete"])
     } finally {
       await h.loop.dispose()
     }
   })
 
   test("internal route changes do not withdraw an unchanged model_name during catalog outage", async () => {
-    // The canonical route changes while enrichment is unavailable: the old
-    // trusted snapshot no longer describes this model, so it is withheld and
-    // reported as a regression instead of silently disappearing.
-    // v8 note: with a complete catalog the fresh phase captures from the
-    // registry; the changed phase both renames the route AND takes the
-    // catalog down, so the model is withheld as a regression (no valid LKG
-    // can re-prove renamed evidence).
+    // The canonical route changes while the model_name set remains stable. The
+    // registered configuration is reused; route/base_model changes are not a
+    // metadata refresh trigger or an identity change.
     let phase: "fresh" | "changed" = "fresh"
     const catalogFor = () => (true && phase === "fresh" ? COMPLETE_CATALOG : {})
     const h = loopHarness(async () => catalogFor(), async () => ({
@@ -367,7 +363,7 @@ describe("publication sync partition", () => {
       phase = "changed"
       await h.loop.trigger(true)
       expect(h.snapshot.models.map(model => model.id)).toEqual(["pub-complete"])
-      expect(h.snapshot.diagnostics?.publication?.lkgIDs).toEqual(["pub-complete"])
+      expect(h.snapshot.diagnostics?.publication?.lkgIDs ?? []).toEqual([])
       expect(h.snapshot.diagnostics?.publication?.regressions).toEqual([])
     } finally {
       await h.loop.dispose()

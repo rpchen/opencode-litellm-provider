@@ -1,6 +1,6 @@
 import { buildModelSpecs, hasOperationalLimits, modelFingerprint, toOpenCodeModelSpec } from "../core/build.js";
 import { createDiscoveryCacheDiagnostics, diagnoseModelSpecs, } from "../core/diagnostics.js";
-import { classifyMetadataFailure, capturedPublicationVerdict, createLastKnownGoodEntry, decideAcknowledgement, groupLiteLLMDeployments, lastKnownGoodKey, nextPublishedBaseline, parsePublicationMemory, serializePublicationMemory, PUBLICATION_MEMORY_SCHEMA_VERSION, } from "../generated/discovery-core/index.js";
+import { classifyMetadataFailure, capturedPublicationVerdict, createLastKnownGoodEntry, decideAcknowledgement, groupLiteLLMDeployments, lastKnownGoodKey, mergeDiscoveryDiagnostics, mergePublicationResults, modelNameDelta, modelNamesOfResponse, needsCatalogRefresh, nextPublishedBaseline, parsePublicationMemory, responseForModelNames, serializePublicationMemory, PUBLICATION_MEMORY_SCHEMA_VERSION, temporaryMetadataFailureModelNames, } from "../generated/discovery-core/index.js";
 import { normalizeLiteLLMURL } from "../core/litellm.js";
 import { createDiscoveryCoordinator } from "../core/refresh.js";
 import { compareDiscoverySnapshots, createDiscoverySnapshot, endpointFingerprint, inspectDiscoverySnapshot, } from "../core/snapshot.js";
@@ -8,7 +8,7 @@ import { endpointIdentity } from "../endpoints.js";
 import { DiscoveryError, fetchLiteLLMModelInfo, getModelsDevCatalog, redact, } from "../net/fetch.js";
 import { createRegistrationView } from "./register.js";
 import { catalogFactsFor, createPublicationState, summarizePublication, } from "./publication.js";
-import { buildPublicationModels } from "./models.js";
+import { buildPublicationModels, toOpenCodeModelSpecWithPublication } from "./models.js";
 const DISCOVERY_SNAPSHOT_STORAGE_KEY = "litellm.discovery.snapshot.v1";
 const PUBLICATION_MEMORY_STORAGE_KEY = "litellm.publication.memory.v1";
 const DEFAULT_ENDPOINT = endpointIdentity("default", undefined, true);
@@ -25,9 +25,11 @@ const defaultScheduler = {
     clearTimeout: (handle) => clearTimeout(handle),
 };
 /** Record complete configured models as Last Known Good for future outages. */
-function seedPublicationLKG(store, litellmResponse, catalog, options, publishable, now) {
+function seedPublicationLKG(store, litellmResponse, catalog, options, publishable, now, processedModelNames) {
     const groups = new Map(groupLiteLLMDeployments(litellmResponse).map((item) => [item.modelName, item]));
     for (const entry of publishable) {
+        if (processedModelNames && !processedModelNames.has(entry.spec.id))
+            continue;
         if (entry.assessment.status !== "configured")
             continue;
         const group = groups.get(entry.spec.id);
@@ -393,55 +395,121 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
             await reload();
         }
         try {
+            const previous = coordinator.state(nextIdentity).value;
             const coordinated = await coordinator.refresh(nextIdentity, async () => {
                 const response = await fetchModelInfo(addresses, resolved.key, dependencies.fetchImpl);
-                let catalog;
-                let catalogFailure;
-                try {
-                    catalog = await fetchCatalog({
-                        fetchImpl: dependencies.fetchImpl,
-                        logger,
-                        ...(options.modelsDevUrl === undefined ? {} : { url: options.modelsDevUrl }),
-                    });
-                }
-                catch (error) {
-                    catalog = {};
-                    catalogFailure = classifyMetadataFailure(error);
-                }
+                const currentModelNames = modelNamesOfResponse(response);
                 if (dependencies.buildModels) {
+                    let catalog;
+                    try {
+                        catalog = await fetchCatalog({
+                            fetchImpl: dependencies.fetchImpl,
+                            logger,
+                            ...(options.modelsDevUrl === undefined ? {} : { url: options.modelsDevUrl }),
+                        });
+                    }
+                    catch {
+                        catalog = {};
+                    }
                     const models = buildModels(response, catalog, options);
-                    return { models, fingerprint: fingerprint(models) };
+                    return { modelNames: currentModelNames, models, fingerprint: fingerprint(models) };
                 }
+                const reusable = previous?.publicationResult ? previous : undefined;
+                const delta = modelNameDelta(reusable?.modelNames ?? [], currentModelNames);
+                const currentPreviousPublication = reusable
+                    ? mergePublicationResults(reusable.publicationResult, undefined, new Set(currentModelNames))
+                    : undefined;
+                const recoveryNames = reusable && currentPreviousPublication
+                    ? temporaryMetadataFailureModelNames(currentPreviousPublication, reusable.diagnostics)
+                    : [];
+                const processedModelNames = new Set([...delta.added, ...recoveryNames]);
+                const retainedModelNames = new Set(currentModelNames.filter((name) => !processedModelNames.has(name)));
+                if (reusable && processedModelNames.size === 0 && delta.removed.length === 0)
+                    return reusable;
                 const controller = snapshot.publicationState ??= createPublicationState();
                 if (!publicationMemoryLoaded) {
                     await loadPublicationMemory(controller);
                     publicationMemoryLoaded = true;
                 }
-                const now = Date.now();
-                const { models, result } = buildPublicationModels(response, catalog, options, {
-                    store: controller.store,
-                    failure: catalogFailure,
-                    now,
+                const responseToBuild = reusable ? responseForModelNames(response, processedModelNames) : response;
+                let catalog = {};
+                let catalogFailure;
+                const loadCatalog = (forceRefresh) => fetchCatalog({
+                    fetchImpl: dependencies.fetchImpl,
+                    logger,
+                    ...(options.modelsDevUrl === undefined ? {} : { url: options.modelsDevUrl }),
+                    cachedOnly: !forceRefresh,
+                    forceRefresh,
                 });
-                seedPublicationLKG(controller.store, response, catalog, options, result.publishable, now);
+                const now = Date.now();
+                let result;
+                if (processedModelNames.size === 0 && reusable) {
+                    result = mergePublicationResults(reusable.publicationResult, undefined, retainedModelNames);
+                }
+                else if (currentModelNames.length === 0 && !reusable) {
+                    result = buildPublicationModels(response, catalog, options, { now }).result;
+                }
+                else {
+                    let cached;
+                    try {
+                        cached = await loadCatalog(false);
+                    }
+                    catch {
+                        // A failed cache read is followed by the demand-driven latest fetch.
+                    }
+                    if (cached !== undefined)
+                        catalog = cached;
+                    let addedResult = buildPublicationModels(responseToBuild, catalog, options, {
+                        store: controller.store,
+                        now,
+                    }).result;
+                    if (needsCatalogRefresh(addedResult, processedModelNames)) {
+                        try {
+                            catalog = (await loadCatalog(true)) ?? {};
+                        }
+                        catch (error) {
+                            catalog = {};
+                            catalogFailure = classifyMetadataFailure(error);
+                        }
+                        addedResult = buildPublicationModels(responseToBuild, catalog, options, {
+                            store: controller.store,
+                            failure: catalogFailure,
+                            now,
+                        }).result;
+                    }
+                    result = reusable
+                        ? mergePublicationResults(reusable.publicationResult, addedResult, retainedModelNames)
+                        : addedResult;
+                }
+                const models = result.publishable
+                    .map((entry) => toOpenCodeModelSpecWithPublication(entry))
+                    .filter(hasOperationalLimits);
+                seedPublicationLKG(controller.store, response, catalog, options, result.publishable, now, processedModelNames);
                 // Published specs are the only persisted specs: a withheld model
                 // never survives into a snapshot, and no user confirmation adds one.
                 const snapshotSpecs = result.publishable
                     .map((entry) => entry.spec)
                     .map(toOpenCodeModelSpec)
                     .filter(hasOperationalLimits);
-                const diagnosed = diagnoseModelSpecs(response, catalog, options);
+                const changedDiagnostics = reusable && processedModelNames.size > 0
+                    ? diagnoseModelSpecs(responseToBuild, catalog, options).diagnostics
+                    : undefined;
+                const diagnostics = reusable
+                    ? mergeDiscoveryDiagnostics(reusable.diagnostics, changedDiagnostics, response, currentModelNames, processedModelNames)
+                    : diagnoseModelSpecs(response, catalog, options).diagnostics;
                 const catalogFacts = catalogFactsFor(result, {
-                    discovered: diagnosed.diagnostics.stats.models,
+                    discovered: diagnostics.stats.models,
                     previouslyPublished: controller.previouslyPublished,
                 });
                 return {
+                    modelNames: currentModelNames,
                     models,
                     fingerprint: fingerprint(models),
-                    diagnostics: diagnosed.diagnostics,
-                    publication: summarizePublication(result, catalogFacts, catalogFailure?.kind),
+                    diagnostics,
+                    publication: summarizePublication(result, catalogFacts, catalogFailure?.kind ?? (processedModelNames.size === 0 ? reusable?.publication?.failureKind : undefined)),
                     catalog: catalogFacts,
                     snapshotSpecs,
+                    publicationResult: result,
                 };
             }, {
                 forceRefresh,

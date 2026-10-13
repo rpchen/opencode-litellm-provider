@@ -106,18 +106,20 @@ describe("models.dev 缓存", () => {
     expect(urls).toEqual(["https://models.dev/catalog.json"])
   })
 
-  test("成功结果缓存 6 小时", async () => {
+  test("成功结果不按时间过期，显式最新请求才绕过本地快照", async () => {
     let calls = 0
     let now = 1_000
     const fetchImpl: FetchLike = async () => {
       calls += 1
-      return response(200, "{\"openai\":{}}")
+      return response(200, calls === 1 ? "{\"openai\":{}}" : "{\"anthropic\":{}}")
     }
     const options = { fetchImpl, now: () => now }
     expect(await getModelsDevCatalog(options)).toEqual({ openai: {} })
-    now += 6 * 60 * 60 * 1000 - 1
+    now += 7 * 60 * 60 * 1000
     expect(await getModelsDevCatalog(options)).toEqual({ openai: {} })
     expect(calls).toBe(1)
+    expect(await getModelsDevCatalog({ ...options, forceRefresh: true })).toEqual({ anthropic: {} })
+    expect(calls).toBe(2)
   })
 
   test("失败返回空目录，退避期内不重复请求", async () => {

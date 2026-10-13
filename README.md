@@ -209,9 +209,11 @@ endpoint 里发现了模型，不等于这个模型已经可以被安全使用�
 
 如果你之前用过的模型**现在**被 withheld，这是一次 regression，插件会在诊断中明确写出「此前可用、现已撤下」以及原因，并按可用性变化给出提醒；它**不会**自动把你的请求切到另一个模型，也不会静默继续使用失去可信配置的模型。已经发出的请求不会被打断。
 
-**models.dev 暂时不可用时，插件保留此前成功配置。** 同 endpoint/credential/协议 scope 和 model_name 的合法 LKG 保留原能力与档位；内部 route、base_model、deployment ID 与价格变化不会使其失效。诊断展示来源时间与年龄。成功目录已删除模型或认证失败仍撤下模型。升级后旧 publication schema8 / snapshot1 不回放，下一次成功发现重建为9/2。
+**models.dev 暂时不可用时，插件保留此前成功配置。** 同 endpoint/credential/协议 scope 和 model_name 的合法 LKG 保留原能力与档位。因临时 catalog 故障而 withheld 的 `metadata-unavailable` 模型会在后续刷新中重新处理，即使 LiteLLM 的 model_name 集合未变；正常注册模型继续复用，稳定 unmatched/invalid 结果不会因此反复请求。内部 route、base_model、deployment ID 与价格变化不会使 LKG 失效。诊断展示来源时间与年龄。成功目录已删除模型或认证失败仍撤下模型。升级后旧 publication schema8 / snapshot1 不回放，下一次成功发现重建为9/2。
 
 Core 以模型名称和可信 canonical 关系自动匹配，按 **官方服务商 → OpenCode → OpenRouter** 选择一条完整 models.dev 记录。不要求证明实际请求发往哪家服务商，不需要配置 models_dev_provider。API 名称与 canonical 名不同（如 deepseek-v4.1-flash → deepseek-flash）按官方关系匹配；仅非精确别名查找排除 deprecated 记录，精确旧 API 名仍有效。
+
+每次实际发现都会先获取 LiteLLM 的 `model_name` 集合。集合不变时直接复用 ProviderSnapshot 和注册配置，不重新匹配元数据，也不会因为时间经过而访问 models.dev；集合发生变化时只处理新增/删除项。新增模型先查本地 catalog，只有本地没有匹配记录时才请求最新 catalog。
 
 推理支持和可选档位分别保留。仅声明的 reasoning_options 映射到 variants/settings，不给无档位模型增加默认档位。OpenCode 2.0.16 的 Model.Info 没有独立 reasoning 布尔字段，审计保留 Core 的 supported/unsupported 判定；最终 host variants 保持准确。每个 GPT 使用自己的记录。已有 Messages 预算控制保持不变。
 
