@@ -10,8 +10,8 @@
 
 - [x] 2.1 Add adapter tests for temporary metadata recovery on the unchanged model set and stable unmatched non-retry.
 - [x] 2.2 Restore real OpenCode 2.0.16 E2E coverage for actual catalog outage, LKG use, fresh recovery, and the same-set transient metadata recovery path; retain incremental scenarios.
-- [ ] 2.3 Run OpenCode full gates and Real OpenCode 2.0.16 E2E at the final immutable candidate commit; record CI evidence.
-- [ ] 2.4 Strict-validate and archive this follow-up change after adapter CI/E2E passes; rerun OpenSpec closure.
+- [x] 2.3 Run OpenCode full gates and Real OpenCode 2.0.16 E2E at immutable candidate `b05573ecf8404ee20890ea6798e5f59a326042e5`; CI run `38334902901` passed both CI and Real OpenCode 2.0.16 E2E. Local full Bun suite: 303 passed; `verify:dist`, delivery, typecheck, TUI render, distribution, package, release metadata, scenario coverage and strict spec validation passed.
+- [x] 2.4 Archive this follow-up with the OpenSpec CLI, then rerun strict validation and OpenSpec closure.
 
 ### Scenario → test evidence
 
