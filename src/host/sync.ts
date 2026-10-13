@@ -573,8 +573,11 @@ export function createDiscoveryLoop(
 
           const reusable = previous?.publicationResult ? previous : undefined
           const delta = modelNameDelta(reusable?.modelNames ?? [], currentModelNames)
-          const recoveryNames = reusable
-            ? temporaryMetadataFailureModelNames(reusable.publicationResult!, reusable.diagnostics!)
+          const currentPreviousPublication = reusable
+            ? mergePublicationResults(reusable.publicationResult!, undefined, new Set(currentModelNames))
+            : undefined
+          const recoveryNames = reusable && currentPreviousPublication
+            ? temporaryMetadataFailureModelNames(currentPreviousPublication, reusable.diagnostics!)
             : []
           const processedModelNames = new Set([...delta.added, ...recoveryNames])
           const retainedModelNames = new Set(currentModelNames.filter((name) => !processedModelNames.has(name)))

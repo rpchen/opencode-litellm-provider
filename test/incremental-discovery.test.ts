@@ -160,6 +160,20 @@ test("temporary metadata-withheld models recover on an unchanged set; stable unm
     await h.loop.trigger(true)
     expect(h.snapshot.models.map((model) => model.id)).toEqual(["model-a", "model-b"])
     expect(h.catalogRequests).toBe(requestsAfterStableMiss)
+
+    // Removing a transient metadata-withheld name must prune it before Core
+    // recovery candidates are selected; this deletion needs no catalog access.
+    h.setForceCatalogFailure(true)
+    h.setLive(response(["model-a", "model-b", "stable-unmatched", "deleted-temporary"]))
+    await h.loop.trigger(true)
+    expect(h.snapshot.models.map((model) => model.id)).toEqual(["model-a", "model-b"])
+    expect(h.snapshot.diagnostics?.publication?.withheld.map((entry) => entry.id).sort()).toEqual(["deleted-temporary", "stable-unmatched"])
+    h.setLive(response(["model-a", "model-b", "stable-unmatched"]))
+    const requestsBeforeDeletion = h.catalogRequests
+    await h.loop.trigger(true)
+    expect(h.snapshot.models.map((model) => model.id)).toEqual(["model-a", "model-b"])
+    expect(h.catalogRequests).toBe(requestsBeforeDeletion)
+    expect(h.snapshot.diagnostics?.publication?.withheld.map((entry) => entry.id)).toEqual(["stable-unmatched"])
   } finally {
     await h.loop.dispose()
   }
