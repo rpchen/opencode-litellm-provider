@@ -4,6 +4,7 @@ export * from "./core/catalog-input.js";
 export * from "./core/evidence.js";
 export * from "./core/capabilities.js";
 export * from "./core/diagnostics.js";
+export * from "./core/incremental.js";
 export * from "./core/litellm.js";
 export * from "./core/modelsdev.js";
 export * from "./core/protocol.js";

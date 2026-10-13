@@ -86,6 +86,7 @@ addRecord("minimax-m3",1000000,131072);delete baselineCatalog.providers.e2e.mode
 addRecord("e2e-no-effort",32000,4096,true)
 addRecord("e2e-disabled",32000,4096,false)
 addRecord("e2e-messages",200000,64000,true,[{type:"budget_tokens",max:64000}])
+addRecord("e2e-metadata-recovery",64000,4096)
 let currentCatalog = structuredClone(baselineCatalog)
 const catalogueEntries = () => currentCatalog
 
@@ -1067,20 +1068,59 @@ export default {
   assert.deepEqual(publicationState().regressions,[])
   for(const expected of oracle.models)assert.deepEqual(zeroPrice.models.find(model=>model.id===expected.id).limit,{input:0,...expected.limit})
 
-  // A stable model_name set reuses the registered configuration even when the
-  // internal route changes and the catalog endpoint is unavailable. No catalog
-  // request is expected here; LKG remains available for the existing network
-  // failure path below.
-  servedModels=servedModels.map(row=>({...row,litellm_params:{model:"private/changed"}}))
+  // Real models.dev outage and existing LKG recovery: remove one successfully
+  // configured identity, then re-add that same model_name while the local catalog
+  // is empty and the latest catalog request fails. Core must use its LKG entry.
+  const lkgModelName="gpt-5.6-luna"
+  const lkgSeedModels=[...servedModels]
+  assert(lkgSeedModels.some(row=>row.model_name===lkgModelName),"LKG test model must be in the successful baseline")
   const failuresBefore=catalogServer.failures()
-  catalogServer.setOutage(true);await resetCatalogCache()
-  const unchanged=await waitForPublicationState(state=>state.publishable.length===19&&state.lkgIDs.length===0,"the unchanged model_name set")
-  assert.equal(catalogServer.failures(),failuresBefore,"unchanged model_name set must not fetch catalog")
-  assert.equal(unchanged.publishable.length,19)
-  const lkgReport=await waitForRefreshAfter(Date.now(),"the catalog outage configuration")
+  catalogServer.setOutage(true)
+  await resetCatalogCache()
+  servedModels=lkgSeedModels.filter(row=>row.model_name!==lkgModelName)
+  await waitForRefreshAfter(Date.now(),"successful deletion before catalog outage")
+  assert(!hostModels().includes(`litellm/${lkgModelName}`),"deleted model must leave the host before LKG re-add")
+  servedModels=lkgSeedModels.map(row=>row.model_name===lkgModelName?{...row,litellm_params:{model:"private/changed"}}:row)
+  const lkgReport=await waitForRefreshAfter(Date.now(),"new model_name during models.dev outage")
+  const lkg=await waitForPublicationState(state=>state.lkgIDs.includes(lkgModelName),"the genuine catalog outage using LKG")
+  assert(catalogServer.failures()>failuresBefore,"the new identity must issue and fail a real models.dev request")
+  assert(lkg.publishable.length===19,"the LKG model remains published with the rest of the catalog")
   assert.deepEqual(lkgReport.models.map(model=>({id:model.id,limit:model.limit,variants:model.variants})),zeroPrice.models.map(model=>({id:model.id,limit:model.limit,variants:model.variants})))
-  await diagnosticsThroughTui(/状态：正常/u,"unchanged model_name diagnostics")
-  catalogServer.setOutage(false);currentCatalog=structuredClone(baselineCatalog);await resetCatalogCache()
+  await diagnosticsThroughTui(/LKG 1/u,"LKG metadata summary")
+
+  // Recovery from LKG uses the existing successful-deletion boundary: a stable
+  // set keeps LKG; delete/re-add makes the recovered catalog prove the record fresh.
+  catalogServer.setOutage(false)
+  currentCatalog=structuredClone(baselineCatalog)
+  await resetCatalogCache()
+  const lkgRecoveryModels=[...servedModels]
+  servedModels=lkgRecoveryModels.filter(row=>row.model_name!==lkgModelName)
+  await waitForRefreshAfter(Date.now(),"deletion before fresh LKG recovery")
+  servedModels=lkgRecoveryModels
+  await waitForRefreshAfter(Date.now(),"re-add after models.dev recovery")
+  await waitForPublicationState(state=>state.publishable.length===19&&state.lkgIDs.length===0,"fresh recovery after models.dev outage")
+
+  // Temporary metadata-unavailable recovery is different from stable unmatched:
+  // the withheld identity is retried on the same set after the catalog recovers.
+  catalogServer.setOutage(true)
+  await resetCatalogCache()
+  const recoveryRow={
+    model_name:"e2e-metadata-recovery",
+    litellm_params:{model:"openai/e2e-metadata-recovery"},
+    model_info:{mode:"chat",max_input_tokens:64000,max_output_tokens:4096,...FULL_CAPABILITY_DECLARATIONS},
+  }
+  const recoveryFailuresBefore=catalogServer.failures()
+  servedModels=[...servedModels,recoveryRow]
+  await waitForRefreshAfter(Date.now(),"new model withheld by temporary metadata failure")
+  const unavailable=await waitForPublicationState(state=>state.withheld.some(entry=>entry.id==="e2e-metadata-recovery"&&entry.status==="metadata-unavailable"),"temporary metadata-unavailable withholding")
+  assert(catalogServer.failures()>recoveryFailuresBefore,"temporary metadata failure must be a real catalog request")
+  assert.equal(unavailable.publishable.length,19,"existing registrations remain available during the temporary metadata failure")
+  catalogServer.setOutage(false)
+  currentCatalog=structuredClone(baselineCatalog)
+  await resetCatalogCache()
+  await waitForRefreshAfter(Date.now(),"same-set recovery of metadata-unavailable model")
+  const recoveredMetadata=await waitForPublicationState(state=>state.publishable.length===20&&state.withheld.length===0,"recovery without a model-set change")
+  assert(recoveredMetadata.publishable.some(entry=>entry.id==="e2e-metadata-recovery"),"temporarily withheld model must recover")
 
   // A successful live deletion wins over cached models.
   servedModels=[]

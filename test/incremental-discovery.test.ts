@@ -49,6 +49,7 @@ function harness() {
   let fetches = 0
   let catalogRequests = 0
   let forceCatalogRequests = 0
+  let forceCatalogFailure = false
   const context: SyncContext = {
     integration: {
       connection: {
@@ -68,6 +69,7 @@ function harness() {
       catalogRequests += 1
       if (request.forceRefresh) {
         forceCatalogRequests += 1
+        if (forceCatalogFailure) throw Object.assign(new Error("models.dev offline"), { code: "ECONNREFUSED" })
         return latestCatalog
       }
       return localCatalog
@@ -79,6 +81,7 @@ function harness() {
     setLive(value: unknown) { live = value },
     setLocalCatalog(value: unknown) { localCatalog = value },
     setLatestCatalog(value: unknown) { latestCatalog = value },
+    setForceCatalogFailure(value: boolean) { forceCatalogFailure = value },
     get fetches() { return fetches },
     get catalogRequests() { return catalogRequests },
     get forceCatalogRequests() { return forceCatalogRequests },
@@ -120,6 +123,43 @@ test("incremental discovery uses model_name identity and demand-driven catalog r
     expect(h.snapshot.models.map((model) => model.id)).toEqual(["model-a", "model-b"])
     expect(h.catalogRequests).toBe(4)
     expect(h.forceCatalogRequests).toBe(1)
+  } finally {
+    await h.loop.dispose()
+  }
+})
+
+test("temporary metadata-withheld models recover on an unchanged set; stable unmatched models do not retry", async () => {
+  const h = harness()
+  await h.loop.start()
+  try {
+    expect(h.snapshot.models.map((model) => model.id)).toEqual(["model-a"])
+
+    h.setForceCatalogFailure(true)
+    h.setLive(response(["model-a", "model-b"]))
+    await h.loop.trigger(true)
+    expect(h.snapshot.models.map((model) => model.id)).toEqual(["model-a"])
+    expect(h.snapshot.diagnostics?.publication?.withheld.map((entry) => entry.id)).toEqual(["model-b"])
+    expect(h.snapshot.diagnostics?.publication?.failureKind).toBe("unreachable")
+
+    h.setForceCatalogFailure(false)
+    h.setLatestCatalog(catalog(["model-a", "model-b"]))
+    await h.loop.trigger(true)
+    expect(h.snapshot.models.map((model) => model.id)).toEqual(["model-a", "model-b"])
+    expect(h.snapshot.diagnostics?.publication?.withheld).toEqual([])
+    expect(h.forceCatalogRequests).toBe(2)
+
+    h.setLocalCatalog(catalog(["model-a", "model-b"]))
+    h.setLatestCatalog(catalog(["model-a", "model-b"]))
+    h.setLive(response(["model-a", "model-b", "stable-unmatched"]))
+    await h.loop.trigger(true)
+    expect(h.snapshot.models.map((model) => model.id)).toEqual(["model-a", "model-b"])
+    expect(h.snapshot.diagnostics?.publication?.withheld[0]?.status).toBe("unmatched")
+    const requestsAfterStableMiss = h.catalogRequests
+
+    h.setLatestCatalog(catalog(["model-a", "model-b", "stable-unmatched"]))
+    await h.loop.trigger(true)
+    expect(h.snapshot.models.map((model) => model.id)).toEqual(["model-a", "model-b"])
+    expect(h.catalogRequests).toBe(requestsAfterStableMiss)
   } finally {
     await h.loop.dispose()
   }

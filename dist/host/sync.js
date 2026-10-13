@@ -1,6 +1,6 @@
 import { buildModelSpecs, hasOperationalLimits, modelFingerprint, toOpenCodeModelSpec } from "../core/build.js";
 import { createDiscoveryCacheDiagnostics, diagnoseModelSpecs, } from "../core/diagnostics.js";
-import { classifyMetadataFailure, capturedPublicationVerdict, createLastKnownGoodEntry, decideAcknowledgement, groupLiteLLMDeployments, isRecord, lastKnownGoodKey, nextPublishedBaseline, parsePublicationMemory, serializePublicationMemory, PUBLICATION_MEMORY_SCHEMA_VERSION, } from "../generated/discovery-core/index.js";
+import { classifyMetadataFailure, capturedPublicationVerdict, createLastKnownGoodEntry, decideAcknowledgement, groupLiteLLMDeployments, lastKnownGoodKey, mergeDiscoveryDiagnostics, mergePublicationResults, modelNameDelta, modelNamesOfResponse, needsCatalogRefresh, nextPublishedBaseline, parsePublicationMemory, responseForModelNames, serializePublicationMemory, PUBLICATION_MEMORY_SCHEMA_VERSION, temporaryMetadataFailureModelNames, } from "../generated/discovery-core/index.js";
 import { normalizeLiteLLMURL } from "../core/litellm.js";
 import { createDiscoveryCoordinator } from "../core/refresh.js";
 import { compareDiscoverySnapshots, createDiscoverySnapshot, endpointFingerprint, inspectDiscoverySnapshot, } from "../core/snapshot.js";
@@ -42,92 +42,6 @@ function seedPublicationLKG(store, litellmResponse, catalog, options, publishabl
             // Seeding is best-effort; it must never fail a discovery.
         }
     }
-}
-function modelNamesOf(response) {
-    return groupLiteLLMDeployments(response)
-        .map((group) => group.modelName)
-        .sort((left, right) => left.localeCompare(right, "en"));
-}
-function modelNameDelta(previous, current) {
-    const previousSet = new Set(previous);
-    const currentSet = new Set(current);
-    return {
-        current,
-        added: current.filter((name) => !previousSet.has(name)),
-        removed: previous.filter((name) => !currentSet.has(name)),
-        unchanged: new Set(current.filter((name) => previousSet.has(name))),
-    };
-}
-function responseForModelNames(response, names) {
-    if (!isRecord(response) || !Array.isArray(response.data))
-        return response;
-    return {
-        ...response,
-        data: response.data.filter((item) => isRecord(item) && typeof item.model_name === "string" && names.has(item.model_name)),
-    };
-}
-function mergePublicationResults(previous, added, unchanged) {
-    if (!previous)
-        return added ?? { publishable: [], blocked: [], assessments: new Map() };
-    const publishable = [
-        ...previous.publishable.filter((entry) => unchanged.has(entry.spec.id)),
-        ...(added?.publishable ?? []),
-    ].sort((left, right) => left.spec.id.localeCompare(right.spec.id, "en"));
-    const blocked = [
-        ...previous.blocked.filter((entry) => unchanged.has(entry.spec.id)),
-        ...(added?.blocked ?? []),
-    ].sort((left, right) => left.spec.id.localeCompare(right.spec.id, "en"));
-    const assessments = new Map(previous.assessments);
-    for (const id of [...assessments.keys()]) {
-        if (!unchanged.has(id))
-            assessments.delete(id);
-    }
-    for (const [id, assessment] of added?.assessments ?? [])
-        assessments.set(id, assessment);
-    return { publishable, blocked, assessments };
-}
-function needsCatalogRefresh(result, added) {
-    return [...result.publishable, ...result.blocked]
-        .some((entry) => added.has(entry.spec.id) && entry.assessment.identity.selected === undefined);
-}
-function responseEntryCount(response) {
-    return isRecord(response) && Array.isArray(response.data) ? response.data.length : undefined;
-}
-function mergeDiagnostics(previous, changed, response, currentNames, added) {
-    const source = changed ?? previous;
-    const current = new Set(currentNames);
-    const models = [
-        ...previous.models.filter((model) => current.has(model.id) && !added.has(model.id)),
-        ...(changed?.models ?? []),
-    ].sort((left, right) => left.id.localeCompare(right.id, "en"));
-    const modelIssues = [
-        ...previous.issues.filter((issue) => issue.modelId !== undefined && current.has(issue.modelId) && !added.has(issue.modelId)),
-        ...(changed?.issues.filter((issue) => issue.modelId !== undefined) ?? []),
-    ];
-    const groups = groupLiteLLMDeployments(response);
-    const deployments = groups.reduce((count, group) => count + group.deployments.length, 0);
-    const responseEntries = responseEntryCount(response) ?? source.stats.responseEntries;
-    const matched = models.filter((model) => model.modelsDev.matched).length;
-    const protocolFallbacks = models.filter((model) => model.protocol.reason === "fallback" || model.protocol.reason === "mixed-fallback").length;
-    return {
-        ...source,
-        modelInfo: {
-            ...source.modelInfo,
-            status: responseEntryCount(response) === undefined ? "invalid" : "ok",
-        },
-        stats: {
-            ...source.stats,
-            responseEntries,
-            deployments,
-            filteredEntries: Math.max(0, responseEntries - deployments),
-            models: models.length,
-            modelsDevMatched: matched,
-            modelsDevUnmatched: models.length - matched,
-            protocolFallbacks,
-        },
-        models,
-        issues: [...source.issues.filter((issue) => issue.modelId === undefined), ...modelIssues],
-    };
 }
 function isKeyCredential(value) {
     return typeof value === "object" && value !== null && value.type === "key" &&
@@ -484,7 +398,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
             const previous = coordinator.state(nextIdentity).value;
             const coordinated = await coordinator.refresh(nextIdentity, async () => {
                 const response = await fetchModelInfo(addresses, resolved.key, dependencies.fetchImpl);
-                const currentModelNames = modelNamesOf(response);
+                const currentModelNames = modelNamesOfResponse(response);
                 if (dependencies.buildModels) {
                     let catalog;
                     try {
@@ -502,18 +416,21 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                 }
                 const reusable = previous?.publicationResult ? previous : undefined;
                 const delta = modelNameDelta(reusable?.modelNames ?? [], currentModelNames);
-                if (reusable && delta.added.length === 0 && delta.removed.length === 0)
+                const recoveryNames = reusable
+                    ? temporaryMetadataFailureModelNames(reusable.publicationResult, reusable.diagnostics)
+                    : [];
+                const processedModelNames = new Set([...delta.added, ...recoveryNames]);
+                const retainedModelNames = new Set(currentModelNames.filter((name) => !processedModelNames.has(name)));
+                if (reusable && processedModelNames.size === 0 && delta.removed.length === 0)
                     return reusable;
                 const controller = snapshot.publicationState ??= createPublicationState();
                 if (!publicationMemoryLoaded) {
                     await loadPublicationMemory(controller);
                     publicationMemoryLoaded = true;
                 }
-                const addedNames = new Set(delta.added);
-                const responseToBuild = reusable ? responseForModelNames(response, addedNames) : response;
+                const responseToBuild = reusable ? responseForModelNames(response, processedModelNames) : response;
                 let catalog = {};
                 let catalogFailure;
-                let processedModelNames = addedNames;
                 const loadCatalog = (forceRefresh) => fetchCatalog({
                     fetchImpl: dependencies.fetchImpl,
                     logger,
@@ -523,13 +440,11 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                 });
                 const now = Date.now();
                 let result;
-                if (delta.added.length === 0 && reusable) {
-                    result = mergePublicationResults(reusable.publicationResult, undefined, delta.unchanged);
-                    processedModelNames = new Set();
+                if (processedModelNames.size === 0 && reusable) {
+                    result = mergePublicationResults(reusable.publicationResult, undefined, retainedModelNames);
                 }
                 else if (currentModelNames.length === 0 && !reusable) {
                     result = buildPublicationModels(response, catalog, options, { now }).result;
-                    processedModelNames = new Set();
                 }
                 else {
                     let cached;
@@ -545,7 +460,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                         store: controller.store,
                         now,
                     }).result;
-                    if (needsCatalogRefresh(addedResult, addedNames)) {
+                    if (needsCatalogRefresh(addedResult, processedModelNames)) {
                         try {
                             catalog = (await loadCatalog(true)) ?? {};
                         }
@@ -560,7 +475,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                         }).result;
                     }
                     result = reusable
-                        ? mergePublicationResults(reusable.publicationResult, addedResult, delta.unchanged)
+                        ? mergePublicationResults(reusable.publicationResult, addedResult, retainedModelNames)
                         : addedResult;
                 }
                 const models = result.publishable
@@ -573,11 +488,11 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                     .map((entry) => entry.spec)
                     .map(toOpenCodeModelSpec)
                     .filter(hasOperationalLimits);
-                const changedDiagnostics = reusable && delta.added.length > 0
+                const changedDiagnostics = reusable && processedModelNames.size > 0
                     ? diagnoseModelSpecs(responseToBuild, catalog, options).diagnostics
                     : undefined;
                 const diagnostics = reusable
-                    ? mergeDiagnostics(reusable.diagnostics, changedDiagnostics, response, currentModelNames, addedNames)
+                    ? mergeDiscoveryDiagnostics(reusable.diagnostics, changedDiagnostics, response, currentModelNames, processedModelNames)
                     : diagnoseModelSpecs(response, catalog, options).diagnostics;
                 const catalogFacts = catalogFactsFor(result, {
                     discovered: diagnostics.stats.models,
@@ -588,7 +503,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                     models,
                     fingerprint: fingerprint(models),
                     diagnostics,
-                    publication: summarizePublication(result, catalogFacts, catalogFailure?.kind ?? (delta.added.length === 0 ? reusable?.publication?.failureKind : undefined)),
+                    publication: summarizePublication(result, catalogFacts, catalogFailure?.kind ?? (processedModelNames.size === 0 ? reusable?.publication?.failureKind : undefined)),
                     catalog: catalogFacts,
                     snapshotSpecs,
                     publicationResult: result,
