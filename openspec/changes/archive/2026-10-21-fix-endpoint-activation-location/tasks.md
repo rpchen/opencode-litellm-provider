@@ -11,8 +11,8 @@
 
 ## 2. Delivery validation
 
-- [ ] 最终修复按固定 provenance 重建 dist，通过类型检查、单测及交付/分发/包检查。
-- [x] 固定提交 34540af 通过 Real OpenCode 2.0.16 非默认目录 session 的真实键盘启用、模型发布和跨目录刷新回归。
+- [x] 最终修复按固定 provenance 重建 dist；308 项单测、类型检查、TUI、交付/分发/包检查通过，107 个 dist 文件固定复验一致。
+- [x] 固定 Git 包通过 Real OpenCode 2.0.16 / 2.0.30 非默认目录 session 的真实键盘启用、模型发布和跨目录刷新回归。
 - [x] 在用户实际 OpenCode 2.0.30 上验证单个非默认目录会话的键盘启用、模型发布和跨目录状态同步。
-- [ ] 通过 Real OpenCode 2.0.16 / 2.0.30 完整 CI E2E。
-- [ ] strict OpenSpec validation、scenario coverage 和 closure 检查；验收通过后 CLI archive。
+- [x] eb2f2375d0ecd33966f4ce4d68110bc6818047b6 的 CI #339（run 39532414531）中，常规 CI 及 Real OpenCode 2.0.16 / 2.0.30 完整 E2E 全部成功。
+- [x] strict OpenSpec validation、scenario coverage 和 closure 检查通过；使用 CLI archive 同步 canonical 规格后再次验证。
