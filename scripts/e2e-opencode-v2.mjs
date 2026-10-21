@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url"
 import { spawn, spawnSync } from "node:child_process"
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)))
+const hostVersion = process.env.E2E_OPENCODE_VERSION ?? "2.0.16"
+assert(["2.0.16", "2.0.30"].includes(hostVersion), "E2E_OPENCODE_VERSION must be a pinned tested version")
 const packageSpec = process.env.E2E_PACKAGE_SPEC
 // CI pins the GitHub commit. Local pre-push verification may pin a local clone with git+file://...#<sha>;
 // OpenCode's own installer still installs it, but the commit must be a full immutable SHA either way.
@@ -635,7 +637,7 @@ export default {
   env.OPENCODE_CONFIG_PROJECT_DISABLE = "1"
 
   const version = command(["--version"]).stdout.trim()
-  assert.match(version, /2\.0\.16/u, `real host must be pinned to OpenCode 2.0.16, got ${version}`)
+  assert.equal(version, `opencode v${hostVersion}`, `real host must be pinned to OpenCode ${hostVersion}, got ${version}`)
 
   // Match the user's real installation path. plugin add performs OpenCode's own
   // Git package install/cache and validates the server entrypoint. Because the
@@ -830,9 +832,11 @@ export default {
     const secondSession = await request("POST", "/api/session", { title: "activation location", location: { directory } })
     const secondID = payload(secondSession).id
     assert.equal(typeof secondID, "string")
-    api("POST", `/api/session/${secondID}/command`, "--data", JSON.stringify({ name: "litellm-endpoints", text: "" }))
     const secondTui = startAttachedTui(secondID)
+    await waitForTui(secondTui, "activation location")
+    await sleep(1000)
     const secondMark = secondTui.mark()
+    api("POST", `/api/session/${secondID}/command`, "--data", JSON.stringify({ name: "litellm-endpoints", text: "" }))
     await waitForTui(secondTui, "LiteLLM endpoints", { from: secondMark })
     await endpointDetailToggle(secondTui, "○ company", { expectAfter: /company[^|]*已启用/u, connected: true, wasActive: false, since: secondMark })
     secondTui.write("\x1b")
@@ -849,7 +853,7 @@ export default {
     assert((await stateAt()).activeEndpointIds.includes("company"), "already loaded default location did not reconcile persisted activation")
     await request("POST", `/api/rpc/litellm-endpoints/set${query}`, { input: { action: "toggle", endpointId: "company" } })
     assert.deepEqual((await stateAt()).activeEndpointIds, ["default"], "activation refresh did not restore the disabled state")
-    console.log("Real OpenCode activation location E2E passed")
+    console.log(`Real OpenCode ${hostVersion} activation location E2E passed`)
   }
 
   // Re-enable company through the same real selector (main list -> detail -> enable -> back).
@@ -1459,7 +1463,7 @@ export default {
     t3.write("\x1b")
     await sleep(300)
     await stopAttachedTui(t3)
-    console.log("Real OpenCode 2.0.16 endpoint management E2E passed: add/connect/activate/edit/replace/disconnect/deactivate/delete + restart through real TUI dialogs")
+    console.log(`Real OpenCode ${hostVersion} endpoint management E2E passed: add/connect/activate/edit/replace/disconnect/deactivate/delete + restart through real TUI dialogs`)
   } finally {
     await Promise.all([
       new Promise((resolve) => mgmtA.server.close(resolve)),
@@ -1630,7 +1634,7 @@ export default {
     tl2.write("\x1b")
     await sleep(300)
     await stopAttachedTui(tl2)
-    console.log("Real OpenCode 2.0.16 legacy endpoint management E2E passed: real /connect credential, migration, Edit, Delete + restart")
+    console.log(`Real OpenCode ${hostVersion} legacy endpoint management E2E passed: real /connect credential, migration, Edit, Delete + restart`)
   } finally {
     await Promise.all([
       new Promise((resolve) => legacyMock.server.close(resolve)),
@@ -1723,9 +1727,9 @@ export default {
   tg2.write("\x1b")
   await sleep(300)
   await stopAttachedTui(tg2)
-  console.log("Real OpenCode 2.0.16 ghostless legacy E2E passed: Add starts inactive and no stale default activation")
+  console.log(`Real OpenCode ${hostVersion} ghostless legacy E2E passed: Add starts inactive and no stale default activation`)
 
-  console.log("Real OpenCode 2.0.16 E2E passed: startup recovery, native keyboard activation, endpoint-scoped diagnostics, credentials, providers, models and schema-9 LKG recovery (configured -> configured-lkg -> configured) are verified.")
+  console.log(`Real OpenCode ${hostVersion} E2E passed: startup recovery, native keyboard activation, endpoint-scoped diagnostics, credentials, providers, models and schema-9 LKG recovery (configured -> configured-lkg -> configured) are verified.`)
 } catch (error) {
   await dumpFailureDiagnostics()
   throw error

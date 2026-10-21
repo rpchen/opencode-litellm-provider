@@ -6,6 +6,7 @@
 
 - endpoint 管理、凭据 integration 查询/连接和结果轮询明确使用当前会话 location。
 - 管理状态刷新重新读取共享 activation，仅在变化时协调当前实例的 provider/discovery。
+- 保留现有 2.0.16 CI 门禁，并增加用户实际 OpenCode 2.0.30 的固定版本 E2E。
 - 增加跨目录真实宿主及单元回归，检查启用、模型发布和停用收敛。
 
 ## Capabilities

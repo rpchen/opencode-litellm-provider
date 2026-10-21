@@ -10,5 +10,6 @@
 
 - [x] 固定 provenance 重建 dist，通过类型检查、单测及交付/分发/包检查。
 - [x] 固定提交 34540af 通过 Real OpenCode 2.0.16 非默认目录 session 的真实键盘启用、模型发布和跨目录刷新回归。
-- [ ] 通过 Real OpenCode 2.0.16 非默认目录 session 键盘启用回归与完整 E2E。
+- [x] 在用户实际 OpenCode 2.0.30 上验证单个非默认目录会话的键盘启用、模型发布和跨目录状态同步。
+- [ ] 通过 Real OpenCode 2.0.16 / 2.0.30 完整 CI E2E。
 - [ ] strict OpenSpec validation、scenario coverage 和 closure 检查；验收通过后 CLI archive。

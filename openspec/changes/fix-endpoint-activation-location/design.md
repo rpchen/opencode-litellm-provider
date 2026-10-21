@@ -21,4 +21,4 @@ OpenCode 2.0.16 的 provider/plugin runtime 按 location 隔离，KV activation 
 
 - [ACT-LOCATION] 单元回归先在旧实现失败，覆盖当前位置、切换位置及启用请求。
 - [ACT-LOCATION-REFRESH] 共享 storage 的两个独立 runtime，检查真实 Core fixtures 经 provider transform 发布模型、状态与停用收敛。
-- Real OpenCode 2.0.16：固定 Git 包安装，隔离 HOME/XDG、本地 fake LiteLLM、非默认目录 session 的真实键盘启用和模型列表；原有完整真实宿主门禁继续运行。
+- Real OpenCode 2.0.16 与用户实际使用的 2.0.30：固定 Git 包安装，隔离 HOME/XDG、本地 fake LiteLLM、非默认目录 session 的真实键盘启用和模型列表；原有完整真实宿主门禁继续运行。
