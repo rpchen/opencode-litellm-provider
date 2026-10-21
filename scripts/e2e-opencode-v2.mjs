@@ -1327,7 +1327,7 @@ export default {
     await type(t, "e2e-new"); m = t.mark(); t.write("\r")
     await waitForTui(t, /Base\s*URL/u, { from: m })
     await type(t, mgmtA.baseUrl); m = t.mark(); t.write("\r")
-    await waitForTui(t, /e2e-new[^|]*未启用[^|]*未保存/u, { from: m })
+    await waitForTui(t, /e2e-new[^|]*未启用[^|]*未保(?:\s|esc|[┃╹▀╻╺╸])*存/u, { from: m })
     let options = parsedOptions()
     assert.equal(options.endpoints["e2e-new"]?.baseUrl, mgmtA.baseUrl, "Add did not write the endpoint into the config file")
     assert.equal(options.futureOption?.keep?.[0], "me", "Add lost an unknown option")
@@ -1342,12 +1342,14 @@ export default {
     const L = (...rest) => mainList(["✓ company", ...rest])
     m = await choose(t, L("○ e2e-new"), "○ e2e-new", { since: m })
     let detail = DETAIL(false, false)
-    m = await choose(t, detail, "连接 API Key", { anchor: /e2e-new[^|]*未启用[^|]*未保存/u, since: m })
+    m = await choose(t, detail, "连接 API Key", { anchor: /e2e-new[^|]*未启用[^|]*未保(?:\s|esc|[┃╹▀╻╺╸])*存/u, since: m })
     await waitForTui(t, /连接\s*\S*\s*的\s*API/u, { from: m })
     await type(t, "sk-mgmt-one")
     const beforeSubmit = t.mark()
     t.write("\r")
-    await waitForTui(t, /e2e-new[^|]*未启用[^|]*已保存/u, { from: beforeSubmit })
+    // Native modal headers can wrap between 保/存 around the painted esc hint.
+    // Match only that terminal chrome; credential persistence is asserted below.
+    await waitForTui(t, /e2e-new[^|]*未启用[^|]*已保(?:\s|esc|[┃╹▀╻╺╸])*存/u, { from: beforeSubmit })
     assert.equal(connectionsOf("litellm-e2e-new").length, 1, "Connect did not store a credential through the host")
     assert(!providerIds().includes("litellm-e2e-new"), "Connect must not activate the endpoint")
     const afterConnect = t.mark()
@@ -1358,7 +1360,7 @@ export default {
 // [ACT-IMMEDIATE]
     // 3. ACTIVATE -> provider + models appear; discovery used the connected key
     detail = DETAIL(false, true)
-    await choose(t, detail, "启用", { anchor: /e2e\S*[^|]*未启用[^|]*已保存/u, since: m })
+    await choose(t, detail, "启用", { anchor: /e2e\S*[^|]*未启用[^|]*已保(?:\s|esc|[┃╹▀╻╺╸])*存/u, since: m })
     await waitProviders(["litellm-e2e-new"])
     assert(mgmtA.acceptedRequests() > 0, "activation did not trigger authenticated discovery")
     let models = command(["models", "--server", openCodeServer.url], { timeout: 120_000 })
@@ -1376,13 +1378,13 @@ export default {
     mgmtB.keys.expected = "sk-mgmt-one"
     const bBefore = mgmtB.acceptedRequests()
     detail = DETAIL(true, true)
-    m = await choose(t, detail, "修改 Base URL", { anchor: /e2e\S*[^|]*已启用[^|]*已保存/u, since: m })
+    m = await choose(t, detail, "修改 Base URL", { anchor: /e2e\S*[^|]*已启用[^|]*已保(?:\s|esc|[┃╹▀╻╺╸])*存/u, since: m })
     await waitForTui(t, "ID 不可修改", { from: m })
     await clear(t, mgmtA.baseUrl.length + 5)
     await type(t, mgmtB.baseUrl)
     m = t.mark()
     t.write("\r")
-    await waitForTui(t, /e2e-new[^|]*已启用[^|]*已保存/u, { from: m })
+    await waitForTui(t, /e2e-new[^|]*已启用[^|]*已保(?:\s|esc|[┃╹▀╻╺╸])*存/u, { from: m })
     options = parsedOptions()
     assert.equal(options.endpoints["e2e-new"].baseUrl, mgmtB.baseUrl, "Edit did not write the new Base URL")
     assert.equal(options.endpoints["e2e-new"].hand, "written", "Edit dropped a hand-written field")
@@ -1396,38 +1398,38 @@ export default {
 
     // 5. REPLACE key (credential count stays 1, old key gone) — mock B only accepts the new key
     mgmtB.keys.expected = "sk-mgmt-two" // the replaced key is the only one the mock accepts
-    m = await choose(t, DETAIL(true, true), "替换 API Key", { anchor: /e2e\S*[^|]*已启用[^|]*已保存/u, since: m })
+    m = await choose(t, DETAIL(true, true), "替换 API Key", { anchor: /e2e\S*[^|]*已启用[^|]*已保(?:\s|esc|[┃╹▀╻╺╸])*存/u, since: m })
     await waitForTui(t, /替换\s*\S*\s*的\s*API/u, { from: m })
     await type(t, "sk-mgmt-two")
     m = t.mark()
     t.write("\r")
-    await waitForTui(t, /e2e-new[^|]*已启用[^|]*已保存/u, { from: m })
+    await waitForTui(t, /e2e-new[^|]*已启用[^|]*已保(?:\s|esc|[┃╹▀╻╺╸])*存/u, { from: m })
     assert.equal(connectionsOf("litellm-e2e-new").length, 1, "Replace must overwrite, leaving exactly one credential")
 
     // 6. DISCONNECT (confirm dialog): credential gone, endpoint + activation stay
-    m = await choose(t, DETAIL(true, true), "断开凭据", { anchor: /e2e\S*[^|]*已启用[^|]*已保存/u, since: m })
+    m = await choose(t, DETAIL(true, true), "断开凭据", { anchor: /e2e\S*[^|]*已启用[^|]*已保(?:\s|esc|[┃╹▀╻╺╸])*存/u, since: m })
     await waitForTui(t, /仅删除[^|]*已保存的\s*API/u, { from: m })
     m = t.mark()
     t.write("\r") // default focus = Confirm (probed on the real TUI)
-    await waitForTui(t, /e2e-new[^|]*已启用[^|]*未保存/u, { from: m })
+    await waitForTui(t, /e2e-new[^|]*已启用[^|]*未保(?:\s|esc|[┃╹▀╻╺╸])*存/u, { from: m })
     assert.equal(connectionsOf("litellm-e2e-new").length, 0, "Disconnect left a credential behind")
     assert(parsedOptions().endpoints["e2e-new"], "Disconnect removed the endpoint definition")
     assert.deepEqual(connectionsOf("litellm-company").map((c) => c.id).sort(), companyBaseline, "Disconnect touched another endpoint's credential")
 
     // 7. CONNECT again, then DEACTIVATE
-    m = await choose(t, DETAIL(true, false), "连接 API Key", { anchor: /e2e\S*[^|]*已启用[^|]*未保存/u, since: m })
+    m = await choose(t, DETAIL(true, false), "连接 API Key", { anchor: /e2e\S*[^|]*已启用[^|]*未保(?:\s|esc|[┃╹▀╻╺╸])*存/u, since: m })
     await waitForTui(t, /连接\s*\S*\s*的\s*API/u, { from: m })
     await type(t, "sk-mgmt-two")
     m = t.mark()
     t.write("\r")
-    await waitForTui(t, /e2e-new[^|]*已启用[^|]*已保存/u, { from: m })
-    await choose(t, DETAIL(true, true), "停用", { anchor: /e2e\S*[^|]*已启用[^|]*已保存/u, since: m })
-    await waitForTui(t, /e2e-new[^|]*未启用[^|]*已保存/u, { from: m })
+    await waitForTui(t, /e2e-new[^|]*已启用[^|]*已保(?:\s|esc|[┃╹▀╻╺╸])*存/u, { from: m })
+    await choose(t, DETAIL(true, true), "停用", { anchor: /e2e\S*[^|]*已启用[^|]*已保(?:\s|esc|[┃╹▀╻╺╸])*存/u, since: m })
+    await waitForTui(t, /e2e-new[^|]*未启用[^|]*已保(?:\s|esc|[┃╹▀╻╺╸])*存/u, { from: m })
     await waitProviders([], ["litellm-e2e-new"])
     assert.equal(connectionsOf("litellm-e2e-new").length, 1, "Deactivate removed the credential")
 
     // 8. DELETE (confirm): definition, credential and provider all go; company keeps everything
-    m = await choose(t, DETAIL(false, true), "删除 endpoint", { anchor: /e2e\S*[^|]*未启用[^|]*已保存/u, since: m })
+    m = await choose(t, DETAIL(false, true), "删除 endpoint", { anchor: /e2e\S*[^|]*未启用[^|]*已保(?:\s|esc|[┃╹▀╻╺╸])*存/u, since: m })
     await waitForTui(t, /将彻底删/u, { from: m })
     m = t.mark()
     t.write("\r")
@@ -1546,18 +1548,18 @@ export default {
     const tl = startAttachedTui(legacySession)
     let ml = tl.mark()
     await waitForTui(tl, "＋ 新增 endpoint", { from: ml })
-    await waitForTui(tl, /default[^|]*已保存/u, { from: ml })
+    await waitForTui(tl, /default[^|]*已保(?:\s|esc|[┃╹▀╻╺╸])*存/u, { from: ml })
     assert(legacyOptions().endpoints === undefined, "test setup must start in legacy mode")
 
     // phase 2 left an explicit activation selection; enable everything first (the legacy default row is
     // inactive until then, and an inactive endpoint still keeps its /connect integration).
     ml = await choose(tl, ["＋ 新增 endpoint", "全部启用", "全部停用", "○ default"], "全部启用", { since: ml })
-    await waitForTui(tl, /default[^|]*已启用[^|]*已保存/u, { from: ml })
+    await waitForTui(tl, /default[^|]*已启用[^|]*已保(?:\s|esc|[┃╹▀╻╺╸])*存/u, { from: ml })
 
     // 3b. Legacy Delete Cancel (before any migration): cancelling the final confirmation is side-effect free
     const legacyDetail = ["停用", "修改 Base URL", "替换 API Key", "断开凭据", "删除 endpoint", "返回"]
     ml = await choose(tl, ["＋ 新增 endpoint", "全部启用", "全部停用", "✓ default"], "✓ default", { since: ml })
-    ml = await choose(tl, legacyDetail, "删除 endpoint", { anchor: /default[^|]*已启用[^|]*已保存/u, since: ml })
+    ml = await choose(tl, legacyDetail, "删除 endpoint", { anchor: /default[^|]*已启用[^|]*已保(?:\s|esc|[┃╹▀╻╺╸])*存/u, since: ml })
     await waitForTui(tl, /legacy 单 endpoint/u, { from: ml }) // the combined confirmation explains the internal migration
     const cancelFrom = tl.mark()
     const beforeCancelConnections = connectionsOf("litellm").map((c) => c.id)
@@ -1567,12 +1569,12 @@ export default {
     assert(readLegacy().includes("// phase 3: legacy single-endpoint configuration"), "a cancelled Delete modified the config")
     assert.deepEqual(connectionsOf("litellm").map((c) => c.id), beforeCancelConnections, "a cancelled Delete must not remove the credential")
     assert(integrationsNow().some((i) => i.id === "litellm"), "a cancelled Delete must keep the integration")
-    await waitForTui(tl, /default[^|]*已启用[^|]*已保存/u, { from: cancelFrom }) // back on the detail screen: still usable
-    ml = await choose(tl, legacyDetail, "返回", { anchor: /default[^|]*已启用[^|]*已保存/u, since: cancelFrom })
+    await waitForTui(tl, /default[^|]*已启用[^|]*已保(?:\s|esc|[┃╹▀╻╺╸])*存/u, { from: cancelFrom }) // back on the detail screen: still usable
+    ml = await choose(tl, legacyDetail, "返回", { anchor: /default[^|]*已启用[^|]*已保(?:\s|esc|[┃╹▀╻╺╸])*存/u, since: cancelFrom })
 
     // 4. credential management through the UI: Replace first migrates (confirm), then saves the new key
     ml = await choose(tl, ["＋ 新增 endpoint", "全部启用", "全部停用", "✓ default"], "✓ default", { since: ml })
-    ml = await choose(tl, legacyDetail, "替换 API Key", { anchor: /default[^|]*已启用[^|]*已保存/u, since: ml })
+    ml = await choose(tl, legacyDetail, "替换 API Key", { anchor: /default[^|]*已启用[^|]*已保(?:\s|esc|[┃╹▀╻╺╸])*存/u, since: ml })
     await waitForTui(tl, /迁移为可管理配置/u, { from: ml })
     ml = tl.mark()
     tl.write("\r") // Confirm on the migration dialog (default focus, probed on the real TUI)
@@ -1580,7 +1582,7 @@ export default {
     await type(tl, "sk-legacy-replaced")
     ml = tl.mark()
     tl.write("\r")
-    await waitForTui(tl, /default[^|]*已启用[^|]*已保存/u, { from: ml })
+    await waitForTui(tl, /default[^|]*已启用[^|]*已保(?:\s|esc|[┃╹▀╻╺╸])*存/u, { from: ml })
     const afterMigrate = legacyOptions()
     assert.equal(afterMigrate.endpoints?.default?.baseUrl, legacyMock.baseUrl, "migration must materialise the connected address")
     assert.deepEqual(afterMigrate.endpoints.default.protocolOverrides, { "demo-model": "chat" }, "migration must move protocolOverrides")
@@ -1596,13 +1598,13 @@ export default {
     legacyTarget.keys.expected = "sk-legacy-replaced"
     const targetBefore = legacyTarget.acceptedRequests()
     const oldUrlBefore = legacyMock.acceptedRequests() // discovery legitimately ran on the old address before the edit
-    ml = await choose(tl, legacyDetail, "修改 Base URL", { anchor: /default[^|]*已启用[^|]*已保存/u, since: ml })
+    ml = await choose(tl, legacyDetail, "修改 Base URL", { anchor: /default[^|]*已启用[^|]*已保(?:\s|esc|[┃╹▀╻╺╸])*存/u, since: ml })
     await waitForTui(tl, /ID\s*不可修改/u, { from: ml })
     await clear(tl, legacyMock.baseUrl.length + 5)
     await type(tl, legacyTarget.baseUrl)
     ml = tl.mark()
     tl.write("\r")
-    await waitForTui(tl, /default[^|]*已启用[^|]*已保存/u, { from: ml })
+    await waitForTui(tl, /default[^|]*已启用[^|]*已保(?:\s|esc|[┃╹▀╻╺╸])*存/u, { from: ml })
     assert.equal(legacyOptions().endpoints.default.baseUrl, legacyTarget.baseUrl, "Edit must update the migrated Base URL")
     assert.deepEqual(legacyOptions().endpoints.default.protocolOverrides, { "demo-model": "chat" }, "Edit dropped protocolOverrides")
     assert(readLegacy().includes("// phase 3: legacy single-endpoint configuration"), "Edit removed user comments")
@@ -1611,7 +1613,7 @@ export default {
     assert.equal(legacyMock.acceptedRequests(), oldUrlBefore, "the migrated endpoint must not query the old address after the edit")
 
     // 7. Delete through the UI (definition + credential go)
-    ml = await choose(tl, legacyDetail, "删除 endpoint", { anchor: /default[^|]*已启用[^|]*已保存/u, since: ml })
+    ml = await choose(tl, legacyDetail, "删除 endpoint", { anchor: /default[^|]*已启用[^|]*已保(?:\s|esc|[┃╹▀╻╺╸])*存/u, since: ml })
     await waitForTui(tl, /将彻底删/u, { from: ml })
     ml = tl.mark()
     tl.write("\r") // Confirm (default focus)

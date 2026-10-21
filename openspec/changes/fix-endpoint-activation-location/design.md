@@ -27,3 +27,6 @@ OpenCode 2.0.16 的 provider/plugin runtime 按 location 隔离，KV activation 
 ## Host version evidence
 
 2.0.30 的原生 Anthropic SDK 在 `packages/ai/src/protocols/shared.ts:fitThinkingBudget` 将超过 max_tokens 一半的显式 thinking budget 限制为一半；2.0.16 尚无此行为。完整 E2E 保留注册视图 high=16000/max=64000 的精确断言，仅按固定宿主版本区分实际请求 max budget（2.0.16 为64000，2.0.30 为32000）。这不修改插件元数据或推理参数实现。
+
+
+2.0.30 真实 TUI 将长 endpoint 详情标题的“已保存”在“保/存”之间换行，并在其间绘制 esc 提示；E2E 标题定位允许该已观察到的空白/边框/esc chrome，凭据数量与激活状态仍由真实宿主 API 严格断言。
