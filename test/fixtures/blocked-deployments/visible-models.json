@@ -1,0 +1,80 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "chat-model-01",
+      "object": "model",
+      "owned_by": "test"
+    },
+    {
+      "id": "chat-model-02",
+      "object": "model",
+      "owned_by": "test"
+    },
+    {
+      "id": "chat-model-03",
+      "object": "model",
+      "owned_by": "test"
+    },
+    {
+      "id": "chat-model-04",
+      "object": "model",
+      "owned_by": "test"
+    },
+    {
+      "id": "chat-model-05",
+      "object": "model",
+      "owned_by": "test"
+    },
+    {
+      "id": "chat-model-06",
+      "object": "model",
+      "owned_by": "test"
+    },
+    {
+      "id": "chat-model-07",
+      "object": "model",
+      "owned_by": "test"
+    },
+    {
+      "id": "chat-model-08",
+      "object": "model",
+      "owned_by": "test"
+    },
+    {
+      "id": "chat-model-09",
+      "object": "model",
+      "owned_by": "test"
+    },
+    {
+      "id": "chat-model-10",
+      "object": "model",
+      "owned_by": "test"
+    },
+    {
+      "id": "chat-model-11",
+      "object": "model",
+      "owned_by": "test"
+    },
+    {
+      "id": "chat-model-12",
+      "object": "model",
+      "owned_by": "test"
+    },
+    {
+      "id": "chat-model-13",
+      "object": "model",
+      "owned_by": "test"
+    },
+    {
+      "id": "metadata-missing-chat",
+      "object": "model",
+      "owned_by": "test"
+    },
+    {
+      "id": "text-embedding-test",
+      "object": "model",
+      "owned_by": "test"
+    }
+  ]
+}

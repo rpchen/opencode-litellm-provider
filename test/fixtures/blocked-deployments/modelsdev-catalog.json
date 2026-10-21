@@ -1,0 +1,350 @@
+{
+  "models": {
+    "openai/chat-model-01": {},
+    "openai/chat-model-02": {},
+    "openai/chat-model-03": {},
+    "openai/chat-model-04": {},
+    "openai/chat-model-05": {},
+    "openai/chat-model-06": {},
+    "openai/chat-model-07": {},
+    "openai/chat-model-08": {},
+    "openai/chat-model-09": {},
+    "openai/chat-model-10": {},
+    "openai/chat-model-11": {},
+    "openai/chat-model-12": {},
+    "openai/chat-model-13": {},
+    "openai/gpt-5.5": {},
+    "openai/gpt-5.6-luna": {},
+    "openai/gpt-5.6-sol": {},
+    "openai/gpt-5.6-terra": {},
+    "openai/gpt-6-astra": {},
+    "openai/gpt-6-luna": {},
+    "openai/gpt-6-sol": {}
+  },
+  "providers": {
+    "openai": {
+      "models": {
+        "chat-model-01": {
+          "limit": {
+            "context": 100000,
+            "output": 10000
+          },
+          "tool_call": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "chat-model-02": {
+          "limit": {
+            "context": 100000,
+            "output": 10000
+          },
+          "tool_call": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "chat-model-03": {
+          "limit": {
+            "context": 100000,
+            "output": 10000
+          },
+          "tool_call": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "chat-model-04": {
+          "limit": {
+            "context": 100000,
+            "output": 10000
+          },
+          "tool_call": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "chat-model-05": {
+          "limit": {
+            "context": 100000,
+            "output": 10000
+          },
+          "tool_call": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "chat-model-06": {
+          "limit": {
+            "context": 100000,
+            "output": 10000
+          },
+          "tool_call": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "chat-model-07": {
+          "limit": {
+            "context": 100000,
+            "output": 10000
+          },
+          "tool_call": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "chat-model-08": {
+          "limit": {
+            "context": 100000,
+            "output": 10000
+          },
+          "tool_call": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "chat-model-09": {
+          "limit": {
+            "context": 100000,
+            "output": 10000
+          },
+          "tool_call": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "chat-model-10": {
+          "limit": {
+            "context": 100000,
+            "output": 10000
+          },
+          "tool_call": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "chat-model-11": {
+          "limit": {
+            "context": 100000,
+            "output": 10000
+          },
+          "tool_call": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "chat-model-12": {
+          "limit": {
+            "context": 100000,
+            "output": 10000
+          },
+          "tool_call": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "chat-model-13": {
+          "limit": {
+            "context": 100000,
+            "output": 10000
+          },
+          "tool_call": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "gpt-5.5": {
+          "limit": {
+            "context": 100000,
+            "output": 10000
+          },
+          "tool_call": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "gpt-5.6-luna": {
+          "limit": {
+            "context": 100000,
+            "output": 10000
+          },
+          "tool_call": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "gpt-5.6-sol": {
+          "limit": {
+            "context": 100000,
+            "output": 10000
+          },
+          "tool_call": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "gpt-5.6-terra": {
+          "limit": {
+            "context": 100000,
+            "output": 10000
+          },
+          "tool_call": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "gpt-6-astra": {
+          "limit": {
+            "context": 100000,
+            "output": 10000
+          },
+          "tool_call": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "gpt-6-luna": {
+          "limit": {
+            "context": 100000,
+            "output": 10000
+          },
+          "tool_call": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        },
+        "gpt-6-sol": {
+          "limit": {
+            "context": 100000,
+            "output": 10000
+          },
+          "tool_call": true,
+          "reasoning": false,
+          "modalities": {
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

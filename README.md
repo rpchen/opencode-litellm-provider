@@ -347,7 +347,9 @@ Core Commit      a08db4a7
 | 成功返回空清单 | 撤下旧模型 |
 | 断开 LiteLLM 连接 | 撤下 provider 模型 |
 
-`/v1/model/info` 提供可见模型名，`/v1/models` 不作为发现源。非对话模型继续过滤。Core 选中的单条 models.dev 记录提供工具、输入/输出模态、推理选项和 context/input/output；字段缺失与明确 false 分开处理。只有关键能力明确、已知模态及正数 context/output 的模型正常注册，其余保留具体诊断；价格不是准入条件。
+`/v1/model/info` 提供部署模型名，`/v1/models` 不作为发现源。非对话模型继续过滤。Core 选中的单条 models.dev 记录提供工具、输入/输出模态、推理选项和 context/input/output；字段缺失与明确 false 分开处理。只有关键能力明确、已知模态及正数 context/output 的模型正常注册，其余保留具体诊断；价格不是准入条件。
+
+LiteLLM 管理员在 Models 页面暂停（Disable）的 deployment（`model_info.blocked: true`）不会参与模型发布；同名 deployment 全部暂停时，该模型会在下一次成功刷新后从宿主列表移除。同名模型仍有未暂停的对话 deployment 时继续参与发现。`/model/info` 可能仍包含暂停项；插件由共享 Core 过滤，不把 embedding 等非对话模型注册到模型选择器。
 
 ## 升级与回滚
 

@@ -1,0 +1,296 @@
+{
+  "kind": "synthetic-regression-fixture",
+  "note": "Synthetic 29-deployment/25-name layout based on the reported counts and LiteLLM v1.99.0 blocked semantics; not an export of the company service.",
+  "data": [
+    {
+      "model_name": "chat-model-01",
+      "litellm_params": {
+        "model": "openai/chat-model-01"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": false
+      }
+    },
+    {
+      "model_name": "chat-model-02",
+      "litellm_params": {
+        "model": "openai/chat-model-02"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": false
+      }
+    },
+    {
+      "model_name": "chat-model-03",
+      "litellm_params": {
+        "model": "openai/chat-model-03"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": false
+      }
+    },
+    {
+      "model_name": "chat-model-04",
+      "litellm_params": {
+        "model": "openai/chat-model-04"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": false
+      }
+    },
+    {
+      "model_name": "chat-model-05",
+      "litellm_params": {
+        "model": "openai/chat-model-05"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": false
+      }
+    },
+    {
+      "model_name": "chat-model-06",
+      "litellm_params": {
+        "model": "openai/chat-model-06"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": false
+      }
+    },
+    {
+      "model_name": "chat-model-07",
+      "litellm_params": {
+        "model": "openai/chat-model-07"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": false
+      }
+    },
+    {
+      "model_name": "chat-model-08",
+      "litellm_params": {
+        "model": "openai/chat-model-08"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": false
+      }
+    },
+    {
+      "model_name": "chat-model-09",
+      "litellm_params": {
+        "model": "openai/chat-model-09"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": false
+      }
+    },
+    {
+      "model_name": "chat-model-10",
+      "litellm_params": {
+        "model": "openai/chat-model-10"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": false
+      }
+    },
+    {
+      "model_name": "chat-model-11",
+      "litellm_params": {
+        "model": "openai/chat-model-11"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": false
+      }
+    },
+    {
+      "model_name": "chat-model-12",
+      "litellm_params": {
+        "model": "openai/chat-model-12"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": false
+      }
+    },
+    {
+      "model_name": "chat-model-13",
+      "litellm_params": {
+        "model": "openai/chat-model-13"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": false
+      }
+    },
+    {
+      "model_name": "metadata-missing-chat",
+      "litellm_params": {
+        "model": "openai/metadata-missing-chat"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": false
+      }
+    },
+    {
+      "model_name": "gpt-5.5",
+      "litellm_params": {
+        "model": "openai/gpt-5.5"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": true
+      }
+    },
+    {
+      "model_name": "gpt-5.6-luna",
+      "litellm_params": {
+        "model": "openai/gpt-5.6-luna"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": true
+      }
+    },
+    {
+      "model_name": "gpt-5.6-sol",
+      "litellm_params": {
+        "model": "openai/gpt-5.6-sol"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": true
+      }
+    },
+    {
+      "model_name": "gpt-5.6-terra",
+      "litellm_params": {
+        "model": "openai/gpt-5.6-terra"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": true
+      }
+    },
+    {
+      "model_name": "gpt-6-astra",
+      "litellm_params": {
+        "model": "openai/gpt-6-astra"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": true
+      }
+    },
+    {
+      "model_name": "gpt-6-luna",
+      "litellm_params": {
+        "model": "openai/gpt-6-luna"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": true
+      }
+    },
+    {
+      "model_name": "gpt-6-sol",
+      "litellm_params": {
+        "model": "openai/gpt-6-sol"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": true
+      }
+    },
+    {
+      "model_name": "text-embedding-test",
+      "litellm_params": {
+        "model": "openai/text-embedding-test"
+      },
+      "model_info": {
+        "mode": "embedding",
+        "blocked": false
+      }
+    },
+    {
+      "model_name": "hidden-image",
+      "litellm_params": {
+        "model": "openai/hidden-image"
+      },
+      "model_info": {
+        "mode": "image_generation",
+        "blocked": false
+      }
+    },
+    {
+      "model_name": "hidden-audio",
+      "litellm_params": {
+        "model": "openai/hidden-audio"
+      },
+      "model_info": {
+        "mode": "audio_transcription",
+        "blocked": false
+      }
+    },
+    {
+      "model_name": "hidden-embedding",
+      "litellm_params": {
+        "model": "openai/hidden-embedding"
+      },
+      "model_info": {
+        "mode": "embedding",
+        "blocked": false
+      }
+    },
+    {
+      "model_name": "chat-model-01",
+      "litellm_params": {
+        "model": "openai/chat-model-01"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": false
+      }
+    },
+    {
+      "model_name": "chat-model-02",
+      "litellm_params": {
+        "model": "openai/chat-model-02"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": false
+      }
+    },
+    {
+      "model_name": "gpt-5.5",
+      "litellm_params": {
+        "model": "openai/gpt-5.5"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": true
+      }
+    },
+    {
+      "model_name": "gpt-5.6-luna",
+      "litellm_params": {
+        "model": "openai/gpt-5.6-luna"
+      },
+      "model_info": {
+        "mode": "chat",
+        "blocked": true
+      }
+    }
+  ]
+}
