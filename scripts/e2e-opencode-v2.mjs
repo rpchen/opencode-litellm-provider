@@ -1063,6 +1063,10 @@ export default {
   }
   assert.deepEqual(actualModels.find(model=>model.providerID==="litellm"&&model.id==="e2e-no-effort").variants,[])
   assert.deepEqual(actualModels.find(model=>model.providerID==="litellm"&&model.id==="e2e-disabled").variants,[])
+  assert.deepEqual(actualModels.find(model=>model.providerID==="litellm"&&model.id==="e2e-messages").variants, [
+    { id: "high", settings: { thinking: { type: "enabled", budgetTokens: 16000 } } },
+    { id: "max", settings: { thinking: { type: "enabled", budgetTokens: 64000 } } },
+  ], "host-version wire lowering must not change the plugin's declared variants")
   // OpenCode 2.0.16 Model.Info has tools/modalities and variants, but no reasoning
   // boolean. The adapter preserves the independent Core verdict in its audit view.
   assert.equal(matrixReport.models.find(model=>model.id==="e2e-no-effort").reasoningSupported,"supported")
@@ -1097,7 +1101,14 @@ export default {
       // (effort-updates.js and openai-responses.js). Check the effective wire value.
       const updates=protocol==="responses" ? request.body.input.filter(item=>item.type==="configuration_update") : []
       const effort=protocol==="responses" && updates.length ? updates.at(-1).reasoning.effort : request.body.reasoning_effort??request.body.reasoning?.effort
-      if(protocol==="messages") { assert.equal(request.body.thinking?.type,"enabled");assert.equal(request.body.thinking?.budget_tokens,variant==="max"?64000:16000) }
+      if(protocol==="messages") {
+        assert.equal(request.body.thinking?.type,"enabled")
+        // v2.0.30's native Anthropic SDK fits thinking to half max_tokens
+        // (ai/src/protocols/shared.ts:fitThinkingBudget). Registry settings
+        // below remain the declared 64k; only the host's wire lowering differs.
+        const maximumBudget = hostVersion === "2.0.30" ? 32000 : 64000
+        assert.equal(request.body.thinking?.budget_tokens, variant === "max" ? maximumBudget : 16000)
+      }
       else assert.equal(effort,variant,`${id}: exact requested reasoning effort`)
       if(variant===undefined){assert.equal(request.body.thinking,undefined);assert.equal(request.body.reasoning,undefined);assert.equal(request.body.reasoning_effort,undefined)}
       checkedRequests++

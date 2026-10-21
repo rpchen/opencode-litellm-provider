@@ -22,3 +22,8 @@ OpenCode 2.0.16 的 provider/plugin runtime 按 location 隔离，KV activation 
 - [ACT-LOCATION] 单元回归先在旧实现失败，覆盖当前位置、切换位置及启用请求。
 - [ACT-LOCATION-REFRESH] 共享 storage 的两个独立 runtime，检查真实 Core fixtures 经 provider transform 发布模型、状态与停用收敛。
 - Real OpenCode 2.0.16 与用户实际使用的 2.0.30：固定 Git 包安装，隔离 HOME/XDG、本地 fake LiteLLM、非默认目录 session 的真实键盘启用和模型列表；原有完整真实宿主门禁继续运行。
+
+
+## Host version evidence
+
+2.0.30 的原生 Anthropic SDK 在 `packages/ai/src/protocols/shared.ts:fitThinkingBudget` 将超过 max_tokens 一半的显式 thinking budget 限制为一半；2.0.16 尚无此行为。完整 E2E 保留注册视图 high=16000/max=64000 的精确断言，仅按固定宿主版本区分实际请求 max budget（2.0.16 为64000，2.0.30 为32000）。这不修改插件元数据或推理参数实现。
