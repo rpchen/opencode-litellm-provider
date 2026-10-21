@@ -366,8 +366,8 @@ try {
           return { dispose: async () => {} }
         },
       },
-    } as never, ["default", "company"], () => activation, async (next) => {
-      activation = next
+    } as never, ["default", "company"], () => activation, async (change) => {
+      activation = change(activation)
     })
     try {
       assert.ok(endpointCommand)

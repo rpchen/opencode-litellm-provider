@@ -7,7 +7,7 @@ import type { ProviderEditorLike } from "../src/host/register.js"
 import discovery from "./fixtures/metadata-priority/synthetic-discovery.json" with { type: "json" }
 import catalog from "./fixtures/metadata-priority/modelsdev-subset.json" with { type: "json" }
 
-async function locationRuntime(storage: Map<string, unknown>) {
+async function locationRuntime(storage: Map<string, unknown>, endpointIds = ["company"]) {
   let beforeProviderDispose: (() => Promise<void>) | undefined
   let activationRead: (() => Promise<unknown>) | undefined
   const transforms = new Set<(editor: ProviderEditorLike) => void>()
@@ -20,7 +20,7 @@ async function locationRuntime(storage: Map<string, unknown>) {
   let set!: (input: { action: string; endpointId: string }) => Promise<EndpointActivationView>
   const registration = { dispose: async () => {} }
   const context = {
-    options: { endpoints: { company: { baseUrl: "https://litellm.example" } } },
+    options: { endpoints: Object.fromEntries(endpointIds.map((id) => [id, { baseUrl: "https://litellm.example" }])) },
     storage: { get: async (key: string) => key === ACTIVATION_STORAGE_KEY && activationRead ? activationRead() : storage.get(key), set: async (key: string, value: unknown) => { storage.set(key, value) } },
     integration: {
       transform: async () => registration,
@@ -62,6 +62,30 @@ async function locationRuntime(storage: Map<string, unknown>) {
   })
   return { providers, state, set, dispose, onProviderDispose: (run?: () => Promise<void>) => { beforeProviderDispose = run }, onActivationRead: (read?: () => Promise<unknown>) => { activationRead = read } }
 }
+
+test("[ACT-CONCURRENT-TOGGLES] overlapping toggles preserve both endpoints in storage, state and published models", async () => {
+  const storage = new Map<string, unknown>([[ACTIVATION_STORAGE_KEY, JSON.stringify({ mode: "selected", endpointIds: [] })]])
+  const runtime = await locationRuntime(storage, ["company", "personal"])
+  try {
+    await Promise.all([
+      runtime.set({ action: "toggle", endpointId: "company" }),
+      runtime.set({ action: "toggle", endpointId: "personal" }),
+    ])
+    const current = await runtime.state()
+    expect(current.activeEndpointIds).toEqual(["company", "personal"])
+    expect(JSON.parse(String(storage.get(ACTIVATION_STORAGE_KEY)))).toEqual({ mode: "selected", endpointIds: ["company", "personal"] })
+    await Bun.sleep(10)
+    const applied = await runtime.state()
+    for (const id of ["company", "personal"]) {
+      expect(applied.endpoints?.find((endpoint) => endpoint.id === id)).toMatchObject({
+        state: { desired: "enabled" }, status: "enabled-active",
+      })
+      expect(runtime.providers.get(`litellm-${id}`)).toBeGreaterThan(0)
+    }
+  } finally {
+    await runtime.dispose()
+  }
+})
 
 test("[ACT-LOCATION-REFRESH] existing locations reconcile persisted activation and publish their models", async () => {
   const storage = new Map<string, unknown>([[ACTIVATION_STORAGE_KEY, JSON.stringify({ mode: "selected", endpointIds: [] })]])

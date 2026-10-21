@@ -71,4 +71,4 @@ export interface EndpointManagement {
     /** Re-read the canonical config before each view so hand edits are visible. */
     refresh?(): Promise<void>;
 }
-export declare function registerEndpointActivation(context: Pick<Plugin.Context, "rpc" | "command">, endpointIds: readonly string[] | (() => readonly string[]), read: () => EndpointActivation, apply: (next: EndpointActivation) => Promise<void>, management?: EndpointManagement): Promise<Registration>;
+export declare function registerEndpointActivation(context: Pick<Plugin.Context, "rpc" | "command">, endpointIds: readonly string[] | (() => readonly string[]), read: () => EndpointActivation, update: (change: (current: EndpointActivation) => EndpointActivation) => Promise<void>, management?: EndpointManagement): Promise<Registration>;

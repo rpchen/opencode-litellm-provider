@@ -323,11 +323,16 @@ export async function setupLiteLLM(rawContext, dependencies = {}, internals = {}
         runtimeChange = next;
         return next;
     };
-    const setActivation = (next) => changeRuntime(async () => {
+    const updateActivation = (update) => changeRuntime(async () => {
+        // Compute from the latest activation only after earlier changes finish.
+        const next = update(activation);
+        if (next === activation)
+            return;
         await writeActivation(context, next);
         activation = next;
         await runtime.reconcile();
     });
+    const setActivation = (next) => updateActivation(() => next);
     const syncActivation = () => changeRuntime(async () => {
         if (!context.storage)
             return;
@@ -381,7 +386,7 @@ export async function setupLiteLLM(rawContext, dependencies = {}, internals = {}
         triggerEndpoint: (id) => runtime.triggerEndpoint(id),
         ...internals.management,
     });
-    const activationRegistration = await registerEndpointActivation(context, () => runtime.ids, () => activation, setActivation, management);
+    const activationRegistration = await registerEndpointActivation(context, () => runtime.ids, () => activation, updateActivation, management);
     return async () => {
         await activationRegistration.dispose();
         await runtimeChange.catch(() => { });

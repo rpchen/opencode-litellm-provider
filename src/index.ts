@@ -376,11 +376,15 @@ export async function setupLiteLLM(
     runtimeChange = next
     return next
   }
-  const setActivation = (next: EndpointActivation) => changeRuntime(async () => {
+  const updateActivation = (update: (current: EndpointActivation) => EndpointActivation) => changeRuntime(async () => {
+    // Compute from the latest activation only after earlier changes finish.
+    const next = update(activation)
+    if (next === activation) return
     await writeActivation(context, next)
     activation = next
     await runtime.reconcile()
   })
+  const setActivation = (next: EndpointActivation) => updateActivation(() => next)
   const syncActivation = () => changeRuntime(async () => {
     if (!context.storage) return
     // OpenCode keeps a runtime per location, but activation storage is shared.
@@ -433,7 +437,7 @@ export async function setupLiteLLM(
     context,
     () => runtime.ids,
     () => activation,
-    setActivation,
+    updateActivation,
     management,
   )
 

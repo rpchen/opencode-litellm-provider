@@ -1,5 +1,5 @@
 import { endpointRpc } from "./endpoint-rpc.js";
-export async function registerEndpointActivation(context, endpointIds, read, apply, management) {
+export async function registerEndpointActivation(context, endpointIds, read, update, management) {
     let sequence = 0;
     let sessionID = "";
     let rpc;
@@ -48,21 +48,24 @@ export async function registerEndpointActivation(context, endpointIds, read, app
         },
         async set(input) {
             const { action, endpointId } = input;
-            const current = read();
-            const all = ids();
             if (action === "all") {
-                await apply({ mode: "all" });
+                await update(() => ({ mode: "all" }));
             }
             else if (action === "none") {
-                await apply({ mode: "selected", endpointIds: [] });
+                await update(() => ({ mode: "selected", endpointIds: [] }));
             }
-            else if (action === "toggle" && all.includes(endpointId)) {
-                const selected = new Set(current.mode === "all" ? all : current.endpointIds);
-                if (selected.has(endpointId))
-                    selected.delete(endpointId);
-                else
-                    selected.add(endpointId);
-                await apply({ mode: "selected", endpointIds: [...selected] });
+            else if (action === "toggle") {
+                await update((current) => {
+                    const all = ids();
+                    if (!all.includes(endpointId))
+                        return current;
+                    const selected = new Set(current.mode === "all" ? all : current.endpointIds);
+                    if (selected.has(endpointId))
+                        selected.delete(endpointId);
+                    else
+                        selected.add(endpointId);
+                    return { mode: "selected", endpointIds: [...selected] };
+                });
             }
             // Mutating activation updates the selector's returned state, but it is not
             // a new request to open another selector. Keep the show sequence stable.
