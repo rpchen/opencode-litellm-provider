@@ -6,9 +6,12 @@
 - [x] 使用固定 LiteLLM/Core 样本验证两个 runtime 的状态与模型发布。
 - [x] README 说明 session location 与 activation 刷新行为。
 
+- [x] [ACT-RECONCILE-ORDER] 用延迟 provider 清理在旧实现复现 desired 回退，串行协调修复后通过。
+- [x] [ACT-CACHED-RESTORE] 用单实例固定模型快照复现已生效但无宿主模型，首次生效 reload 修复后通过。
+
 ## 2. Delivery validation
 
-- [x] 固定 provenance 重建 dist，通过类型检查、单测及交付/分发/包检查。
+- [ ] 最终修复按固定 provenance 重建 dist，通过类型检查、单测及交付/分发/包检查。
 - [x] 固定提交 34540af 通过 Real OpenCode 2.0.16 非默认目录 session 的真实键盘启用、模型发布和跨目录刷新回归。
 - [x] 在用户实际 OpenCode 2.0.30 上验证单个非默认目录会话的键盘启用、模型发布和跨目录状态同步。
 - [ ] 通过 Real OpenCode 2.0.16 / 2.0.30 完整 CI E2E。

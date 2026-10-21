@@ -9,9 +9,9 @@ OpenCode 2.0.16 的 provider/plugin runtime 按 location 隔离，KV activation 
 ## Decisions
 
 1. 在每次请求时读取 TUI context.location，包括 endpoint 所有 RPC、integration 查询/连接和 endpoint/audit 恢复轮询；切换会话不沿用旧位置。
-2. manager.refresh 在返回视图前调用宿主 activation 同步。保存值变化才 reconcile；读失败保留当前期望值，迟到读取不覆盖已发生的本地变更。
+2. manager.refresh 在返回视图前调用宿主 activation 同步。保存值变化才 reconcile；读失败保留当前期望值。同步读取、写 activation、启停与配置重建共用串行队列，视图等待此前清理完成，旧停用不能覆盖新的 snapshot。
 3. 写 activation 成功后才更新本地值，保持持久化与运行期的一致性。复用现有 runtime.reconcile，不引入第二套 provider 状态。
-4. 发现、失败降级、缓存与刷新周期不变；只在 activation 变化时启动/停止既有 endpoint loop。
+4. 缓存恢复仍保持 not-applied，等待网络确认；成功确认时，如果此前尚未 applied，即使模型指纹相同也 reload provider。后续已生效且指纹未变时继续复用原视图，不增加轮询刷新。失败降级与刷新周期保持不变。
 
 ## Compatibility
 

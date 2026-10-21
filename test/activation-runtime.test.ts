@@ -8,6 +8,7 @@ import discovery from "./fixtures/metadata-priority/synthetic-discovery.json" wi
 import catalog from "./fixtures/metadata-priority/modelsdev-subset.json" with { type: "json" }
 
 async function locationRuntime(storage: Map<string, unknown>) {
+  let beforeProviderDispose: (() => Promise<void>) | undefined
   let activationRead: (() => Promise<unknown>) | undefined
   const transforms = new Set<(editor: ProviderEditorLike) => void>()
   const providers = new Map<string, number>()
@@ -32,7 +33,7 @@ async function locationRuntime(storage: Map<string, unknown>) {
       transform: async (transform: (editor: ProviderEditorLike) => void) => {
         transforms.add(transform)
         await reload()
-        return { dispose: async () => { transforms.delete(transform); await reload() } }
+        return { dispose: async () => { await beforeProviderDispose?.(); transforms.delete(transform); await reload() } }
       },
       reload,
     },
@@ -59,7 +60,7 @@ async function locationRuntime(storage: Map<string, unknown>) {
     getModelsDev: async () => catalog,
     scheduler: { setTimeout: () => undefined, clearTimeout: () => {} },
   })
-  return { providers, state, set, dispose, onActivationRead: (read?: () => Promise<unknown>) => { activationRead = read } }
+  return { providers, state, set, dispose, onProviderDispose: (run?: () => Promise<void>) => { beforeProviderDispose = run }, onActivationRead: (read?: () => Promise<unknown>) => { activationRead = read } }
 }
 
 test("[ACT-LOCATION-REFRESH] existing locations reconcile persisted activation and publish their models", async () => {
@@ -95,12 +96,61 @@ test("[ACT-LOCATION-REFRESH] failed and late storage reads preserve the latest l
     runtime.onActivationRead(() => { started(); return new Promise((resolve) => { finish = resolve }) })
     const pending = runtime.state()
     await reading
-    await runtime.set({ action: "toggle", endpointId: "company" })
+    const enabling = runtime.set({ action: "toggle", endpointId: "company" })
     runtime.onActivationRead(undefined)
     finish(disabled)
-    expect((await pending).activeEndpointIds).toEqual(["company"])
+    await Promise.all([pending, enabling])
+    expect((await runtime.state()).activeEndpointIds).toEqual(["company"])
     runtime.onActivationRead(async () => { throw new Error("storage unavailable") })
     expect((await runtime.state()).activeEndpointIds).toEqual(["company"])
+  } finally {
+    await runtime.dispose()
+  }
+})
+
+
+test("[ACT-RECONCILE-ORDER] polling cannot finish old deactivation after a new activation", async () => {
+  const storage = new Map<string, unknown>()
+  const runtime = await locationRuntime(storage)
+  let finish!: () => void
+  try {
+    await Bun.sleep(10)
+    let started!: () => void
+    const disposing = new Promise<void>((resolve) => { started = resolve })
+    runtime.onProviderDispose(() => { started(); return new Promise<void>((resolve) => { finish = resolve }) })
+    storage.set(ACTIVATION_STORAGE_KEY, JSON.stringify({ mode: "selected", endpointIds: [] }))
+    const polling = runtime.state()
+    await disposing
+    const enabling = runtime.set({ action: "toggle", endpointId: "company" })
+    await Bun.sleep(0)
+    runtime.onProviderDispose(undefined)
+    finish()
+    await Promise.all([polling, enabling])
+    await Bun.sleep(10)
+    const current = await runtime.state()
+    expect(current.activeEndpointIds).toEqual(["company"])
+    expect(current.endpoints?.[0]?.state?.desired).toBe("enabled")
+    expect(current.endpoints?.[0]?.status).toBe("enabled-active")
+    expect(runtime.providers.get("litellm-company")).toBeGreaterThan(0)
+  } finally {
+    runtime.onProviderDispose(undefined)
+    finish?.()
+    await runtime.dispose()
+  }
+})
+
+test("[ACT-CACHED-RESTORE] re-enabling a cached endpoint publishes unchanged models after network validation", async () => {
+  const runtime = await locationRuntime(new Map())
+  try {
+    await Bun.sleep(10)
+    const count = runtime.providers.get("litellm-company")
+    expect(count).toBeGreaterThan(0)
+    await runtime.set({ action: "none", endpointId: "" })
+    expect(runtime.providers.has("litellm-company")).toBeFalse()
+    await runtime.set({ action: "toggle", endpointId: "company" })
+    await Bun.sleep(10)
+    expect((await runtime.state()).endpoints?.[0]?.status).toBe("enabled-active")
+    expect(runtime.providers.get("litellm-company")).toBe(count)
   } finally {
     await runtime.dispose()
   }
