@@ -12,6 +12,8 @@ export interface ManagerHost {
     env: Record<string, string | undefined>;
     options(): PluginOptions;
     ids(): string[];
+    /** Reconcile activation saved by another OpenCode location before returning a view. */
+    syncActivation?(): Promise<void>;
     activation(): EndpointActivation;
     /** Persist activation and reconcile the running runtime immediately. */
     setActivation(next: EndpointActivation): Promise<void>;

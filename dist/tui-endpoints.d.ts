@@ -1,3 +1,12 @@
+/**
+ * TUI side of `/litellm-endpoints`: the management center built on the host's native dialogs
+ * (`dialog.select / prompt / confirm`). Endpoint CRUD goes through the plugin's RPC; credentials go
+ * through the host's own client API so API keys never pass through the plugin. See design.md.
+ *
+ * User-visible status labels come from the canonical endpoint state shared with the
+ * server side; TUI never derives its own truth.
+ */
+import type { LocationRef } from "@opencode/client";
 export interface EndpointStateCompact {
     desired: "enabled" | "disabled";
     validationKind: "ok" | "invalid";
@@ -38,30 +47,46 @@ export interface MutationResultView {
     state: EndpointStateView;
 }
 export interface EndpointRpcClient {
-    state(input: Record<string, never>): Promise<unknown>;
+    state(input: Record<string, never>, options?: {
+        location?: LocationRef;
+    }): Promise<unknown>;
     set(input: {
         action: string;
         endpointId: string;
+    }, options?: {
+        location?: LocationRef;
     }): Promise<unknown>;
     add(input: {
         endpointId: string;
         baseUrl: string;
         confirmMigration?: boolean;
+    }, options?: {
+        location?: LocationRef;
     }): Promise<unknown>;
     edit(input: {
         endpointId: string;
         baseUrl: string;
+    }, options?: {
+        location?: LocationRef;
     }): Promise<unknown>;
     prepareRemove(input: {
         endpointId: string;
+    }, options?: {
+        location?: LocationRef;
     }): Promise<unknown>;
     remove(input: {
         endpointId: string;
+    }, options?: {
+        location?: LocationRef;
     }): Promise<unknown>;
-    migrate(input: Record<string, never>): Promise<unknown>;
+    migrate(input: Record<string, never>, options?: {
+        location?: LocationRef;
+    }): Promise<unknown>;
     /** Retry / 重新应用: force a refresh for one endpoint. */
     trigger(input: {
         endpointId: string;
+    }, options?: {
+        location?: LocationRef;
     }): Promise<unknown>;
 }
 export interface ConnectionLike {
@@ -145,6 +170,7 @@ export interface EndpointUiDeps {
     rpc: EndpointRpcClient;
     client: CredentialClient;
     isDisposed: () => boolean;
+    location?: () => LocationRef | undefined;
 }
 export declare function createEndpointUi(deps: EndpointUiDeps): {
     run: (initial: EndpointStateView) => Promise<void>;

@@ -19,6 +19,7 @@ export function createEndpointManagement(host) {
     };
     /** Read the canonical file, flag shadowed/unreadable configs, and sync the runtime to hand edits. */
     async function refresh() {
+        await host.syncActivation?.();
         problem = undefined;
         legacyUrl = undefined;
         const target = await locate();

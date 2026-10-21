@@ -154,7 +154,7 @@ endpoint id 是用户定义的稳定 ASCII slug，必须匹配 `[a-z0-9][a-z0-9-
 - 仍需手工编辑配置文件：`protocolOverrides`、`pollInterval`。endpoint ID 创建后不能直接改名；要换名请新增新 endpoint 并删除旧的。
 - 管理中心依赖终端 TUI；Desktop / Web 不加载 TUI 插件，请用配置文件和 `/connect`。
 
-停用会立即卸载该 endpoint 的运行时 provider/discovery loop，但保留配置、OpenCode 凭据和缓存；activation 是全局插件状态，默认全部启用。
+停用会立即卸载该 endpoint 的运行时 provider/discovery loop，但保留配置、OpenCode 凭据和缓存；activation 是全局插件状态，默认全部启用。 管理操作针对当前会话所在目录的运行时；即使会话目录与 OpenCode server 默认目录不同，启用后的模型也会出现在该会话的模型列表。已启动的其它目录实例在管理状态刷新时同步已保存的启用状态。
 
 ## 常用命令
 

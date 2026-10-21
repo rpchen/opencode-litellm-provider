@@ -803,6 +803,55 @@ export default {
   assert.doesNotMatch(models.stdout, /litellm\/invalid-fields/u,
     "incomplete fixture models must never disguise as normal host models")
 
+  // [ACT-LOCATION][ACT-LOCATION-REFRESH] A session can belong to a different
+  // directory from the server default. Its selector must mutate that runtime,
+  // and already loaded locations must reconcile the shared activation on refresh.
+  {
+    const directory = path.join(workspace, "activation-session-project")
+    mkdirSync(directory)
+    const query = `?location[directory]=${encodeURIComponent(directory)}`
+    const request = async (method, route, body) => {
+      const response = await fetch(openCodeServer.url + route, {
+        method,
+        headers: {
+          "content-type": "application/json",
+          authorization: "Basic " + Buffer.from(`opencode:${openCodeServer.password}`).toString("base64"),
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      })
+      const value = await response.json()
+      assert(response.ok, `activation location request failed: ${JSON.stringify(value)}`)
+      return value
+    }
+    const stateAt = async (suffix = "") =>
+      (await request("POST", `/api/rpc/litellm-endpoints/state${suffix}`, { input: {} })).output
+    const secondState = await stateAt(query)
+    assert.deepEqual(secondState.activeEndpointIds, ["default"])
+    const secondSession = await request("POST", "/api/session", { title: "activation location", location: { directory } })
+    const secondID = payload(secondSession).id
+    assert.equal(typeof secondID, "string")
+    api("POST", `/api/session/${secondID}/command`, "--data", JSON.stringify({ name: "litellm-endpoints", text: "" }))
+    const secondTui = startAttachedTui(secondID)
+    const secondMark = secondTui.mark()
+    await waitForTui(secondTui, "LiteLLM endpoints", { from: secondMark })
+    await endpointDetailToggle(secondTui, "○ company", { expectAfter: /company[^|]*已启用/u, connected: true, wasActive: false, since: secondMark })
+    secondTui.write("\x1b")
+    await stopAttachedTui(secondTui)
+    assert((await stateAt(query)).activeEndpointIds.includes("company"), "selector enabled the default location instead of its session location")
+    let locationModels = []
+    for (let attempt = 0; attempt < 30; attempt++) {
+      locationModels = payload(await request("GET", `/api/model${query}`))
+      if (locationModels.some((model) => model.providerID === "litellm-company")) break
+      await sleep(200)
+    }
+    assert(locationModels.some((model) => model.providerID === "litellm-company"), "company models missing from the session location after enabling")
+    assert(locationModels.some((model) => model.providerID === "litellm"), "enabling company removed the other endpoint")
+    assert((await stateAt()).activeEndpointIds.includes("company"), "already loaded default location did not reconcile persisted activation")
+    await request("POST", `/api/rpc/litellm-endpoints/set${query}`, { input: { action: "toggle", endpointId: "company" } })
+    assert.deepEqual((await stateAt()).activeEndpointIds, ["default"], "activation refresh did not restore the disabled state")
+    console.log("Real OpenCode activation location E2E passed")
+  }
+
   // Re-enable company through the same real selector (main list -> detail -> enable -> back).
   runSessionCommand("litellm-endpoints")
   tui = startAttachedTui(sessionID)

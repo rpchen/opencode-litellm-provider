@@ -38,7 +38,10 @@ function harness(
   const choices = [...(endpoint.choices ?? [])]
   const dialogCalls: Array<{ title: string; options: ReadonlyArray<{ title: string; value: string }> }> = []
   const setCalls: Array<{ action: string; endpointId: string }> = []
+  const rpcLocations: unknown[] = []
+  let location = { directory: "/session-project" }
   const context = {
+    get location() { return location },
     client: {
       integration: {
         get: async () => ({ connections: [] }),
@@ -47,8 +50,12 @@ function harness(
       credential: { remove: async () => undefined, activate: async () => undefined },
       rpc: (schema: { id?: string }) => schema.id === "litellm-endpoints"
         ? ({
-            state: endpoint.state ?? (async () => emptyEndpoint),
-            set: async (input: { action: string; endpointId: string }) => {
+            state: async (_input: unknown, options?: { location?: unknown }) => {
+              rpcLocations.push(options?.location)
+              return endpoint.state ? endpoint.state() : emptyEndpoint
+            },
+            set: async (input: { action: string; endpointId: string }, options?: { location?: unknown }) => {
+              rpcLocations.push(options?.location)
               setCalls.push(input)
               return endpoint.set ? endpoint.set(input) : emptyEndpoint
             },
@@ -60,7 +67,10 @@ function harness(
             },
           })
         : ({
-            latest,
+            latest: async (_input: unknown, options?: { location?: unknown }) => {
+              rpcLocations.push(options?.location)
+              return latest()
+            },
             events: {
               on: (_event: string, on: typeof auditListener) => {
                 auditListener = on
@@ -95,10 +105,36 @@ function harness(
     get stopped() { return stopped },
     dialogCalls,
     setCalls,
+    rpcLocations,
+    setLocation: (next: typeof location) => { location = next },
   }
 }
 
 describe("TUI 会话卡片", () => {
+  test("[ACT-LOCATION] polling and endpoint mutations target the current session location", async () => {
+    const current: EndpointState = {
+      sequence: 1, sessionID: "current", mode: "selected",
+      endpointIds: ["company"], activeEndpointIds: [],
+    }
+    const h = harness(async () => success(0, "", ""), {
+      state: async () => current,
+      choices: ["endpoint:company", "toggle", "back", undefined],
+      set: async () => ({ ...current, activeEndpointIds: ["company"] }),
+    })
+    let tick = () => {}
+    const cleanup = await setupAuditTui(h.context, (refresh) => { tick = refresh; return () => {} })
+    await Bun.sleep(0)
+    expect(h.setCalls).toHaveLength(1)
+    expect(h.rpcLocations.length).toBeGreaterThan(2)
+    expect(h.rpcLocations.every((location) => JSON.stringify(location) === JSON.stringify(h.context.location))).toBeTrue()
+    h.setLocation({ directory: "/other-session-project" })
+    const start = h.rpcLocations.length
+    tick()
+    await Bun.sleep(0)
+    expect(h.rpcLocations.slice(start)).toEqual([h.context.location, h.context.location])
+    await cleanup()
+  })
+
   test("注册在会话输入框上方，订阅事件并在退出时清理", async () => {
     const h = harness(async () => success(1, "session-1", "C:/audit/report.json"))
     const cleanup = await tui.setup(h.context)

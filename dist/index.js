@@ -46,15 +46,15 @@ async function setupEndpoint(context, endpoint, options, dependencies, snapshots
         await integrationRegistration?.dispose();
     };
 }
-async function readActivation(context) {
+async function readActivation(context, fallback = { mode: "all" }) {
     if (!context.storage)
-        return { mode: "all" };
+        return fallback;
     try {
         const raw = await context.storage.get(ACTIVATION_STORAGE_KEY);
         return parseActivation(typeof raw === "string" ? JSON.parse(raw) : raw);
     }
     catch {
-        return { mode: "all" };
+        return fallback;
     }
 }
 async function writeActivation(context, value) {
@@ -315,14 +315,27 @@ export async function setupLiteLLM(rawContext, dependencies = {}, internals = {}
     let options = parseOptions(context.options);
     let activation = await readActivation(context);
     let runtime = await buildRuntime(context, options, dependencies, () => activation);
+    const syncActivation = async () => {
+        if (!context.storage)
+            return;
+        const previous = activation;
+        const next = await readActivation(context, previous);
+        if (activation !== previous)
+            return;
+        if (JSON.stringify(next) === JSON.stringify(activation))
+            return;
+        activation = next;
+        await runtime.reconcile();
+    };
     const management = createEndpointManagement({
         env: process.env,
         options: () => options,
         ids: () => runtime.ids,
         activation: () => activation,
+        syncActivation,
         async setActivation(next) {
-            activation = next;
             await writeActivation(context, next);
+            activation = next;
             await runtime.reconcile();
         },
         async rebuild(next) {
@@ -362,8 +375,8 @@ export async function setupLiteLLM(rawContext, dependencies = {}, internals = {}
         ...internals.management,
     });
     const activationRegistration = await registerEndpointActivation(context, () => runtime.ids, () => activation, async (next) => {
-        activation = next;
         await writeActivation(context, next);
+        activation = next;
         await runtime.reconcile();
     }, management);
     return async () => {

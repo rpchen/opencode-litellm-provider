@@ -33,7 +33,17 @@ export async function setupAuditTui(
     dialog: context.ui.dialog as never,
     toast: context.ui.toast as never,
     rpc: endpointClient as unknown as EndpointRpcClient,
-    client: context.client as unknown as CredentialClient,
+    client: {
+      integration: {
+        get: (input) => context.client.integration.get({ ...input, location: context.location }),
+        connect: { key: (input) => context.client.integration.connect.key({ ...input, location: context.location }) },
+      },
+      credential: {
+        remove: (input) => context.client.credential.remove(input),
+        activate: (input) => context.client.credential.activate(input),
+      },
+    } satisfies CredentialClient,
+    location: () => context.location,
     isDisposed: () => disposed,
   })
   let endpointSequence = 0
@@ -112,13 +122,13 @@ export async function setupAuditTui(
     refreshing = true
     try {
       try {
-        const result = await rpc.latest({}) as unknown as LatestVisibleResult
+        const result = await rpc.latest({}, { location: context.location }) as unknown as LatestVisibleResult
         if (!disposed) acceptVisible(result)
       } catch {
         // 服务器可能尚未完成插件注册；后续轮询会继续尝试。
       }
       try {
-        const state = await endpointClient.state({}) as unknown as EndpointActivationResult
+        const state = await endpointClient.state({}, { location: context.location }) as unknown as EndpointActivationResult
         if (!disposed) void showEndpoints(state)
       } catch {
         // endpoint RPC 与主插件异步就绪；后续轮询会继续尝试。

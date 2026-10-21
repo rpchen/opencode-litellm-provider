@@ -18,7 +18,17 @@ export async function setupAuditTui(context, schedule = scheduleRefresh) {
         dialog: context.ui.dialog,
         toast: context.ui.toast,
         rpc: endpointClient,
-        client: context.client,
+        client: {
+            integration: {
+                get: (input) => context.client.integration.get({ ...input, location: context.location }),
+                connect: { key: (input) => context.client.integration.connect.key({ ...input, location: context.location }) },
+            },
+            credential: {
+                remove: (input) => context.client.credential.remove(input),
+                activate: (input) => context.client.credential.activate(input),
+            },
+        },
+        location: () => context.location,
         isDisposed: () => disposed,
     });
     let endpointSequence = 0;
@@ -97,7 +107,7 @@ export async function setupAuditTui(context, schedule = scheduleRefresh) {
         refreshing = true;
         try {
             try {
-                const result = await rpc.latest({});
+                const result = await rpc.latest({}, { location: context.location });
                 if (!disposed)
                     acceptVisible(result);
             }
@@ -105,7 +115,7 @@ export async function setupAuditTui(context, schedule = scheduleRefresh) {
                 // 服务器可能尚未完成插件注册；后续轮询会继续尝试。
             }
             try {
-                const state = await endpointClient.state({});
+                const state = await endpointClient.state({}, { location: context.location });
                 if (!disposed)
                     void showEndpoints(state);
             }
