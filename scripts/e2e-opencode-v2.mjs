@@ -845,7 +845,9 @@ export default {
     const secondID = payload(secondSession).id
     assert.equal(typeof secondID, "string")
     const secondTui = startAttachedTui(secondID)
-    await waitForTui(secondTui, "activation location")
+    // OpenCode 2.0.30 renders the session title through partial terminal writes.
+    // The directory header is stable and also identifies the intended location.
+    await waitForTui(secondTui, directory)
     await sleep(1000)
     const secondMark = secondTui.mark()
     api("POST", `/api/session/${secondID}/command`, "--data", JSON.stringify({ name: "litellm-endpoints", text: "" }))

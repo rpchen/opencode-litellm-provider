@@ -154,3 +154,9 @@ user 消息（`role: user` 渲染路径，TUI 与 app 时间线均渲染该角�
 delivery 三态在空闲会话无可见差异，忙碌会话不阻塞命令。因此选定：**空闲与忙碌均使用默认投递
 （不显式指定 delivery）**，由宿主 inbox 语义决定排队；命令侧不等待模型回复，返回时机为
 `prompt` resolve 之后，失败按静默降级处理。
+
+## 2026-10-21：2.0.30 会话标题的 PTY 分段重绘
+
+发版 PR #71 的 [CI #349](https://github.com/rpchen/opencode-litellm-provider/actions/runs/39577271471) 两次在 activation-location 启动等待超时：PTY 已输出正确目录和标题片段，但去除 ANSI 后的累计文本没有连续的 `activation location`。这属于测试对动态标题的匹配假设，失败发生在启停断言执行前。
+
+该处等待改为匹配稳定的完整会话目录，随后仍通过真实选择器操作，并断言对应 location 的启用状态、模型发布、另一 endpoint 保留和已加载 location 的持久化协调。不能用标题是否连续输出判定这些产品行为，也不因此跳过后续断言。
