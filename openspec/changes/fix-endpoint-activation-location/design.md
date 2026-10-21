@@ -30,3 +30,5 @@ OpenCode 2.0.16 的 provider/plugin runtime 按 location 隔离，KV activation 
 
 
 2.0.30 真实 TUI 将长 endpoint 详情标题的“已保存”在“保/存”之间换行，并在其间绘制 esc 提示；E2E 标题定位允许该已观察到的空白/边框/esc chrome，凭据数量与激活状态仍由真实宿主 API 严格断言。
+
+改地址流程在 2.0.30 中可先收到 model/info 请求、随后才完成配置重建与 provider 发布。E2E 保留“新地址收到正确请求”和“宿主模型命名空间存在”两项断言，后者通过有界轮询等待实际发布，避免把请求接收当成完成。

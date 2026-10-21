@@ -1393,7 +1393,13 @@ export default {
     assert(readConfig().includes("// my own notes: the UI must not delete these"), "Edit removed user comments")
     for (let i = 0; i < 40 && mgmtB.acceptedRequests() <= bBefore; i++) await sleep(500)
     assert(mgmtB.acceptedRequests() > bBefore, "the edited Base URL was never used for discovery")
-    models = command(["models", "--server", openCodeServer.url], { timeout: 120_000 })
+    // Accepting model/info precedes provider publication; wait for the actual
+    // host inventory rather than racing the asynchronous config rebuild.
+    for (let attempt = 0; attempt < 40; attempt++) {
+      models = command(["models", "--server", openCodeServer.url], { timeout: 120_000, echo: false })
+      if (/litellm-e2e-new\//u.test(models.stdout)) break
+      await sleep(500)
+    }
     assert.match(models.stdout, /litellm-e2e-new\//u, "edited endpoint lost its models")
 
     // 5. REPLACE key (credential count stays 1, old key gone) — mock B only accepts the new key
