@@ -318,8 +318,10 @@ export async function setupLiteLLM(rawContext, dependencies = {}, internals = {}
     const syncActivation = async () => {
         if (!context.storage)
             return;
+        // OpenCode keeps a runtime per location, but activation storage is shared.
         const previous = activation;
         const next = await readActivation(context, previous);
+        // A local mutation may finish while this storage read is in flight.
         if (activation !== previous)
             return;
         if (JSON.stringify(next) === JSON.stringify(activation))

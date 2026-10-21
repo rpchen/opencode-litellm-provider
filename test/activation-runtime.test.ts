@@ -8,6 +8,7 @@ import discovery from "./fixtures/metadata-priority/synthetic-discovery.json" wi
 import catalog from "./fixtures/metadata-priority/modelsdev-subset.json" with { type: "json" }
 
 async function locationRuntime(storage: Map<string, unknown>) {
+  let activationRead: (() => Promise<unknown>) | undefined
   const transforms = new Set<(editor: ProviderEditorLike) => void>()
   const providers = new Map<string, number>()
   const reload = async () => {
@@ -19,7 +20,7 @@ async function locationRuntime(storage: Map<string, unknown>) {
   const registration = { dispose: async () => {} }
   const context = {
     options: { endpoints: { company: { baseUrl: "https://litellm.example" } } },
-    storage: { get: async (key: string) => storage.get(key), set: async (key: string, value: unknown) => { storage.set(key, value) } },
+    storage: { get: async (key: string) => key === ACTIVATION_STORAGE_KEY && activationRead ? activationRead() : storage.get(key), set: async (key: string, value: unknown) => { storage.set(key, value) } },
     integration: {
       transform: async () => registration,
       connection: {
@@ -58,7 +59,7 @@ async function locationRuntime(storage: Map<string, unknown>) {
     getModelsDev: async () => catalog,
     scheduler: { setTimeout: () => undefined, clearTimeout: () => {} },
   })
-  return { providers, state, set, dispose }
+  return { providers, state, set, dispose, onActivationRead: (read?: () => Promise<unknown>) => { activationRead = read } }
 }
 
 test("[ACT-LOCATION-REFRESH] existing locations reconcile persisted activation and publish their models", async () => {
@@ -80,5 +81,27 @@ test("[ACT-LOCATION-REFRESH] existing locations reconcile persisted activation a
   } finally {
     await first.dispose()
     await second.dispose()
+  }
+})
+
+
+test("[ACT-LOCATION-REFRESH] failed and late storage reads preserve the latest local activation", async () => {
+  const disabled = JSON.stringify({ mode: "selected", endpointIds: [] })
+  const runtime = await locationRuntime(new Map([[ACTIVATION_STORAGE_KEY, disabled]]))
+  try {
+    let started!: () => void
+    let finish!: (value: unknown) => void
+    const reading = new Promise<void>((resolve) => { started = resolve })
+    runtime.onActivationRead(() => { started(); return new Promise((resolve) => { finish = resolve }) })
+    const pending = runtime.state()
+    await reading
+    await runtime.set({ action: "toggle", endpointId: "company" })
+    runtime.onActivationRead(undefined)
+    finish(disabled)
+    expect((await pending).activeEndpointIds).toEqual(["company"])
+    runtime.onActivationRead(async () => { throw new Error("storage unavailable") })
+    expect((await runtime.state()).activeEndpointIds).toEqual(["company"])
+  } finally {
+    await runtime.dispose()
   }
 })
