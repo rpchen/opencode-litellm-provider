@@ -24,7 +24,7 @@ opencode plugin add github:rpchen/opencode-litellm-provider
 锁定当前发行版：
 
 ```bash
-opencode plugin add github:rpchen/opencode-litellm-provider#v0.11.0
+opencode plugin add github:rpchen/opencode-litellm-provider#v0.11.1
 ```
 
 要求：
@@ -287,9 +287,9 @@ Runtime Identity 是当前正在运行的插件 artifact 自身的不可变身�
 ```text
 Runtime Identity
 
-Plugin Version   0.11.0
-Artifact         08177314
-Core Commit      a08db4a7
+Plugin Version   0.11.1
+Artifact         78f9e17b
+Core Commit      1ff0979c
 ```
 
 反馈问题时，请附上 `/litellm-diagnostics` 中的 Runtime Identity 段落，或 audit 导出文件中的 `runtimeIdentity` 对象。
@@ -370,7 +370,7 @@ opencode reload
 如果配置里使用固定 tag，`check/update` 参数也必须使用完整的固定来源，例如：
 
 ```text
-github:rpchen/opencode-litellm-provider#v0.11.0
+github:rpchen/opencode-litellm-provider#v0.11.1
 ```
 
 需要回滚时，将现有插件来源改回目标 tag 并重新加载即可。不要同时启用 Git 安装和本地 `file://` 两份 LiteLLM 插件。
@@ -415,6 +415,7 @@ github:rpchen/opencode-litellm-provider#v0.11.0
 
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [litellm-discovery-core](https://github.com/rpchen/litellm-discovery-core)
+- [v0.11.1 release notes](docs/releases/v0.11.1.md)
 - [v0.11.0 release notes](docs/releases/v0.11.0.md)
 - [v0.10.0 release notes](docs/releases/v0.10.0.md)
 - [v0.9.0 release notes](docs/releases/v0.9.0.md)
