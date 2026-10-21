@@ -25,4 +25,4 @@
 
 Core #39 已合并，两个插件固定相同完整 SHA；本插件生产源码没有复制过滤逻辑或模型名称特判。README 与主规格统一暂停语义，最终归档提交仅改规格/证据；最终 CI 由 PR 单独回读确认。没有创建临时 workflow、版本/tag/Release 或修改用户配置。本 PR 待审核，未授权合并；合并后的 main/index finish 与发版另行执行。配套 Pi PR：https://github.com/rpchen/pi-litellm-provider/pull/61，已通过完整 CI。
 
-- CLI archive 已同步 canonical requirement；归档后 strict validation 24/24、closure 0 mismatch，产品源码、测试和 dist 与通过 CI #345 的实现提交逐字节一致。
+- CLI archive 已同步 canonical requirement；归档后 strict validation 23/23、closure 0 mismatch，产品源码、测试和 dist 与通过 CI #345 的实现提交逐字节一致。
