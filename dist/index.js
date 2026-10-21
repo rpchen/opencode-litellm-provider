@@ -46,15 +46,15 @@ async function setupEndpoint(context, endpoint, options, dependencies, snapshots
         await integrationRegistration?.dispose();
     };
 }
-async function readActivation(context) {
+async function readActivation(context, fallback = { mode: "all" }) {
     if (!context.storage)
-        return { mode: "all" };
+        return fallback;
     try {
         const raw = await context.storage.get(ACTIVATION_STORAGE_KEY);
         return parseActivation(typeof raw === "string" ? JSON.parse(raw) : raw);
     }
     catch {
-        return { mode: "all" };
+        return fallback;
     }
 }
 async function writeActivation(context, value) {
@@ -315,17 +315,42 @@ export async function setupLiteLLM(rawContext, dependencies = {}, internals = {}
     let options = parseOptions(context.options);
     let activation = await readActivation(context);
     let runtime = await buildRuntime(context, options, dependencies, () => activation);
+    // RPC mutations and background state reads share this runtime. A previous
+    // deactivation must finish disposing before another activation can reuse it.
+    let runtimeChange = Promise.resolve();
+    const changeRuntime = (run) => {
+        const next = runtimeChange.catch(() => { }).then(run);
+        runtimeChange = next;
+        return next;
+    };
+    const updateActivation = (update) => changeRuntime(async () => {
+        // Compute from the latest activation only after earlier changes finish.
+        const next = update(activation);
+        if (next === activation)
+            return;
+        await writeActivation(context, next);
+        activation = next;
+        await runtime.reconcile();
+    });
+    const setActivation = (next) => updateActivation(() => next);
+    const syncActivation = () => changeRuntime(async () => {
+        if (!context.storage)
+            return;
+        // OpenCode keeps a runtime per location, but activation storage is shared.
+        const next = await readActivation(context, activation);
+        if (JSON.stringify(next) === JSON.stringify(activation))
+            return;
+        activation = next;
+        await runtime.reconcile();
+    });
     const management = createEndpointManagement({
         env: process.env,
         options: () => options,
         ids: () => runtime.ids,
         activation: () => activation,
-        async setActivation(next) {
-            activation = next;
-            await writeActivation(context, next);
-            await runtime.reconcile();
-        },
-        async rebuild(next) {
+        syncActivation,
+        setActivation,
+        rebuild: (next) => changeRuntime(async () => {
             const previous = options;
             await runtime.dispose();
             options = next;
@@ -338,7 +363,7 @@ export async function setupLiteLLM(rawContext, dependencies = {}, internals = {}
                 runtime = await buildRuntime(context, previous, dependencies, () => activation);
                 throw error;
             }
-        },
+        }),
         async legacyBaseUrl() {
             const connection = await context.integration.connection.active("litellm");
             if (!connection)
@@ -361,13 +386,10 @@ export async function setupLiteLLM(rawContext, dependencies = {}, internals = {}
         triggerEndpoint: (id) => runtime.triggerEndpoint(id),
         ...internals.management,
     });
-    const activationRegistration = await registerEndpointActivation(context, () => runtime.ids, () => activation, async (next) => {
-        activation = next;
-        await writeActivation(context, next);
-        await runtime.reconcile();
-    }, management);
+    const activationRegistration = await registerEndpointActivation(context, () => runtime.ids, () => activation, updateActivation, management);
     return async () => {
         await activationRegistration.dispose();
+        await runtimeChange.catch(() => { });
         await runtime.dispose();
     };
 }

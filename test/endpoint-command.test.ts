@@ -41,8 +41,8 @@ test("endpoint set 更新 activation 但不重放 shown；下一次命令才产�
         return { dispose: async () => { disposed++ } }
       },
     },
-  } as never, ["default", "company"], () => activation, async (next) => {
-    activation = next
+  } as never, ["default", "company"], () => activation, async (change) => {
+    activation = change(activation)
   })
 
   try {

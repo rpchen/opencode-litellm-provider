@@ -6,6 +6,7 @@
  * User-visible status labels come from the canonical endpoint state shared with the
  * server side; TUI never derives its own truth.
  */
+import type { LocationRef } from "@opencode/client"
 import { validateApiKey, validateBaseUrl, validateEndpointId } from "./endpoint-input.js"
 
 export interface EndpointStateCompact {
@@ -52,15 +53,15 @@ export interface MutationResultView {
 }
 
 export interface EndpointRpcClient {
-  state(input: Record<string, never>): Promise<unknown>
-  set(input: { action: string; endpointId: string }): Promise<unknown>
-  add(input: { endpointId: string; baseUrl: string; confirmMigration?: boolean }): Promise<unknown>
-  edit(input: { endpointId: string; baseUrl: string }): Promise<unknown>
-  prepareRemove(input: { endpointId: string }): Promise<unknown>
-  remove(input: { endpointId: string }): Promise<unknown>
-  migrate(input: Record<string, never>): Promise<unknown>
+  state(input: Record<string, never>, options?: { location?: LocationRef }): Promise<unknown>
+  set(input: { action: string; endpointId: string }, options?: { location?: LocationRef }): Promise<unknown>
+  add(input: { endpointId: string; baseUrl: string; confirmMigration?: boolean }, options?: { location?: LocationRef }): Promise<unknown>
+  edit(input: { endpointId: string; baseUrl: string }, options?: { location?: LocationRef }): Promise<unknown>
+  prepareRemove(input: { endpointId: string }, options?: { location?: LocationRef }): Promise<unknown>
+  remove(input: { endpointId: string }, options?: { location?: LocationRef }): Promise<unknown>
+  migrate(input: Record<string, never>, options?: { location?: LocationRef }): Promise<unknown>
   /** Retry / 重新应用: force a refresh for one endpoint. */
-  trigger(input: { endpointId: string }): Promise<unknown>
+  trigger(input: { endpointId: string }, options?: { location?: LocationRef }): Promise<unknown>
 }
 
 export interface ConnectionLike { type: string; id?: string; name?: string }
@@ -183,6 +184,7 @@ export interface EndpointUiDeps {
   rpc: EndpointRpcClient
   client: CredentialClient
   isDisposed: () => boolean
+  location?: () => LocationRef | undefined
 }
 
 export function createEndpointUi(deps: EndpointUiDeps) {
@@ -191,7 +193,8 @@ export function createEndpointUi(deps: EndpointUiDeps) {
   const warn = (message: string) => toast.show({ variant: "warning", message })
   const error = (message: string) => toast.show({ variant: "error", message })
 
-  const loadState = async (): Promise<EndpointStateView> => unwrap<EndpointStateView>(await rpc.state({}))
+  const requestOptions = () => ({ location: deps.location?.() })
+  const loadState = async (): Promise<EndpointStateView> => unwrap<EndpointStateView>(await rpc.state({}, requestOptions()))
 
   const itemsOf = (state: EndpointStateView): EndpointViewItem[] =>
     state.endpoints ?? state.endpointIds.map((id) => ({ id, baseUrl: "", active: state.activeEndpointIds.includes(id), legacy: id === "default" }))
@@ -201,7 +204,7 @@ export function createEndpointUi(deps: EndpointUiDeps) {
       .filter((item) => item.state ? item.state.desired === "enabled" : item.active)
       .map((item) => item.id)
 
-  const setActive = async (id: string) => unwrap<EndpointStateView>(await rpc.set({ action: "toggle", endpointId: id }))
+  const setActive = async (id: string) => unwrap<EndpointStateView>(await rpc.set({ action: "toggle", endpointId: id }, requestOptions()))
 
   const promptBaseUrl = async (title: string, placeholder: string, value?: string): Promise<string | undefined> => {
     let heading = title
@@ -240,7 +243,7 @@ export function createEndpointUi(deps: EndpointUiDeps) {
       if (!ok) return
       confirmMigration = true
     }
-    const result = unwrap<MutationResultView>(await rpc.add({ endpointId: id, baseUrl, confirmMigration }))
+    const result = unwrap<MutationResultView>(await rpc.add({ endpointId: id, baseUrl, confirmMigration }, requestOptions()))
     if (!result.ok) {
       // saved = the config write is committed but the runtime reload failed: not a plain "Add failed".
       if (result.saved) return warn(result.message ?? "endpoint 配置已保存，但运行时重新加载失败；新 endpoint 保持未启用，可稍后重试 reload")
@@ -253,7 +256,7 @@ export function createEndpointUi(deps: EndpointUiDeps) {
     const baseUrl = await promptBaseUrl(`修改 ${item.id} 的 Base URL（ID 不可修改）`, item.baseUrl, item.baseUrl)
     if (baseUrl === undefined) return
     if (baseUrl === item.baseUrl) return warn("Base URL 没有变化")
-    const result = unwrap<MutationResultView>(await rpc.edit({ endpointId: item.id, baseUrl }))
+    const result = unwrap<MutationResultView>(await rpc.edit({ endpointId: item.id, baseUrl }, requestOptions()))
     if (!result.ok) return error(result.message ?? "修改 Base URL 失败")
     info(`已更新 ${item.id} 的 Base URL`)
   }
@@ -299,10 +302,10 @@ export function createEndpointUi(deps: EndpointUiDeps) {
     if (item.legacy && !(await migrateNow("；删除未执行"))) return false
     try {
       // Cleanup first, definition last: a mid-way failure leaves the endpoint visible so Delete can be retried.
-      const prepared = unwrap<MutationResultView>(await rpc.prepareRemove({ endpointId: item.id }))
+      const prepared = unwrap<MutationResultView>(await rpc.prepareRemove({ endpointId: item.id }, requestOptions()))
       if (!prepared.ok) { error(prepared.message ?? "删除失败"); return false }
       await removeKeys(client, item.id)
-      const removed = unwrap<MutationResultView>(await rpc.remove({ endpointId: item.id }))
+      const removed = unwrap<MutationResultView>(await rpc.remove({ endpointId: item.id }, requestOptions()))
       if (!removed.ok) { error(`删除未完成（endpoint 定义仍保留，可重试）：${removed.message ?? ""}`); return false }
       info(`已删除 endpoint ${item.id}`)
       return true
@@ -315,7 +318,7 @@ export function createEndpointUi(deps: EndpointUiDeps) {
   /** One-way migration to the manageable config form; only called after the user already confirmed the action. */
   const migrateNow = async (failureNote = ""): Promise<boolean> => {
     try {
-      const result = unwrap<MutationResultView>(await rpc.migrate({}))
+      const result = unwrap<MutationResultView>(await rpc.migrate({}, requestOptions()))
       if (!result.ok) {
         error(`${result.message ?? "迁移失败"}${failureNote}`)
         return false
@@ -371,7 +374,7 @@ export function createEndpointUi(deps: EndpointUiDeps) {
       else if (choice === "edit" && (await ensureManaged(item, "修改 Base URL"))) await editUrl(item)
       else if (choice === "connect" && (await ensureManaged(item, "管理 API Key"))) await connect(item, kind)
       else if (choice === "retry") {
-        const result = unwrap<{ ok: boolean; message?: string; state: EndpointStateView }>(await rpc.trigger({ endpointId: id }))
+        const result = unwrap<{ ok: boolean; message?: string; state: EndpointStateView }>(await rpc.trigger({ endpointId: id }, requestOptions()))
         if (result.ok) info(`已重新触发 ${item.id} 的应用`)
         else error(result.message ?? `重新应用 ${item.id} 失败`)
       }
@@ -410,7 +413,7 @@ export function createEndpointUi(deps: EndpointUiDeps) {
         if (state.writable === false) error(state.configProblem ?? "当前配置不可写，无法新增 endpoint")
         else await addEndpoint(state)
       } else if (choice === "all" || choice === "none") {
-        await rpc.set({ action: choice, endpointId: "" })
+        await rpc.set({ action: choice, endpointId: "" }, requestOptions())
       } else if (choice.startsWith("endpoint:")) {
         await detail(choice.slice("endpoint:".length))
       }

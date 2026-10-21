@@ -708,7 +708,10 @@ export function createDiscoveryLoop(
           )
         }
       }
-      const changed = !snapshot.ready || lastFingerprint !== nextFingerprint || reloadPending
+      // A restored snapshot is withheld until network validation succeeds. Even
+      // unchanged models must be reloaded when this is the first applied view.
+      const changed = !snapshot.ready || lastFingerprint !== nextFingerprint || reloadPending ||
+        snapshot.endpointState?.applied.kind !== "active"
       const view = changed || !snapshot.registrationView
         ? createRegistrationView(models, addresses.apiBaseURL, endpoint)
         : snapshot.registrationView

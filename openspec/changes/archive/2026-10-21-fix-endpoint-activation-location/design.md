@@ -1,0 +1,34 @@
+## Context
+
+OpenCode 2.0.16 的 provider/plugin runtime 按 location 隔离，KV activation 全局共享。TUI 模型选择器按 location.ref 查询模型，而插件管理请求缺少 location，且每个 runtime 的 activation 只在 setup 时读取。
+
+## Goals / Non-Goals
+
+保证当前会话的启用操作协调其实际 provider runtime；管理刷新反映共享已保存状态。不增加跨进程通知服务、不改 Core、不改 endpoint 定义或发现规则。
+
+## Decisions
+
+1. 在每次请求时读取 TUI context.location，包括 endpoint 所有 RPC、integration 查询/连接和 endpoint/audit 恢复轮询；切换会话不沿用旧位置。
+2. manager.refresh 在返回视图前调用宿主 activation 同步。保存值变化才 reconcile；读失败保留当前期望值。同步读取、写 activation、启停与配置重建共用串行队列，视图等待此前清理完成，旧停用不能覆盖新的 snapshot。
+3. 写 activation 成功后才更新本地值，保持持久化与运行期的一致性。复用现有 runtime.reconcile，不引入第二套 provider 状态。
+4. 缓存恢复仍保持 not-applied，等待网络确认；成功确认时，如果此前尚未 applied，即使模型指纹相同也 reload provider。后续已生效且指纹未变时继续复用原视图，不增加轮询刷新。失败降级与刷新周期保持不变。
+
+## Compatibility
+
+现有 canonical 多 endpoint 规格和固定 LiteLLM fixtures 保持；补充位置路由与跨实例刷新场景。location 为宿主已有可选字段；未提供时保留默认目录行为。dist 按现有 provenance 固定 SHA 重建，不更新 Core。
+
+## Validation
+
+- [ACT-LOCATION] 单元回归先在旧实现失败，覆盖当前位置、切换位置及启用请求。
+- [ACT-LOCATION-REFRESH] 共享 storage 的两个独立 runtime，检查真实 Core fixtures 经 provider transform 发布模型、状态与停用收敛。
+- Real OpenCode 2.0.16 与用户实际使用的 2.0.30：固定 Git 包安装，隔离 HOME/XDG、本地 fake LiteLLM、非默认目录 session 的真实键盘启用和模型列表；原有完整真实宿主门禁继续运行。
+
+
+## Host version evidence
+
+2.0.30 的原生 Anthropic SDK 在 `packages/ai/src/protocols/shared.ts:fitThinkingBudget` 将超过 max_tokens 一半的显式 thinking budget 限制为一半；2.0.16 尚无此行为。完整 E2E 保留注册视图 high=16000/max=64000 的精确断言，仅按固定宿主版本区分实际请求 max budget（2.0.16 为64000，2.0.30 为32000）。这不修改插件元数据或推理参数实现。
+
+
+2.0.30 真实 TUI 将长 endpoint 详情标题的“已保存”在“保/存”之间换行，并在其间绘制 esc 提示；E2E 标题定位允许该已观察到的空白/边框/esc chrome，凭据数量与激活状态仍由真实宿主 API 严格断言。
+
+改地址流程在 2.0.30 中可先收到 model/info 请求、随后才完成配置重建与 provider 发布。E2E 保留“新地址收到正确请求”和“宿主模型命名空间存在”两项断言，后者通过有界轮询等待实际发布，避免把请求接收当成完成。

@@ -1,11 +1,3 @@
-/**
- * TUI side of `/litellm-endpoints`: the management center built on the host's native dialogs
- * (`dialog.select / prompt / confirm`). Endpoint CRUD goes through the plugin's RPC; credentials go
- * through the host's own client API so API keys never pass through the plugin. See design.md.
- *
- * User-visible status labels come from the canonical endpoint state shared with the
- * server side; TUI never derives its own truth.
- */
 import { validateApiKey, validateBaseUrl, validateEndpointId } from "./endpoint-input.js";
 export const integrationIdFor = (endpointId) => (endpointId === "default" ? "litellm" : `litellm-${endpointId}`);
 const unwrap = (value) => {
@@ -79,12 +71,13 @@ export function createEndpointUi(deps) {
     const info = (message) => toast.show({ variant: "success", message });
     const warn = (message) => toast.show({ variant: "warning", message });
     const error = (message) => toast.show({ variant: "error", message });
-    const loadState = async () => unwrap(await rpc.state({}));
+    const requestOptions = () => ({ location: deps.location?.() });
+    const loadState = async () => unwrap(await rpc.state({}, requestOptions()));
     const itemsOf = (state) => state.endpoints ?? state.endpointIds.map((id) => ({ id, baseUrl: "", active: state.activeEndpointIds.includes(id), legacy: id === "default" }));
     const activeList = (state) => itemsOf(state)
         .filter((item) => item.state ? item.state.desired === "enabled" : item.active)
         .map((item) => item.id);
-    const setActive = async (id) => unwrap(await rpc.set({ action: "toggle", endpointId: id }));
+    const setActive = async (id) => unwrap(await rpc.set({ action: "toggle", endpointId: id }, requestOptions()));
     const promptBaseUrl = async (title, placeholder, value) => {
         let heading = title;
         for (;;) {
@@ -130,7 +123,7 @@ export function createEndpointUi(deps) {
                 return;
             confirmMigration = true;
         }
-        const result = unwrap(await rpc.add({ endpointId: id, baseUrl, confirmMigration }));
+        const result = unwrap(await rpc.add({ endpointId: id, baseUrl, confirmMigration }, requestOptions()));
         if (!result.ok) {
             // saved = the config write is committed but the runtime reload failed: not a plain "Add failed".
             if (result.saved)
@@ -145,7 +138,7 @@ export function createEndpointUi(deps) {
             return;
         if (baseUrl === item.baseUrl)
             return warn("Base URL 没有变化");
-        const result = unwrap(await rpc.edit({ endpointId: item.id, baseUrl }));
+        const result = unwrap(await rpc.edit({ endpointId: item.id, baseUrl }, requestOptions()));
         if (!result.ok)
             return error(result.message ?? "修改 Base URL 失败");
         info(`已更新 ${item.id} 的 Base URL`);
@@ -196,13 +189,13 @@ export function createEndpointUi(deps) {
             return false;
         try {
             // Cleanup first, definition last: a mid-way failure leaves the endpoint visible so Delete can be retried.
-            const prepared = unwrap(await rpc.prepareRemove({ endpointId: item.id }));
+            const prepared = unwrap(await rpc.prepareRemove({ endpointId: item.id }, requestOptions()));
             if (!prepared.ok) {
                 error(prepared.message ?? "删除失败");
                 return false;
             }
             await removeKeys(client, item.id);
-            const removed = unwrap(await rpc.remove({ endpointId: item.id }));
+            const removed = unwrap(await rpc.remove({ endpointId: item.id }, requestOptions()));
             if (!removed.ok) {
                 error(`删除未完成（endpoint 定义仍保留，可重试）：${removed.message ?? ""}`);
                 return false;
@@ -218,7 +211,7 @@ export function createEndpointUi(deps) {
     /** One-way migration to the manageable config form; only called after the user already confirmed the action. */
     const migrateNow = async (failureNote = "") => {
         try {
-            const result = unwrap(await rpc.migrate({}));
+            const result = unwrap(await rpc.migrate({}, requestOptions()));
             if (!result.ok) {
                 error(`${result.message ?? "迁移失败"}${failureNote}`);
                 return false;
@@ -282,7 +275,7 @@ export function createEndpointUi(deps) {
             else if (choice === "connect" && (await ensureManaged(item, "管理 API Key")))
                 await connect(item, kind);
             else if (choice === "retry") {
-                const result = unwrap(await rpc.trigger({ endpointId: id }));
+                const result = unwrap(await rpc.trigger({ endpointId: id }, requestOptions()));
                 if (result.ok)
                     info(`已重新触发 ${item.id} 的应用`);
                 else
@@ -328,7 +321,7 @@ export function createEndpointUi(deps) {
                     await addEndpoint(state);
             }
             else if (choice === "all" || choice === "none") {
-                await rpc.set({ action: choice, endpointId: "" });
+                await rpc.set({ action: choice, endpointId: "" }, requestOptions());
             }
             else if (choice.startsWith("endpoint:")) {
                 await detail(choice.slice("endpoint:".length));

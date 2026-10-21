@@ -30,6 +30,8 @@ export interface ManagerHost {
   env: Record<string, string | undefined>
   options(): PluginOptions
   ids(): string[]
+  /** Reconcile activation saved by another OpenCode location before returning a view. */
+  syncActivation?(): Promise<void>
   activation(): EndpointActivation
   /** Persist activation and reconcile the running runtime immediately. */
   setActivation(next: EndpointActivation): Promise<void>
@@ -70,6 +72,7 @@ export function createEndpointManagement(host: ManagerHost): EndpointManagement 
 
   /** Read the canonical file, flag shadowed/unreadable configs, and sync the runtime to hand edits. */
   async function refresh(): Promise<void> {
+    await host.syncActivation?.()
     problem = undefined
     legacyUrl = undefined
     const target = await locate()

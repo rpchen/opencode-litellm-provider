@@ -130,6 +130,8 @@ endpoint id 是用户定义的稳定 ASCII slug，必须匹配 `[a-z0-9][a-z0-9-
 
 **配置表达你的意图，runtime 表达现实。** 启用成功但 apply 失败时，activation 持久化里仍是 `已启用`——我们不会因为 runtime 临时失败而偷偷把你的配置改回去；UI 也不会谎报成功。
 
+同一运行时重叠收到启停请求时，会依次读取最新启用集合、计算、保存并应用，避免不同 endpoint 的更新互相覆盖。
+
 **凭据状态只描述"是否已保存 API Key"，不等于"已连接"：** `已保存 API Key` 并不蕴含 endpoint 可达；要确认可达，看 `Runtime` 是否 `已生效`。
 
 非法 endpoint 永远不会从管理界面或 diagnostics 消失：即使 `未启用 · 配置非法`，它仍然列出并按提示修复。修复 Base URL 后状态即转为 `已启用 · 未生效`，再 `重新应用` 即可。
@@ -154,7 +156,7 @@ endpoint id 是用户定义的稳定 ASCII slug，必须匹配 `[a-z0-9][a-z0-9-
 - 仍需手工编辑配置文件：`protocolOverrides`、`pollInterval`。endpoint ID 创建后不能直接改名；要换名请新增新 endpoint 并删除旧的。
 - 管理中心依赖终端 TUI；Desktop / Web 不加载 TUI 插件，请用配置文件和 `/connect`。
 
-停用会立即卸载该 endpoint 的运行时 provider/discovery loop，但保留配置、OpenCode 凭据和缓存；activation 是全局插件状态，默认全部启用。
+停用会立即卸载该 endpoint 的运行时 provider/discovery loop，但保留配置、OpenCode 凭据和缓存；activation 是全局插件状态，默认全部启用。 重新启用有缓存的 endpoint 时，网络确认完成后，即使模型清单未变化也会重新注册模型；状态刷新与启停操作按顺序完成，避免旧清理覆盖新启用。 管理操作针对当前会话所在目录的运行时；即使会话目录与 OpenCode server 默认目录不同，启用后的模型也会出现在该会话的模型列表。已启动的其它目录实例在管理状态刷新时同步已保存的启用状态。
 
 ## 常用命令
 

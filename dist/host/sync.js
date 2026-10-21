@@ -547,7 +547,10 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                     logger.warn(`LiteLLM 发现漂移：added=${diff.added.length}, removed=${diff.removed.length}, protocol=${diff.protocolChanged.length}, capabilities=${diff.capabilityChanged.length}`);
                 }
             }
-            const changed = !snapshot.ready || lastFingerprint !== nextFingerprint || reloadPending;
+            // A restored snapshot is withheld until network validation succeeds. Even
+            // unchanged models must be reloaded when this is the first applied view.
+            const changed = !snapshot.ready || lastFingerprint !== nextFingerprint || reloadPending ||
+                snapshot.endpointState?.applied.kind !== "active";
             const view = changed || !snapshot.registrationView
                 ? createRegistrationView(models, addresses.apiBaseURL, endpoint)
                 : snapshot.registrationView;
