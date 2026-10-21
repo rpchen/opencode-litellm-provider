@@ -5,6 +5,9 @@ import { endpointIdentity } from "../src/endpoints.js"
 import { getModelsDevCatalog } from "../src/net/fetch.js"
 import { createDiscoveryLoop, type SyncContext } from "../src/host/sync.js"
 import type { ProviderSnapshot } from "../src/host/register.js"
+import blockedInfo from "./fixtures/blocked-deployments/model-info.json" with { type: "json" }
+import blockedCatalog from "./fixtures/blocked-deployments/modelsdev-catalog.json" with { type: "json" }
+import visibleModels from "./fixtures/blocked-deployments/visible-models.json" with { type: "json" }
 import type { PluginOptions } from "../src/options.js"
 
 const ROOT = "http://litellm.example:4000"
@@ -42,7 +45,9 @@ function catalog(names: readonly string[]): unknown {
   ])))
 }
 
-function harness() {
+function harness(endpointId = "default") {
+  const persisted = new Map<string, unknown>()
+  let registeredIDs: string[] = []
   let live: unknown = response(["model-a"])
   let localCatalog: unknown = catalog(["model-a"])
   let latestCatalog: unknown = localCatalog
@@ -57,7 +62,8 @@ function harness() {
         resolve: async () => ({ type: "key", key: "sk-test", configuration: { url: ROOT } }),
       },
     },
-    provider: { reload: async () => {} },
+    provider: { reload: async () => { registeredIDs = snapshot.registrationView?.models.map(model => model.id) ?? [] } },
+    storage: { get: async key => persisted.get(key), set: async (key, value) => { persisted.set(key, value) } },
     event: { subscribe: () => ({ [Symbol.asyncIterator]: async function* () {} }) as AsyncIterable<{ type: string }> },
   }
   const snapshot: ProviderSnapshot = { ready: false, models: [] }
@@ -74,10 +80,12 @@ function harness() {
       }
       return localCatalog
     },
-  }, endpointIdentity("default", undefined, true))
+  }, endpointIdentity(endpointId, undefined, endpointId === "default"))
   return {
     loop,
     snapshot,
+    persisted,
+    get registeredIDs() { return registeredIDs },
     setLive(value: unknown) { live = value },
     setLocalCatalog(value: unknown) { localCatalog = value },
     setLatestCatalog(value: unknown) { latestCatalog = value },
@@ -174,6 +182,39 @@ test("temporary metadata-withheld models recover on an unchanged set; stable unm
     expect(h.snapshot.models.map((model) => model.id)).toEqual(["model-a", "model-b"])
     expect(h.catalogRequests).toBe(requestsBeforeDeletion)
     expect(h.snapshot.diagnostics?.publication?.withheld.map((entry) => entry.id)).toEqual(["stable-unmatched"])
+  } finally {
+    await h.loop.dispose()
+  }
+})
+
+// [BLOCKED-HOST-REFRESH] Core → runtime snapshot → reload registration and persisted catalog.
+test("blocked deployments are removed by a live refresh with unchanged raw names", async () => {
+  const h = harness("company")
+  const activeInfo = { data: blockedInfo.data.map(row => ({ ...row, model_info: { ...row.model_info, blocked: false } })) }
+  h.setLive(activeInfo)
+  h.setLocalCatalog(blockedCatalog)
+  h.setLatestCatalog(blockedCatalog)
+  try {
+    await h.loop.start()
+    expect(h.registeredIDs).toHaveLength(20)
+    expect(h.snapshot.models).toHaveLength(20)
+    expect(new Set(activeInfo.data.map(row => row.model_name))).toEqual(new Set(blockedInfo.data.map(row => row.model_name)))
+    h.setLive(blockedInfo)
+    await h.loop.trigger(true)
+    const expected = Array.from({ length: 13 }, (_, i) => `chat-model-${String(i + 1).padStart(2, "0")}`)
+    expect(h.registeredIDs.slice().sort()).toEqual(expected)
+    expect(h.snapshot.models.map(model => model.id).sort()).toEqual(expected)
+    expect(h.snapshot.diagnostics?.discovery?.models.map(model => model.id).sort()).toEqual([...expected, "metadata-missing-chat"])
+    expect(h.snapshot.diagnostics?.publication?.publishable.map(model => model.id).sort()).toEqual(expected)
+    const visible = new Set(visibleModels.data.map(model => model.id))
+    expect(h.registeredIDs.every(id => visible.has(id))).toBe(true)
+    const persisted = h.persisted.get("litellm.discovery.snapshot.v1.company")
+    expect(typeof persisted).toBe("string")
+    const stored = JSON.parse(String(persisted))
+    expect(stored.models.map((model: { id: string }) => model.id).sort()).toEqual(expected)
+    // A further unchanged refresh cannot revive removed models through prior publication/LKG.
+    await h.loop.trigger(true)
+    expect(h.registeredIDs.slice().sort()).toEqual(expected)
   } finally {
     await h.loop.dispose()
   }

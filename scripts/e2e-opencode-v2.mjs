@@ -68,6 +68,14 @@ const frozenDiscovery = JSON.parse(readFileSync(path.join(root,"test/fixtures/me
 const frozenCatalog = JSON.parse(readFileSync(path.join(root,"test/fixtures/metadata-priority/modelsdev-subset.json"),"utf8"))
 const oracle = JSON.parse(readFileSync(path.join(root,"test/fixtures/metadata-priority/expected-16.json"),"utf8"))
 const baselineCatalog = structuredClone(frozenCatalog)
+const blockedInfo = JSON.parse(readFileSync(path.join(root, "test/fixtures/blocked-deployments/model-info.json"), "utf8"))
+const blockedCatalog = JSON.parse(readFileSync(path.join(root, "test/fixtures/blocked-deployments/modelsdev-catalog.json"), "utf8"))
+const blockedVisible = JSON.parse(readFileSync(path.join(root, "test/fixtures/blocked-deployments/visible-models.json"), "utf8"))
+for (const [id, record] of Object.entries(blockedCatalog.models)) baselineCatalog.models[id] ??= record
+for (const [owner, provider] of Object.entries(blockedCatalog.providers)) {
+  baselineCatalog.providers[owner] ??= { models: {} }
+  for (const [id, record] of Object.entries(provider.models)) baselineCatalog.providers[owner].models[id] ??= record
+}
 const addRecord = (name, context, output, reasoning = false, reasoning_options = []) => {
   const canonical = "e2e/"+name
   const record = {id:name,canonical_model_id:canonical,limit:{context,output},tool_call:true,reasoning,reasoning_options,modalities:{input:["text"],output:["text"]}}
@@ -78,7 +86,9 @@ const addRecord = (name, context, output, reasoning = false, reasoning_options =
 for(const row of servedFixture.data) {
   const name = row.model_name
   if(!name || oracle.models.some(model=>model.id===name) || ["shared-route","invalid-fields","minimax-m3"].includes(name))continue
-  if(baselineCatalog.providers.e2e?.models[name])continue
+  // Reuse an existing complete record instead of inventing a second canonical
+  // identity for the same synthetic lifecycle name (e.g. blocked-fixture GPTs).
+  if(Object.values(baselineCatalog.providers).some(provider => provider.models[name]))continue
   const context = typeof row.model_info.max_input_tokens === "number" ? row.model_info.max_input_tokens : 128000
   const output = typeof row.model_info.max_output_tokens === "number" ? row.model_info.max_output_tokens : 16000
   addRecord(name,context,output,row.model_info.supports_reasoning===true)
@@ -142,6 +152,7 @@ function startLiteLLM(initialKey) {
   let acceptedRequests = 0
   let failedRequests = 0
   const keys = { expected: initialKey }
+  const state = { models: undefined }
   const modelRequests = []
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://127.0.0.1")
@@ -161,7 +172,7 @@ function startLiteLLM(initialKey) {
       }
       acceptedRequests += 1
       res.writeHead(200, { "content-type": "application/json" })
-      res.end(JSON.stringify({ data: servedModels }))
+      res.end(JSON.stringify({ data: state.models ?? servedModels }))
       return
     }
     if (req.method === "POST" && ["/v1/chat/completions","/v1/responses","/v1/messages"].includes(url.pathname)) {
@@ -209,6 +220,7 @@ function startLiteLLM(initialKey) {
         acceptedRequests: () => acceptedRequests,
         failedRequests: () => failedRequests,
         keys,
+        state,
       })
     })
   })
@@ -961,14 +973,14 @@ export default {
 
   // PTY text normalization may collapse the full-width colon, so publication
   // needles are matched as regexes on semantic spacing.
-  const diagnosticsThroughTui = async (needle, label) => {
+  const diagnosticsThroughTui = async (needle, label, endpointID = "default") => {
     const matches = (text) => (typeof needle === "string" ? text.includes(needle) : needle.test(text))
     let last = ""
     for (let attempt = 0; attempt < 6; attempt++) {
-      runSessionCommand("litellm-diagnostics", "default")
+      runSessionCommand("litellm-diagnostics", endpointID)
       const diagTui = startAttachedTui(sessionID)
       try {
-        await waitForTui(diagTui, /Endpoint[\s：:]+default/u, { timeout: 20_000 })
+        await waitForTui(diagTui, new RegExp(`Endpoint[\\s：:]+${endpointID}`, "u"), { timeout: 20_000 })
         last = diagTui.output()
         if (matches(last)) return last
       } catch (error) {
@@ -1122,6 +1134,34 @@ export default {
   await requestModel("e2e-disabled",undefined,"chat")
   for(const level of ["high","max"])await requestModel("e2e-messages",level,"messages")
   console.log(`Real OpenCode metadata priority: 16/16 final registrations and picker lists; ${checkedRequests} actual Chat/Responses/Messages requests passed`)
+
+  // [BLOCKED-HOST-REFRESH] [BLOCKED-HOST-ISOLATION] Actual OpenCode registry + diagnostics TUI.
+  // Synthetic 29/25 layout, not a company service export. No /v1/models fetch is added.
+  const registryIDs = providerID => payload(jsonOutput(api("GET", "/api/model"), "model.list"))
+    .filter(model => model.providerID === providerID).map(model => model.id).sort()
+  const waitForRegistryIDs = async (providerID, expected, label) => {
+    let actual = []
+    for (let attempt = 0; attempt < 90; attempt++) {
+      actual = registryIDs(providerID)
+      if (JSON.stringify(actual) === JSON.stringify(expected)) return actual
+      await sleep(1000)
+    }
+    assert.deepEqual(actual, expected, label)
+  }
+  const defaultBeforePause = registryIDs("litellm")
+  const activeCompanyRows = blockedInfo.data.map(row => ({ ...row, model_info: { ...row.model_info, blocked: false } }))
+  const pausedExpected = Array.from({ length: 13 }, (_, i) => `chat-model-${String(i + 1).padStart(2, "0")}`)
+  const activeExpected = Object.keys(blockedCatalog.providers.openai.models).sort()
+  companyMock.state.models = activeCompanyRows
+  await waitForRegistryIDs("litellm-company", activeExpected, "company active synthetic baseline")
+  companyMock.state.models = blockedInfo.data
+  const pausedActual = await waitForRegistryIDs("litellm-company", pausedExpected, "paused models must leave real OpenCode registry")
+  assert(pausedActual.every(id => blockedVisible.data.some(model => model.id === id)))
+  assert.deepEqual(registryIDs("litellm"), defaultBeforePause, "company pause changed default endpoint")
+  await diagnosticsThroughTui(/可用[\s：:]*13/u, "company paused deployment count", "company")
+  companyMock.state.models = undefined
+  await waitForRegistryIDs("litellm-company", defaultBeforePause, "company fixture restoration")
+  console.log("Real OpenCode blocked deployments: company 20 → 13, default unchanged, diagnostics TUI passed")
 
   // A stable model_name set reuses the registered configuration; price-only
   // catalog changes do not trigger a metadata read.
