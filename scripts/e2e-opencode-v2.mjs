@@ -86,7 +86,9 @@ const addRecord = (name, context, output, reasoning = false, reasoning_options =
 for(const row of servedFixture.data) {
   const name = row.model_name
   if(!name || oracle.models.some(model=>model.id===name) || ["shared-route","invalid-fields","minimax-m3"].includes(name))continue
-  if(baselineCatalog.providers.e2e?.models[name])continue
+  // Reuse an existing complete record instead of inventing a second canonical
+  // identity for the same synthetic lifecycle name (e.g. blocked-fixture GPTs).
+  if(Object.values(baselineCatalog.providers).some(provider => provider.models[name]))continue
   const context = typeof row.model_info.max_input_tokens === "number" ? row.model_info.max_input_tokens : 128000
   const output = typeof row.model_info.max_output_tokens === "number" ? row.model_info.max_output_tokens : 16000
   addRecord(name,context,output,row.model_info.supports_reasoning===true)

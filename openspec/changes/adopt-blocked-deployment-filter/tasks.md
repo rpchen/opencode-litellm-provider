@@ -18,3 +18,5 @@
 - [BLOCKED-HOST-REFRESH]：test/incremental-discovery.test.ts 验证20→13、reload 注册视图、持久化和诊断，并再次刷新排除旧发布/LKG复活；真实宿主链路在 scripts/e2e-opencode-v2.mjs。
 - [BLOCKED-HOST-ISOLATION]：scripts/e2e-opencode-v2.mjs 验证真实 OpenCode company 模型移除时 default 清单不变，并通过 diagnostics 命令/TUI 检查13个可用模型。
 - 真实 OpenCode 2.0.16/2.0.30：等待本 PR 固定 Git commit 的 CI 验收，尚未记为通过。
+
+- 首次 CI #344 常规检查通过，但两个真实宿主在 company 的20模型基线检查失败。核实为 E2E catalog 组合重复生成 gpt-5.5 的 e2e/openai 两个 canonical，导致状态 ambiguous。仅修正合成记录生成器，复用已有完整记录；本地执行相同 catalog 生成片段证实旧样本19、新样本20，暂停后13，原16项 oracle 保持通过。产品代码与 dist 未变化，继续等待真实宿主复验。
