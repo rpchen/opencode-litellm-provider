@@ -891,6 +891,7 @@ export default {
   // Re-enable company through the same real selector (main list -> detail -> enable -> back).
   // The pending-selector recovery is already exercised above. Here the TUI must
   // subscribe before the command, so it cannot race its initial state fetch.
+  sessionID = payload(jsonOutput(api("POST", "/api/session", "--data", JSON.stringify({ title: "LiteLLM re-enable E2E" })), "session.create")).id
   tui = startAttachedTui(sessionID)
   await waitForTui(tui, workspace)
   await sleep(1000)
