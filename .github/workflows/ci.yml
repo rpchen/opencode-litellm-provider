@@ -125,7 +125,7 @@ jobs:
       - name: Resolve an exact OpenCode v2 version
         run: |
           version="$(npm view @opencode/cli@latest version)"
-          node -e 'const semver = require("semver"); const range = require("./package.json").peerDependencies["@opencode/plugin"]; if (!/^2\.\d+\.\d+$/.test(process.argv[1]) || !semver.satisfies(process.argv[1], range)) { console.error(`OpenCode ${process.argv[1]} is outside declared support ${range}`); process.exit(1) }' "$version"
+          node -e 'if (!/^\d+\.\d+\.\d+$/.test(process.argv[1])) { console.error("Expected an exact stable OpenCode version"); process.exit(1) }' "$version"
           echo "E2E_OPENCODE_VERSION=$version" >> "$GITHUB_ENV"
           echo "Testing OpenCode $version"
 

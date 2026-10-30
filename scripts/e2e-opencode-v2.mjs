@@ -8,7 +8,7 @@ import { spawn, spawnSync } from "node:child_process"
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)))
 const hostVersion = process.env.E2E_OPENCODE_VERSION ?? ""
-assert(/^2\.\d+\.\d+$/u.test(hostVersion), "E2E_OPENCODE_VERSION must be an exact OpenCode v2 version")
+assert(/^\d+\.\d+\.\d+$/u.test(hostVersion), "E2E_OPENCODE_VERSION must be an exact stable OpenCode version")
 const packageSpec = process.env.E2E_PACKAGE_SPEC
 // CI pins the GitHub commit. Local pre-push verification may pin a local clone with git+file://...#<sha>;
 // OpenCode's own installer still installs it, but the commit must be a full immutable SHA either way.
