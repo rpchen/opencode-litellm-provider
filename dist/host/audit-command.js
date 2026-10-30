@@ -100,9 +100,11 @@ export async function registerAudit(context, snapshot, dependencies = {}) {
                     const state = endpointStateOf(snapshot, "default");
                     const appliedSummary = state.applied.kind === "active"
                         ? `已生效（${state.applied.modelCount} 个模型）`
-                        : state.applied.kind === "not-applied"
-                            ? "未生效"
-                            : `出错（${applyErrorLabel(state.applied.category)}）`;
+                        : state.applied.kind === "snapshot"
+                            ? `来自上次快照、待确认（${state.applied.modelCount} 个模型）`
+                            : state.applied.kind === "not-applied"
+                                ? "未生效"
+                                : `出错（${applyErrorLabel(state.applied.category)}）`;
                     latest = {
                         sequence: ++diagnosticSequence,
                         sessionID,

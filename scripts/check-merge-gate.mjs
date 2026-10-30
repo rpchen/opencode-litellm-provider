@@ -3,13 +3,13 @@
  * Required merge-gate drift check for the OpenCode repository.
  *
  * Verifies — against the live GitHub ruleset API — that the `Protect main`
- * ruleset requires BOTH status checks `CI` and `Real OpenCode 2.0.16 E2E`
+ * ruleset requires BOTH status checks `CI` and `Real OpenCode latest E2E`
  * and that the rest of the protection set has not drifted from the frozen
  * baseline:
  *
  *   - active enforcement on refs/heads/main
  *   - strict required status checks policy
- *   - check contexts exactly { CI, Real OpenCode 2.0.16 E2E }
+ *   - check contexts exactly { CI, Real OpenCode latest E2E }
  *   - squash-only merge method
  *   - no bypass actors
  *   - review-thread resolution required
@@ -18,7 +18,7 @@
  * The exact context names are proven from real GitHub Actions check runs
  * (see docs/decisions.md — never guessed from workflow YAML names): the CI
  * job publishes `name: CI` and the E2E job publishes
- * `name: Real OpenCode 2.0.16 E2E`, and both contexts exist verbatim on
+ * `name: Real OpenCode latest E2E`, and both contexts exist verbatim on
  * real PR check runs.
  *
  * Fails closed: unreachable API, missing project, or any drift exits non-zero.
@@ -29,7 +29,7 @@ import { execFileSync } from "node:child_process"
 
 const REPO = "rpchen/opencode-litellm-provider"
 const RULESET_NAME = "Protect main"
-const REQUIRED_CHECKS = ["CI", "Real OpenCode 2.0.16 E2E"]
+const REQUIRED_CHECKS = ["CI", "Real OpenCode latest E2E"]
 const EXPECTED = {
   enforcement: "active",
   strictRequiredStatusChecks: true,

@@ -29,7 +29,7 @@ opencode plugin add github:rpchen/opencode-litellm-provider#v0.11.1
 
 要求：
 
-- OpenCode `>=2.0.15 <2.1`
+- OpenCode `>=2.0.15 <2.3`
 - LiteLLM 地址使用 `http://` 或 `https://`
 - API Key 能访问 `/v1/model/info`（旧版可回退 `/model/info`）以及实际要调用的模型
 
@@ -97,7 +97,7 @@ endpoint id 是用户定义的稳定 ASCII slug，必须匹配 `[a-z0-9][a-z0-9-
 
 在 endpoint 还没有保存 API Key 时，它虽然会出现在 `/connect` 和 `/litellm-endpoints` 中，但不会发布 provider/model；因此此时 `/models` 里看不到对应 LiteLLM 模型是正常状态。完成 `/connect` 后 discovery 成功，模型才会出现。
 
-固定 `baseUrl` 的 endpoint 会向 OpenCode 注册**无附加表单字段**的 key 认证方式；不会发送 `form: []`。这是 OpenCode 2.0.16 的运行时 Schema 要求：认证表单如果存在必须至少包含一个字段。当前仓库 CI 会用真实 OpenCode 2.0.16、固定 Git commit 安装、两个独立 fake LiteLLM endpoint 验证 `/connect` 底层 integration、独立 credential、provider 与 `opencode models`。
+固定 `baseUrl` 的 endpoint 会向 OpenCode 注册**无附加表单字段**的 key 认证方式；不会发送 `form: []`。这是 OpenCode 2.0.16 的运行时 Schema 要求：认证表单如果存在必须至少包含一个字段。当前仓库 CI 使用执行时解析的最新 OpenCode V2 稳定版，以固定 Git commit 安装、两个独立 fake LiteLLM endpoint 验证 `/connect` 底层 integration、独立 credential、provider 与 `opencode models`。
 
 每个 endpoint 都是独立 integration/provider、独立 credential、独立 discovery/cache/snapshot/故障域。插件在**同一个 OpenCode V2 plugin 实例**中注册这些 integration/provider；activation 只启停对应 provider/discovery，不会删除 endpoint 定义或已保存 credential。插件不会跨 endpoint 聚合模型、负载均衡或自动故障切换。
 

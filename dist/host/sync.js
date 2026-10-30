@@ -88,6 +88,8 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
             // desired/validation are reconciler-owned; do not mutate here.
         };
     };
+    let finishInitialization;
+    const initialized = new Promise((resolve) => { finishInitialization = resolve; });
     let timer;
     let disposed = false;
     let running;
@@ -389,11 +391,11 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                 }),
                 note: "当前结果来自 endpoint-compatible 持久化快照，等待网络确认。",
             };
-            // Snapshot restore is last-known-good, NOT a successful apply. Canonical
-            // applied stays "not-applied" until this refresh round succeeds.
-            writeCanonical({ applied: { kind: "not-applied" } });
+            // Publishing a compatible snapshot is distinct from a confirmed refresh.
+            writeCanonical({ applied: { kind: "snapshot", modelCount: restoredModels.length } });
             await reload();
         }
+        finishInitialization();
         try {
             const previous = coordinator.state(nextIdentity).value;
             const coordinated = await coordinator.refresh(nextIdentity, async () => {
@@ -547,7 +549,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                     logger.warn(`LiteLLM 发现漂移：added=${diff.added.length}, removed=${diff.removed.length}, protocol=${diff.protocolChanged.length}, capabilities=${diff.capabilityChanged.length}`);
                 }
             }
-            // A restored snapshot is withheld until network validation succeeds. Even
+            // A restored snapshot remains pending until network validation succeeds. Even
             // unchanged models must be reloaded when this is the first applied view.
             const changed = !snapshot.ready || lastFingerprint !== nextFingerprint || reloadPending ||
                 snapshot.endpointState?.applied.kind !== "active";
@@ -644,14 +646,16 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                 snapshot.diagnostics = {
                     discovery: snapshot.diagnostics?.discovery,
                     cache: createDiscoveryCacheDiagnostics({
-                        source: state.hasValue ? "stale" : "none",
-                        stale: state.hasValue,
-                        refreshedAt: state.refreshedAt,
+                        source: snapshot.endpointState?.applied.kind === "snapshot" ? "snapshot" : state.hasValue ? "stale" : "none",
+                        stale: state.hasValue || snapshot.endpointState?.applied.kind === "snapshot",
+                        refreshedAt: state.refreshedAt ?? (snapshot.audit?.lastSuccessfulDiscoveryAt ? Date.parse(snapshot.audit.lastSuccessfulDiscoveryAt) : undefined),
                         failureCount: state.failureCount,
                         nextRetryAt: state.nextRetryAt,
                         pending: state.pending,
                     }),
-                    note: "发现失败；详细错误已通过宿主日志记录。",
+                    note: snapshot.endpointState?.applied.kind === "snapshot"
+                        ? "发现失败；当前结果来自上次快照，等待网络确认。"
+                        : "发现失败；详细错误已通过宿主日志记录。",
                 };
                 if (snapshot.audit?.view)
                     snapshot.audit = { ...snapshot.audit, status: "stale", cacheSource: snapshot.diagnostics.cache?.source };
@@ -665,9 +669,9 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                     }
                     return "network";
                 })();
-                writeCanonical({
-                    applied: { kind: "error", category: appliedCategory, at: new Date().toISOString() },
-                });
+                if (snapshot.endpointState?.applied.kind !== "snapshot") {
+                    writeCanonical({ applied: { kind: "error", category: appliedCategory, at: new Date().toISOString() } });
+                }
             }
         }
         finally {
@@ -696,6 +700,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
                     logger.warn(`LiteLLM 发现循环出错，将在下个周期重试：${redact(message)}`);
                     schedule();
                 }
+                finishInitialization();
                 nextForce = queuedForce;
             } while (queued && !disposed);
         })().finally(() => {
@@ -722,6 +727,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
         }
     };
     return {
+        initialized,
         async start() {
             if (disposed)
                 return;

@@ -30,6 +30,7 @@ async function setupEndpoint(context, endpoint, options, dependencies, snapshots
     const providerRegistration = await registerProvider(context, snapshot, endpoint);
     const loop = createDiscoveryLoop(context, snapshot, endpointOptions, dependencies, endpoint);
     const startup = loop.start();
+    await loop.initialized;
     triggers?.set(endpoint.id, async () => { await loop.trigger(true); });
     return async () => {
         await loop.dispose();

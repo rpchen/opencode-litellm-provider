@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url"
 import { spawn, spawnSync } from "node:child_process"
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)))
-const hostVersion = process.env.E2E_OPENCODE_VERSION ?? "2.0.16"
-assert(["2.0.16", "2.0.30"].includes(hostVersion), "E2E_OPENCODE_VERSION must be a pinned tested version")
+const hostVersion = process.env.E2E_OPENCODE_VERSION ?? ""
+assert(/^2\.\d+\.\d+$/u.test(hostVersion), "E2E_OPENCODE_VERSION must be an exact OpenCode v2 version")
 const packageSpec = process.env.E2E_PACKAGE_SPEC
 // CI pins the GitHub commit. Local pre-push verification may pin a local clone with git+file://...#<sha>;
 // OpenCode's own installer still installs it, but the commit must be a full immutable SHA either way.
@@ -714,7 +714,7 @@ export default {
     "session.create",
   ))
   assert.equal(typeof createdSession?.id, "string", `session.create did not return an id: ${JSON.stringify(createdSession)}`)
-  const sessionID = createdSession.id
+  let sessionID = createdSession.id
   const runSessionCommand = (name, text = "") =>
     api("POST", `/api/session/${sessionID}/command`, "--data", JSON.stringify({ name, text }))
 
@@ -891,14 +891,38 @@ export default {
   assert.match(models.stdout, /litellm\//u, "CLI models must include default LiteLLM models")
   assert.match(models.stdout, /litellm-company\//u, "CLI models must include re-enabled company LiteLLM models")
 
+  // A cold server's very first model response must contain both durable
+  // snapshots even when the LiteLLM service is offline.
+  mockFailStatus = 500
+  openCodeServer.child.kill(); await sleep(1500)
+  openCodeServer = await startOpenCodeServer(); env.OPENCODE_PASSWORD = openCodeServer.password
+  const firstModels = payload(jsonOutput(api("GET", "/api/model"), "model.list"))
+  assert(firstModels.some(model => model.providerID === "litellm" && model.id === "multi-endpoint-model"), "first model read must include the offline default snapshot")
+  assert(firstModels.some(model => model.providerID === "litellm-company"), "first model read must include the offline company snapshot")
+  console.log("[STARTUP-SNAPSHOT] first real host model read contains both offline snapshots")
+  mockFailStatus = 0
+  for (const endpointId of ["default", "company"]) {
+    // Use async HTTP so the fake LiteLLM server can answer while refresh runs.
+    const response = await fetch(`${openCodeServer.url}/api/rpc/litellm-endpoints/trigger`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Basic " + Buffer.from(`opencode:${openCodeServer.password}`).toString("base64") },
+      body: JSON.stringify({ input: { endpointId } }),
+    })
+    assert(response.ok, `endpoint retry HTTP failed for ${endpointId}`)
+    const result = await response.json()
+    assert.equal(result.output?.ok, true, `network recovery failed for ${endpointId}`)
+  }
+  await waitForProviders(["litellm", "litellm-company"])
+  sessionID = payload(jsonOutput(api("POST", "/api/session", "--data", JSON.stringify({ title: "LiteLLM post-restart E2E" })), "session.create")).id
+
   // Endpoint-scoped diagnostics must use the real OpenCode command tail (prompt.text).
   // This reproduces /litellm-diagnostics company and rejects the previous silent fallback to overview.
   runSessionCommand("litellm-diagnostics", "company")
   tui = startAttachedTui(sessionID)
   mark = tui.mark()
   // PTY text normalization may collapse the full-width colon, so assert semantic spacing.
-  await waitForTui(tui, /Endpoint\s+company/u, { from: mark })
-  await waitForTui(tui, /models\.dev\s+ok/u, { from: mark })
+  await waitForTui(tui, /Endpoint[\s:：]+company/u, { from: mark })
+  await waitForTui(tui, /models\.dev[\s:：]*ok/u, { from: mark })
   await waitForTui(tui, /invalid-fields/u, { from: mark })
   const scopedDiagnostics = tui.output(mark)
   assert.doesNotMatch(scopedDiagnostics, /LiteLLM Endpoints · active \d+\/\d+/u,
@@ -1120,7 +1144,7 @@ export default {
         // v2.0.30's native Anthropic SDK fits thinking to half max_tokens
         // (ai/src/protocols/shared.ts:fitThinkingBudget). Registry settings
         // below remain the declared 64k; only the host's wire lowering differs.
-        const maximumBudget = hostVersion === "2.0.30" ? 32000 : 64000
+        const maximumBudget = 32000
         assert.equal(request.body.thinking?.budget_tokens, variant === "max" ? maximumBudget : 16000)
       }
       else assert.equal(effort,variant,`${id}: exact requested reasoning effort`)

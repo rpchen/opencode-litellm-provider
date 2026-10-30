@@ -7,7 +7,8 @@ import { DiscoveryError } from "../src/net/fetch.js"
 import { PUBLICATION_SCHEMA_VERSION } from "../src/generated/discovery-core/index.js"
 import { createDiagnosticsLines } from "../src/host/diagnostics.js"
 import { createDiscoveryLoop, type Scheduler, type SyncContext } from "../src/host/sync.js"
-import type { ProviderSnapshot } from "../src/host/register.js"
+import { applyProvider, type ProviderSnapshot } from "../src/host/register.js"
+import { statusLabel, userVisibleStatus } from "../src/host/endpoint-state.js"
 import type { PluginOptions } from "../src/options.js"
 import { endpointIdentity, type EndpointIdentity } from "../src/endpoints.js"
 
@@ -224,6 +225,55 @@ describe("发现循环", () => {
     expect(h.reloads).toBe(2)
     const persisted = JSON.parse(String(h.storageValue)) as { models: Array<Record<string, unknown>> }
     expect(persisted.models[0]?.package).toBeUndefined()
+    await h.loop.dispose()
+  })
+
+  for (const endpoint of [endpointIdentity("default", undefined, true), endpointIdentity("company", "https://litellm.example", false)]) {
+    test(`startup publishes ${endpoint.id} snapshot before network, and keeps it offline`, async () => {
+      const h = harness(JSON.stringify(persistedSnapshot("cached-model", "sk-first", endpoint.legacy ? undefined : endpoint.id)), false, endpoint)
+      const pending = deferred<unknown>()
+      h.setFetch(() => pending.promise)
+      const starting = h.loop.start()
+      await h.loop.initialized
+      let published: unknown
+      applyProvider({ add: (value) => { published = value } }, h.snapshot, endpoint)
+      expect(published).toBeDefined()
+      expect(h.snapshot.endpointState?.applied.kind).toBe("snapshot")
+      expect(statusLabel(userVisibleStatus(h.snapshot.endpointState!))).toContain("来自上次快照、待确认")
+      pending.reject(new Error("offline"))
+      await starting
+      published = undefined
+      applyProvider({ add: (value) => { published = value } }, h.snapshot, endpoint)
+      expect(published).toBeDefined()
+      expect(h.snapshot.diagnostics?.cache?.source).toBe("snapshot")
+      await h.loop.dispose()
+    })
+  }
+
+  test("a stored snapshot is not published without credentials or with an invalid URL", async () => {
+    for (const invalidUrl of [false, true]) {
+      const h = harness(JSON.stringify(persistedSnapshot("cached-model")))
+      if (invalidUrl) h.setCredential({ type: "key", key: "sk-first", configuration: { url: "not-a-url" } })
+      else h.setConnection(undefined)
+      await h.loop.start()
+      await h.loop.initialized
+      let published: unknown
+      applyProvider({ add: (value) => { published = value } }, h.snapshot)
+      expect(published).toBeUndefined()
+      expect(h.fetches).toBe(0)
+      await h.loop.dispose()
+    }
+  })
+
+  test("initialization does not wait for network without a snapshot", async () => {
+    const h = harness()
+    const pending = deferred<unknown>()
+    h.setFetch(() => pending.promise)
+    const starting = h.loop.start()
+    await h.loop.initialized
+    expect(h.snapshot.ready).toBeFalse()
+    pending.resolve({ model: "model-a" })
+    await starting
     await h.loop.dispose()
   })
 

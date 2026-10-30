@@ -143,7 +143,9 @@ export async function registerMultiEndpointAudit(
               const validation = state.validation.kind === "ok" ? "合法" : `非法（${state.validation.reason}）`
               const applied = state.applied.kind === "active"
                 ? `已生效（${state.applied.modelCount} 个模型${state.applied.lastDiscoveryAt ? `，最近成功发现 ${state.applied.lastDiscoveryAt}` : ""}）`
-                : state.applied.kind === "not-applied"
+                : state.applied.kind === "snapshot"
+              ? `来自上次快照、待确认（${state.applied.modelCount} 个模型）`
+              : state.applied.kind === "not-applied"
                   ? "未生效"
                   : `出错（${applyErrorLabel(state.applied.category)}${state.applied.message ? `：${state.applied.message}` : ""}）`
               const registeredModelCount = snapshot?.audit?.view?.models.length ?? snapshot?.models.length ?? 0

@@ -5,6 +5,7 @@ import { createAuditReport } from "../src/host/audit.js"
 import { createDiagnosticsLines } from "../src/host/diagnostics.js"
 import { getRuntimeIdentity, resetRuntimeIdentityForTests, setRuntimeIdentityForTests } from "../src/host/runtime-identity.js"
 import type { Scheduler } from "../src/host/sync.js"
+import { createDiscoverySnapshot, endpointFingerprint } from "../src/core/snapshot.js"
 
 class TestScheduler implements Scheduler {
   active: Array<() => void> = []
@@ -272,5 +273,36 @@ test("runtime identity has no builtAt and no git dependency [OUT-OF-SCOPE] [IDEN
     const identityRaw = readFileSync(identityPath, "utf8")
     expect(identityRaw).not.toContain("builtAt")
     expect(identityRaw).not.toContain("pluginCommit")
+  }
+})
+
+
+test("setup publishes the compatible snapshot before the first host read without waiting for discovery", async () => {
+  for (const explicit of [false, true]) {
+    const endpointID = explicit ? "company" : undefined
+    const stored = createDiscoverySnapshot(endpointFingerprint({ endpointID, baseUrl: "https://litellm.example", credentialKey: "sk-test-only", buildOptions: { contextTierCap: true, protocolOverrides: {} } }), [{
+      id: "cached", name: "cached", protocol: "chat", capabilities: { tools: true, input: ["text"], output: ["text"] }, variants: [], reasoningSupported: "unsupported", released: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, limit: { context: 100, input: 100, output: 10 },
+    }], "2026-09-28T00:00:00.000Z")
+    const registration = { dispose: async () => {} }
+    let transform: ((editor: { add(value: unknown): void }) => void) | undefined
+    let release!: (value: unknown) => void
+    const pending = new Promise<unknown>((resolve) => { release = resolve })
+    const connection = { type: "credential" as const, id: "connection-1", label: "test", method: "key" as const }
+    const context = {
+      options: explicit ? { endpoints: { company: { baseUrl: "https://litellm.example" } } } : {},
+      integration: { transform: async () => registration, connection: { active: async () => connection, resolve: async () => ({ type: "key", key: "sk-test-only", configuration: { url: "https://litellm.example" } }) } },
+      provider: { transform: async (callback: typeof transform) => { transform = callback; return registration }, reload: async () => {} },
+      storage: { get: async (key: string) => key.startsWith("litellm.discovery.snapshot.v1") ? JSON.stringify(stored) : undefined, set: async () => {} },
+      rpc: { register: async () => ({ ...registration, events: { emit: async () => {} } }) },
+      command: { transform: async (callback: (editor: { add(): void }) => void) => { callback({ add() {} }); return registration } },
+      event: { subscribe: ({ signal }: { signal?: AbortSignal } = {}) => ({ [Symbol.asyncIterator]: () => ({ next: () => new Promise<IteratorResult<never>>((resolve) => signal?.addEventListener("abort", () => resolve({ value: undefined, done: true }), { once: true })) }) }) },
+    } as unknown as Plugin.Context
+    const cleanup = await setupLiteLLM(context, { scheduler: new TestScheduler(), fetchLiteLLM: async () => pending, getModelsDev: async () => ({}) })
+    const published: unknown[] = []
+    transform?.({ add: (value) => published.push(value) })
+    expect(published).toHaveLength(1)
+    expect(JSON.stringify(published)).toContain("cached")
+    release({ data: [] })
+    await cleanup()
   }
 })

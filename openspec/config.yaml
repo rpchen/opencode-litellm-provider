@@ -18,7 +18,7 @@ context: |
   HTTP、轮询、缓存、凭据、宿主注册、命令与审计仍是本仓库职责。
 
   Tech stack: TypeScript ESM + tsc；npm ci 锁定依赖，Bun 运行测试。
-  目标宿主：OpenCode >=2.0.15 <2.1；沿用 package.json 的 @opencode/plugin peer 和 TUI 依赖。
+  目标宿主：OpenCode >=2.0.15 <2.3；沿用 package.json 的 @opencode/plugin peer 和 TUI 依赖。
   宿主 SDK 不编入 core，参考 docs/research/opencode-v2-plugin-api.md 中的版本与来源。
   仓库：https://github.com/rpchen/opencode-litellm-provider；独立 Git 仓库，不要求任何平级目录。
 

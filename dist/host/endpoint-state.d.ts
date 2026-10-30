@@ -22,6 +22,9 @@ export type AppliedState = {
     readonly lastDiscoveryAt?: string;
     readonly modelCount: number;
 } | {
+    readonly kind: "snapshot";
+    readonly modelCount: number;
+} | {
     readonly kind: "not-applied";
 } | {
     readonly kind: "error";
@@ -36,14 +39,14 @@ export interface EndpointState {
     readonly credential: CredentialState;
     readonly applied: AppliedState;
 }
-export type UserVisibleStatus = "disabled" | "disabled-invalid" | "enabled-active" | "enabled-needs-authentication" | "enabled-not-applied" | "enabled-error" | "enabled-invalid-configuration";
+export type UserVisibleStatus = "disabled" | "disabled-invalid" | "enabled-active" | "enabled-needs-authentication" | "enabled-snapshot" | "enabled-not-applied" | "enabled-error" | "enabled-invalid-configuration";
 export declare function userVisibleStatus(state: EndpointState): UserVisibleStatus;
 export declare function statusLabel(status: UserVisibleStatus): string;
 export declare function credentialLabel(state: CredentialState): string;
 export declare function applyErrorLabel(category: ApplyErrorCategory): string;
 /**
  * Frozen `/models` predicate: only endpoints that are enabled, valid, credentialed
- * and have at least one successful refresh in this process MAY publish models.
+ * and have a compatible snapshot or a successful refresh MAY publish models.
  */
 export declare function canPublish(state: EndpointState): boolean;
 /** Whether Retry / 重新应用 is offered for this state. */

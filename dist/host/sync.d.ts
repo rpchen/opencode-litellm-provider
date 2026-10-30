@@ -48,6 +48,7 @@ export interface DiscoveryDependencies {
 }
 export interface DiscoveryLoop {
     start(): Promise<void>;
+    initialized: Promise<void>;
     trigger(forceRefresh?: boolean): Promise<void>;
     dispose(): Promise<void>;
 }

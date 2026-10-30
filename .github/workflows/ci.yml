@@ -101,11 +101,7 @@ jobs:
 
 
   real-opencode-v2:
-    name: Real OpenCode ${{ matrix.opencode }} E2E
-    strategy:
-      fail-fast: false
-      matrix:
-        opencode: ["2.0.16", "2.0.30"]
+    name: Real OpenCode latest E2E
     runs-on: ubuntu-latest
     # The gate now also covers acknowledgement restart persistence, canonical
     # identity change and resolved discrepancy in the real host; the previous
@@ -120,14 +116,21 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 22.14.0
+          node-version: 22.23.4
           cache: npm
 
       - name: Install plugin dependencies
         run: npm ci
 
+      - name: Resolve an exact OpenCode v2 version
+        run: |
+          version="$(npm view @opencode/cli@latest version)"
+          node -e 'const semver = require("semver"); const range = require("./package.json").peerDependencies["@opencode/plugin"]; if (!/^2\.\d+\.\d+$/.test(process.argv[1]) || !semver.satisfies(process.argv[1], range)) { console.error(`OpenCode ${process.argv[1]} is outside declared support ${range}`); process.exit(1) }' "$version"
+          echo "E2E_OPENCODE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "Testing OpenCode $version"
+
       - name: Install real OpenCode v2 host
-        run: npm install --global @opencode/cli@${{ matrix.opencode }}
+        run: npm install --global @opencode/cli@${E2E_OPENCODE_VERSION}
 
       - name: Verify real host version
         run: opencode --version
@@ -135,6 +138,5 @@ jobs:
       - name: Run real host E2E
         env:
           OPENCODE_DISABLE_AUTOUPDATE: "1"
-          E2E_OPENCODE_VERSION: ${{ matrix.opencode }}
           E2E_PACKAGE_SPEC: github:${{ github.repository }}#${{ github.event.pull_request.head.sha || github.sha }}
         run: npm run test:e2e:opencode-v2
