@@ -732,6 +732,22 @@ export default {
   // 2) Audit export already had latest-state recovery; keep it in the same real-host gate
   // because the user observed all three commands appearing silent during startup.
   runSessionCommand("litellm-audit-export")
+  // The command endpoint accepts work asynchronously. Wait for the export to
+  // finish while no TUI is attached, so this really tests latest-state recovery.
+  let completedAudit
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const response = await fetch(`${openCodeServer.url}/api/rpc/litellm-audit-export/latest`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Basic " + Buffer.from(`opencode:${openCodeServer.password}`).toString("base64") },
+      body: JSON.stringify({ input: {} }),
+    })
+    if (response.ok) {
+      const result = await response.json()
+      if (result.output?.sessionID === sessionID && result.output?.path) { completedAudit = result.output; break }
+    }
+    await sleep(100)
+  }
+  assert(completedAudit?.ok, "audit command did not finish before TUI recovery")
   tui = startAttachedTui(sessionID)
   await waitForTui(tui, "LiteLLM 审查报告已导出")
   const auditTuiText = tui.output()
