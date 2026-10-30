@@ -729,8 +729,9 @@ export default {
   await waitForTui(tui, "LiteLLM Endpoints · active 2/2")
   await stopAttachedTui(tui)
 
-  // 2) Audit export already had latest-state recovery; keep it in the same real-host gate
-  // because the user observed all three commands appearing silent during startup.
+  // 2) Audit recovery uses its own session so the previously closed terminal's
+  // session state does not affect this independent recovery check.
+  sessionID = payload(jsonOutput(api("POST", "/api/session", "--data", JSON.stringify({ title: "LiteLLM audit E2E" })), "session.create")).id
   runSessionCommand("litellm-audit-export")
   // The command endpoint accepts work asynchronously. Wait for the export to
   // finish while no TUI is attached, so this really tests latest-state recovery.
