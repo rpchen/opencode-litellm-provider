@@ -96,7 +96,7 @@ function harness(
     method: "key",
   }
   let connection: ConnectionInfo | undefined = connectionA
-  let credential = {
+  let credential: { type: "key"; key: string; configuration?: { url: string }; metadata?: { url: string } } = {
     type: "key" as const,
     key: "sk-first",
     configuration: { url: "https://litellm.example" },
@@ -249,6 +249,21 @@ describe("发现循环", () => {
       await h.loop.dispose()
     })
   }
+
+  test("legacy snapshot is published with the URL in current OpenCode credential metadata", async () => {
+    const stored = JSON.stringify(persistedSnapshot("model-a"))
+    const h = harness(stored)
+    h.setCredential({ type: "key", key: "sk-first", metadata: { url: "https://litellm.example" } })
+    const pending = deferred<unknown>()
+    h.setFetch(() => pending.promise)
+    const starting = h.loop.start()
+    await h.loop.initialized
+    expect(h.snapshot.models.map((model) => model.id)).toEqual(["model-a"])
+    expect(h.snapshot.endpointState?.applied.kind).toBe("snapshot")
+    pending.reject(new Error("offline"))
+    await starting
+    await h.loop.dispose()
+  })
 
   test("a stored snapshot is not published without credentials or with an invalid URL", async () => {
     for (const invalidUrl of [false, true]) {

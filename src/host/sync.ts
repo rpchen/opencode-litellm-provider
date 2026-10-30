@@ -1,3 +1,4 @@
+import { credentialURL } from "./credential.js"
 import type { ConnectionInfo } from "@opencode/client"
 import type { ModelSpec } from "../core/build.js"
 import { buildModelSpecs, hasOperationalLimits, modelFingerprint, toOpenCodeModelSpec } from "../core/build.js"
@@ -471,7 +472,7 @@ export function createDiscoveryLoop(
     }
     writeCanonical({ credential: "stored" })
 
-    const rawURL = endpoint.fixedBaseUrl ?? resolved.configuration?.url
+    const rawURL = endpoint.fixedBaseUrl ?? credentialURL(resolved)
     if (typeof rawURL !== "string" || rawURL.length === 0) {
       logger.error(`LiteLLM endpoint ${endpoint.id} 缺少必填地址`)
       writeCanonical({

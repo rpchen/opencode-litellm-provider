@@ -1,3 +1,4 @@
+import { credentialURL } from "./host/credential.js";
 import { Plugin } from "@opencode/plugin";
 import { registerAudit } from "./host/audit-command.js";
 import { registerEndpointActivation } from "./host/endpoint-command.js";
@@ -370,8 +371,7 @@ export async function setupLiteLLM(rawContext, dependencies = {}, internals = {}
             if (!connection)
                 return undefined;
             const resolved = await context.integration.connection.resolve(connection);
-            const url = resolved?.type === "key" ? resolved.configuration?.url : undefined;
-            return typeof url === "string" && url.length > 0 ? url : undefined;
+            return credentialURL(resolved);
         },
         async removeStorage(key) {
             if (!context.storage)

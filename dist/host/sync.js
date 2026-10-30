@@ -1,3 +1,4 @@
+import { credentialURL } from "./credential.js";
 import { buildModelSpecs, hasOperationalLimits, modelFingerprint, toOpenCodeModelSpec } from "../core/build.js";
 import { createDiscoveryCacheDiagnostics, diagnoseModelSpecs, } from "../core/diagnostics.js";
 import { classifyMetadataFailure, capturedPublicationVerdict, createLastKnownGoodEntry, decideAcknowledgement, groupLiteLLMDeployments, lastKnownGoodKey, mergeDiscoveryDiagnostics, mergePublicationResults, modelNameDelta, modelNamesOfResponse, needsCatalogRefresh, nextPublishedBaseline, parsePublicationMemory, responseForModelNames, serializePublicationMemory, PUBLICATION_MEMORY_SCHEMA_VERSION, temporaryMetadataFailureModelNames, } from "../generated/discovery-core/index.js";
@@ -315,7 +316,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
             return;
         }
         writeCanonical({ credential: "stored" });
-        const rawURL = endpoint.fixedBaseUrl ?? resolved.configuration?.url;
+        const rawURL = endpoint.fixedBaseUrl ?? credentialURL(resolved);
         if (typeof rawURL !== "string" || rawURL.length === 0) {
             logger.error(`LiteLLM endpoint ${endpoint.id} 缺少必填地址`);
             writeCanonical({
