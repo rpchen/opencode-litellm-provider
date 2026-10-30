@@ -362,6 +362,7 @@ function plainTerminal(value) {
 }
 
 const activeTuis = new Set()
+let tuiStateSerial = 0
 
 function startAttachedTui(sessionID) {
   if (process.platform === "win32") {
@@ -377,7 +378,9 @@ function startAttachedTui(sessionID) {
   const commandLine = `stty cols 120 rows 100; exec opencode --server ${openCodeServer.url} --session ${sessionID}`
   const child = spawn("script", ["-qefc", commandLine, "/dev/null"], {
     cwd: project,
-    env,
+    // OpenCode persists TUI tabs under XDG_STATE_HOME. Each attached client
+    // must start with its own tabs while the server keeps its persistent state.
+    env: { ...env, XDG_STATE_HOME: path.join(workspace, `tui-state-${++tuiStateSerial}`) },
     stdio: ["pipe", "pipe", "pipe"],
   })
   let stdout = ""
