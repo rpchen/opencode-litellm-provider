@@ -1321,8 +1321,18 @@ export default {
   assert(/提醒状态：该问题集合已确认/u.test(restarted),"same problem set stays quiet across restart")
   servedModels=[...unusableModels(),{model_name:"gap-c",model_info:{mode:"chat"}}]
   await waitForRefreshAfter(Date.now(),"the changed problem set")
-  const changed=await diagnosticsThroughTui(/withheld[\s：:]*gap-c/u,"new missing model")
-  assert(!/提醒状态：该问题集合已确认/u.test(changed),"material change is reported again")
+  await diagnosticsThroughTui(/withheld[\s：:]*gap-c/u,"new missing model")
+  // PTY output accumulates earlier frames; inspect the latest result instead
+  // of treating old text from a previous frame as part of the current card.
+  const changedResponse = await fetch(`${openCodeServer.url}/api/rpc/litellm-audit-export/latest`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: "Basic " + Buffer.from(`opencode:${openCodeServer.password}`).toString("base64") },
+    body: JSON.stringify({ input: {} }),
+  })
+  assert(changedResponse.ok, "latest diagnostics must be available")
+  const changed = (await changedResponse.json()).output
+  assert(changed?.lines?.some(line => /withheld[\s：:]*gap-c/u.test(line)), "latest diagnostics must contain the new missing model")
+  assert(!changed.lines.some(line => /提醒状态：该问题集合已确认/u.test(line)),"material change is reported again")
   console.log("[ack persistence] surfaced -> restarted suppressed -> material change re-surfaced")
 
   // Network failures retain last successful models; auth errors clear them.
