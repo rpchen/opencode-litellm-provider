@@ -7,10 +7,11 @@
 - [x] 1.3 验证无快照、不兼容快照和发布门禁；运行 `test/sync.test.ts`、`test/endpoint-state.test.ts`。
 - [x] 1.4 用固定 model/info 样本验证现有发现链路；运行 `test/metadata-priority.test.ts`。
 
-- [ ] 1.5 扩展 2.2 宿主兼容声明并在 CI 覆盖最新 V2，完成真实宿主全量 E2E。
+- [ ] 1.5 扩展 2.2 宿主兼容声明并在 CI 覆盖最新稳定版，完成真实宿主全量 E2E。
 
 ## 2. 交付验证
 
 - [x] 2.1 分别用 Bun 和 Node 运行全部测试，运行类型检查、固定 provenance 构建和 dist 复验。
-- [ ] 2.2 使用固定提交和 OpenCode 2.0.16 的真实宿主 E2E 验证冷启动首次模型列表。实测：监听后首个 /api/model 返回空列表，插件尚未加载；插件 active 后离线快照可见，严格首读验收尚未通过。
-- [ ] 2.3 严格验证并归档 OpenSpec，同步主规格。
+- [x] 2.2 使用固定候选和 OpenCode 2.2.3 真实宿主验证断网冷启动首次模型列表。
+- [ ] 2.3 验证 GitHub 最新宿主检查通过，并切换 ruleset、回读其他保护。
+- [ ] 2.4 严格验证并归档 OpenSpec，同步主规格。

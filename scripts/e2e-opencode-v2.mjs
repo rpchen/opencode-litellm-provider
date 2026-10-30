@@ -1637,6 +1637,9 @@ export default {
     const allConnectIds = connectionsOf("litellm").map((c) => c.id)
     const legacyConnectId = allConnectIds.filter((id) => !beforeConnectIds.includes(id))
     assert.equal(legacyConnectId.length, 1, `legacy /connect must save one new credential (before=${beforeConnectIds} after=${allConnectIds})`)
+    // Earlier phases left a selected credential without the legacy URL. A new
+    // connection is not necessarily selected when another connection exists.
+    api("POST", `/api/credential/${legacyConnectId[0]}/activate`)
     assert(integrationsNow().some((i) => i.id === "litellm"), "legacy litellm integration must exist")
 
     const legacySession = payload(jsonOutput(api("POST", "/api/session", "--data", JSON.stringify({ title: "LiteLLM legacy mgmt" })), "session.create")).id
