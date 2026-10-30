@@ -768,6 +768,7 @@ export default {
 
   // 3) Endpoint activation: execute before TUI startup, recover the pending selector, then prove
   // the host-native DOWN + ENTER path opens the endpoint detail and toggles it (main list -> detail -> toggle -> back).
+  sessionID = payload(jsonOutput(api("POST", "/api/session", "--data", JSON.stringify({ title: "LiteLLM endpoint E2E" })), "session.create")).id
   runSessionCommand("litellm-endpoints")
   tui = startAttachedTui(sessionID)
   let mark = tui.mark()
