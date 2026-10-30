@@ -1127,20 +1127,30 @@ export default {
   assert.equal(matrixReport.models.find(model=>model.id==="e2e-disabled").reasoningSupported,"unsupported")
   const requestSession=payload(jsonOutput(api("POST","/api/session","--data",JSON.stringify({title:"metadata request matrix"})),"session.create")).id
   let checkedRequests=0
+  const sessionRequest = async (method, route, body) => {
+    const response = await fetch(`${openCodeServer.url}${route}`, {
+      method,
+      headers: { "content-type": "application/json", authorization: "Basic " + Buffer.from(`opencode:${openCodeServer.password}`).toString("base64") },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    })
+    assert(response.ok, `session request failed: ${method} ${route} (${response.status})`)
+    const text = await response.text()
+    return text ? JSON.parse(text) : undefined
+  }
   const requestModel = async (id,variant,protocol) => {
     const ref={id,providerID:"litellm",...(variant===undefined?{}:{variant})}
-    api("POST",`/api/session/${requestSession}/model`,"--data",JSON.stringify({model:ref}))
-    const selected=payload(jsonOutput(api("GET",`/api/session/${requestSession}`),"session.get"))
+    await sessionRequest("POST", `/api/session/${requestSession}/model`, { model: ref })
+    const selected=payload(await sessionRequest("GET", `/api/session/${requestSession}`))
     // The host normalizes an omitted selection to a neutral default marker;
     // it does not add a Model.Info variant or a reasoning request parameter.
     assert.deepEqual(selected.model,{...ref,variant:variant??"default"},"real session stores the selected model and declared variant")
     const before=defaultMock.requests.length
     const started=Date.now()
-    api("POST",`/api/session/${requestSession}/prompt`,"--data",JSON.stringify({text:"Reply ok. Do not call any tools."}))
+    await sessionRequest("POST", `/api/session/${requestSession}/prompt`, { text: "Reply ok. Do not call any tools." })
     let finished
     for(let attempt=0;attempt<100;attempt++) {
       await sleep(200)
-      const state=payload(jsonOutput(api("GET",`/api/session/${requestSession}`),"session.get"))
+      const state=payload(await sessionRequest("GET", `/api/session/${requestSession}`))
       if(Date.parse(state.time?.idle??"")>=started || (typeof state.time?.idle==="number"&&state.time.idle>=started)){finished=state;break}
     }
     assert(finished,`${id}/${variant??"default"}: actual host turn did not finish`)
