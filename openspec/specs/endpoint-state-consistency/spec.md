@@ -34,13 +34,13 @@ The plugin SHALL derive every user-visible endpoint state from a canonical, four
 
 #### Scenario: [STATE-ENABLED-NOT-APPLIED] Enabled endpoint whose runtime apply has not yet succeeded
 
-- **GIVEN** a valid, credential-equipped endpoint that has just been enabled in a fresh process or whose last refresh failed
+- **GIVEN** a valid, credential-equipped endpoint without a compatible snapshot that has just been enabled in a fresh process
 - **WHEN** the user opens `/litellm-endpoints` or `/litellm-diagnostics <id>`
 - **THEN** the user-visible status is `Enabled · Not applied` until a refresh in this process has succeeded
 
 #### Scenario: [STATE-ENABLED-ERROR] Enabled endpoint whose last apply failed
 
-- **WHEN** the most recent refresh for an enabled endpoint fails with category `credential-missing | config-invalid | auth | network | parse`
+- **WHEN** the most recent refresh for an enabled endpoint without a published snapshot fails with category `credential-missing | config-invalid | auth | network | parse`
 - **THEN** the user-visible status is `Enabled · Error` and diagnostics reports the category and sanitised message
 
 #### Scenario: [STATE-ENABLED-ACTIVE] Enabled, valid, authenticated endpoint with a successful apply
@@ -52,6 +52,11 @@ The plugin SHALL derive every user-visible endpoint state from a canonical, four
 
 - **WHEN** an endpoint is disabled and its configuration is valid
 - **THEN** the user-visible status is `Disabled`
+
+#### Scenario: [STATE-SNAPSHOT] 快照待确认
+
+- **WHEN** 兼容的上次成功快照已发布但本次网络发现尚未成功
+- **THEN** 状态显示“来自上次快照、待确认”，不标为“已生效”
 
 ### Requirement: Validation uses one rule end-to-end
 
@@ -85,7 +90,7 @@ Credential state SHALL be reported as one of `stored`, `environment`, `none` or 
 
 ### Requirement: `/models` only reflects actually applied runtime models
 
-`applyProvider` SHALL publish a provider/model view only when `desired=enabled ∧ validation=ok ∧ credential∈{stored, environment} ∧ applied.kind=active`. Otherwise no `editor.add` happens for that endpoint, and the host's `/models` reflects nothing for it.
+`applyProvider` SHALL publish a provider/model view only when `desired=enabled ∧ validation=ok ∧ credential∈{stored, environment} ∧ applied.kind∈{active, snapshot}`. Otherwise no `editor.add` happens for that endpoint, and the host's `/models` reflects nothing for it.
 
 #### Scenario: [MODELS-HIDE-DISABLED] Disabled endpoint's models disappear from `/models`
 
@@ -94,7 +99,7 @@ Credential state SHALL be reported as one of `stored`, `environment`, `none` or 
 
 #### Scenario: [MODELS-HIDE-UNAPPLIED] Apply-failed endpoint's models disappear from `/models`
 
-- **GIVEN** an enabled endpoint whose most recent apply failed
+- **GIVEN** an enabled endpoint whose most recent apply failed without a published compatible snapshot
 - **WHEN** `/models` is queried
 - **THEN** no model attributed to that endpoint's provider id is listed, even if a historical snapshot exists
 
@@ -127,7 +132,7 @@ When runtime apply fails for a desired=enabled endpoint, persisted activation SH
 
 ### Requirement: Manual retry
 
-Endpoints whose `desired=enabled` but `applied.kind ∈ {not-applied, error}` SHALL expose an explicit "Retry / 重新应用" action in endpoint detail (TUI) and an `endpointRpc.trigger` handler (server side). Retry SHALL trigger a forced refresh of that endpoint only, SHALL NOT require a disable→enable cycle, and SHALL leave desired state unchanged.
+Endpoints whose `desired=enabled` but `applied.kind ∈ {not-applied, error, snapshot}` SHALL expose an explicit "Retry / 重新应用" action in endpoint detail (TUI) and an `endpointRpc.trigger` handler (server side). Retry SHALL trigger a forced refresh of that endpoint only, SHALL NOT require a disable→enable cycle, and SHALL leave desired state unchanged.
 
 #### Scenario: [RETRY-SUCCESS] Retry reconciles to Active
 
