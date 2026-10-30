@@ -887,9 +887,13 @@ export default {
   }
 
   // Re-enable company through the same real selector (main list -> detail -> enable -> back).
-  runSessionCommand("litellm-endpoints")
+  // The pending-selector recovery is already exercised above. Here the TUI must
+  // subscribe before the command, so it cannot race its initial state fetch.
   tui = startAttachedTui(sessionID)
+  await waitForTui(tui, workspace)
+  await sleep(1000)
   mark = tui.mark()
+  runSessionCommand("litellm-endpoints")
   await waitForTui(tui, "LiteLLM endpoints", { from: mark })
   await waitForTui(tui, "○ company", { from: mark })
   await endpointDetailToggle(tui, "○ company", { expectAfter: /company[^|]*已启用/u, connected: true, wasActive: false, since: mark })

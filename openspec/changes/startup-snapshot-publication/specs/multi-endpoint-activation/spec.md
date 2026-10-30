@@ -9,9 +9,9 @@ For an endpoint whose base URL is already fixed by plugin configuration, the plu
 - **AND** each integration exposes a key method with no `form: []`
 
 ### Requirement: supported OpenCode releases have a real-host delivery gate
-The plugin SHALL exercise the delivered Git package against a pinned real supported OpenCode host, including the terminal interaction path for user-visible activation behavior.
+The plugin SHALL exercise the delivered Git package against the latest stable real OpenCode host, resolved to an exact version per run, including the terminal interaction path for user-visible activation behavior.
 
-#### Scenario: real OpenCode 2.0.16 multi-endpoint delivery
+#### Scenario: real latest OpenCode multi-endpoint delivery
 - **WHEN** CI installs the current fixed Git commit through OpenCode's own plugin installer and starts a real latest OpenCode server and terminal client
 - **THEN** the LiteLLM server plugin becomes active
 - **AND** LiteLLM commands can be invoked before endpoint credentials exist without a silent lost-result failure
