@@ -8,7 +8,8 @@ OpenCode v2 插件：连接 LiteLLM 后，自动发现当前 API Key 可用的�
 - 自动选择 Chat Completions、Responses 或 Anthropic Messages
 - 分开映射总 context、最大 input、输出上限，以及工具调用、模态和价格
 - 用 models.dev 补充元数据和 reasoning variants
-- 启动、连接变化和轮询时同步模型清单
+- 启动时先发布与当前配置、凭据兼容的本地成功快照，显示“来自上次快照、待确认”，并在后台发现成功后更新
+- 连接变化和轮询时同步模型清单；凭据变化会撤下不再兼容的旧快照
 - 短暂故障时保留上次成功结果，认证失败等破坏性错误时撤下旧模型
 
 ## 快速开始
@@ -24,7 +25,7 @@ opencode plugin add github:rpchen/opencode-litellm-provider
 锁定当前发行版：
 
 ```bash
-opencode plugin add github:rpchen/opencode-litellm-provider#v0.11.1
+opencode plugin add github:rpchen/opencode-litellm-provider#v0.11.2
 ```
 
 要求：
@@ -287,7 +288,7 @@ Runtime Identity 是当前正在运行的插件 artifact 自身的不可变身�
 ```text
 Runtime Identity
 
-Plugin Version   0.11.1
+Plugin Version   0.11.2
 Artifact         78f9e17b
 Core Commit      1ff0979c
 ```
@@ -370,7 +371,7 @@ opencode reload
 如果配置里使用固定 tag，`check/update` 参数也必须使用完整的固定来源，例如：
 
 ```text
-github:rpchen/opencode-litellm-provider#v0.11.1
+github:rpchen/opencode-litellm-provider#v0.11.2
 ```
 
 需要回滚时，将现有插件来源改回目标 tag 并重新加载即可。不要同时启用 Git 安装和本地 `file://` 两份 LiteLLM 插件。
@@ -415,7 +416,7 @@ github:rpchen/opencode-litellm-provider#v0.11.1
 
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [litellm-discovery-core](https://github.com/rpchen/litellm-discovery-core)
-- [v0.11.1 release notes](docs/releases/v0.11.1.md)
+- [v0.11.2 release notes](docs/releases/v0.11.2.md)
 - [v0.11.0 release notes](docs/releases/v0.11.0.md)
 - [v0.10.0 release notes](docs/releases/v0.10.0.md)
 - [v0.9.0 release notes](docs/releases/v0.9.0.md)
