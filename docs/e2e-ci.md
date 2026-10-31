@@ -20,7 +20,7 @@
 ### 汇总门禁语义
 
 - `real-opencode-v2-gate` 使用 `if: always()`，`needs` 显式列出 `resolve-host` 与四个固定组 job id。
-- `scripts/check-e2e-groups.mjs` 按固定 job id 逐一要求 `result === "success"`：`failed`、`cancelled`、`skipped`、`timed out`、缺失结果、载荷结构异常全部判负。
+- `scripts/check-e2e-groups.mjs` 完整模式按固定 job id 逐一要求 `result === "success"`：失败、取消、意外跳过、超时、缺失与载荷异常全部判负。复用模式要求resolve内当前真实交付验证成功、有效完整基线run/attempt和四组明确skipped，拒绝混合执行或失败状态。
 - 全链路没有 `continue-on-error`；required check 名称与 ruleset 基线不变。
 
 ### 宿主输入
@@ -31,7 +31,7 @@
 
 手动调试可用同样两个命令：`node scripts/e2e-host.mjs resolve --output <dir> --candidate <40-hex> --repository <owner/repo>` 与 `node scripts/e2e-host.mjs install --lock <dir> --prefix <dir>`。
 
-`host-input.json` 记录 candidate SHA、精确宿主版本、Node/npm、OS/arch 与 runner `ImageOS`/`ImageVersion`，供后续输入分流核对使用（当前阶段不做跨 run 复用）。
+`host-input.json` 记录 candidate SHA、精确宿主版本、Node/npm、OS/arch 与 runner `ImageOS`/`ImageVersion`，供实际输入分流核对；各组另记录自身实际Node/npm、OS/runner环境，不能用resolve记录冒充组环境。
 
 ### 计时
 
@@ -44,21 +44,21 @@
 分组与 `all` 串行入口由 E2E 脚本自身提供（默认 `all`）：
 
 ```bash
-E2E_OPENCODE_VERSION=2.0.16 \
+E2E_OPENCODE_VERSION=<resolved-exact-version> \
 E2E_PACKAGE_SPEC=github:rpchen/opencode-litellm-provider#<40-hex-sha> \
 E2E_GROUP=A \
 E2E_TIMING_FILE="$PWD/.tmp/e2e-timing-a.json" \
 npm run test:e2e:opencode-v2
 ```
 
-`E2E_GROUP` 取 `A|B|C|D|all`；`E2E_PACKAGE_SPEC` 必须是固定 Git commit，`E2E_OPENCODE_VERSION` 必须是精确 semver，两者都会被脚本拒绝。Windows 不支持 PTY，真实 E2E 只在 Ubuntu CI 验证。
+`E2E_GROUP` 取 `A|B|C|D|all|delivery`；`E2E_PACKAGE_SPEC` 必须是固定 Git commit，`E2E_OPENCODE_VERSION` 必须是精确 semver，两者都会被脚本拒绝。Windows 不支持 PTY，真实 E2E 只在 Ubuntu CI 验证。
 
 ## 手动基准
 
 三种手动入口都在同一个 `CI` workflow 的 `workflow_dispatch` 中，不新增一次性 workflow。未合并时须加 `--ref ci/optimize-real-host-e2e`：
 
 ```bash
-# 两次完整分组基准（每次记录 run id、check 结论与 timing artifact）
+# 常规分组调度（满足实际输入条件时可复用完整基线）
 gh workflow run ci.yml -f e2e_mode=groups
 
 # 完整四组与旧串行共用当轮同一host lock；适合性能对照
@@ -78,8 +78,16 @@ gh workflow run ci.yml -f e2e_mode=serial-baseline
 - 用当轮共享宿主锁安装宿主，用同一 `E2E_PACKAGE_SPEC` 安装 candidate；导出树里的 `dist/` 换成当前 candidate 的 `dist/`，因为 Runtime Identity 期望属于被安装的 candidate。
 - 只报告基准结果（run/attempt、开始时间、结果、完整轮墙钟）；四组不会运行，因此 **`Real OpenCode latest E2E` 汇总 job 会显式判负**，`scripts/check-e2e-groups.mjs` 的 `serial-baseline` 分支不会把基准 run 说成完整分组门禁成功。
 
-## 未在本地验证的部分
+## 输入复用与证据
 
-- `resolve-host` 中先运行 `node --test scripts/e2e-host.test.mjs scripts/check-e2e-groups.test.mjs`，覆盖命令拼装、版本/锁校验、失败路径与全部门禁状态；这些单测不需要网络，也不安装宿主。
+resolve job用自己已安装的真实宿主执行当前candidate的delivery探针：真实安装/加载、注册与价格基线、安装副本Runtime Identity/provenance、一次真实模型请求。探针失败阻断；缺安装锁或环境证据不影响完整测试结论，但不能复用。随后e2e-validation.mjs从同仓成功CI中回读完整run/attempt、组及完整测试步骤，只在candidate/harness完整Git比较、精确宿主锁、实际安装外部依赖和运行配置一致时选择delivery。其他情况全跑。
+
+完整A–D成功才生成`e2e-full-validation/validation.json`；复用运行只上传本轮plan与探针，不成为新基线。失效/过期artifact回退完整，不建立独立缓存服务。常规CI与准确main索引仍每次执行；Release步骤不减少。详见[e2e-input-reuse.md](e2e-input-reuse.md)。
+
+## 验证边界
+
+- `resolve-host` 中先运行 `npm run test:e2e-gate`，覆盖命令拼装、版本/锁校验、失败路径与全部门禁状态；这些单测不需要网络，也不安装宿主。
 - 普通锁安装能否完整覆盖宿主安装脚本与平台依赖，需要真实 Ubuntu CI 运行证明；本仓库的单测只用 mock 执行器与临时目录验证命令、版本与失败路径。
 - artifact 上传/下载、`GITHUB_PATH` 顺序、`command -v opencode` 指向、aggregate 的真实 check-runs 名称与 ruleset 一致性，需在真实 CI 上回读确认。
+
+性能改造两轮真实通过数据见[e2e-performance.md](e2e-performance.md)。输入复用接入后的完整基线、metadata-only与故障传播集成证据单独回填；不能用之前性能run追认为新证据格式的完整基线。

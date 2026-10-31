@@ -62,6 +62,12 @@ export function evaluateGate({ results, mode = "groups" } = {}) {
   }
 
   const failures = []
+  const resolved = results["resolve-host"]
+  const verification = resolved?.outputs?.["verification-mode"] ?? "full"
+  if (!["full", "delivery"].includes(verification)) failures.push(`unknown verification mode ${JSON.stringify(verification)}`)
+  if (verification === "delivery" && !/^[1-9]\d*\/[1-9]\d*$/u.test(resolved?.outputs?.["verification-baseline"] ?? "")) {
+    failures.push("delivery verification must name a verified full baseline run/attempt")
+  }
   for (const { job, group, label } of GATE_JOBS) {
     const entry = results[job]
     const result = typeof entry === "object" && entry !== null ? entry.result : undefined
@@ -69,8 +75,9 @@ export function evaluateGate({ results, mode = "groups" } = {}) {
       failures.push(`${label}: required job "${job}" is missing from this run`)
       continue
     }
-    if (result !== "success") {
-      failures.push(`${label}: required job "${job}" finished with result "${result}", expected "success"`)
+    const expected = verification === "delivery" && group ? "skipped" : "success"
+    if (result !== expected) {
+      failures.push(`${label}: required job "${job}" finished with result "${result}", expected "${expected}"`)
     }
   }
 
@@ -81,7 +88,7 @@ export function evaluateGate({ results, mode = "groups" } = {}) {
     if (!expected.has(job)) failures.push(`unexpected job "${job}" in the gate payload; fix the aggregate needs list`)
   }
 
-  return { ok: failures.length === 0, failures, observed }
+  return { ok: failures.length === 0, failures, observed, verification }
 }
 
 /** Render the human-readable verdict lines for the CI log. */
@@ -117,7 +124,9 @@ function main(argv) {
     console.error("Real OpenCode latest E2E gate: NOT satisfied")
     process.exit(1)
   }
-  console.log("Real OpenCode latest E2E gate: resolved host + groups A/B/C/D all succeeded")
+  console.log(verdict.verification === "delivery"
+    ? `Real OpenCode latest E2E gate: current real delivery passed; reused full baseline ${results["resolve-host"].outputs["verification-baseline"]}`
+    : "Real OpenCode latest E2E gate: resolved host + groups A/B/C/D all succeeded")
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -18,6 +18,8 @@ npm run verify:dist
 npm run test:delivery
 npm run typecheck
 npm test
+npm run test:codebase-memory
+npm run test:e2e-gate
 npm run test:tui-render
 npm run test:distribution
 npm run test:package
@@ -79,3 +81,5 @@ core/main 更新不会自动改变已发布插件；下一次插件更新构建�
 发行准备经 PR 同步 package.json、package-lock.json 顶层和 packages[""] 的 version、README 当前固定版本与 release notes，并通过 `test:release-metadata`。已有版本 tag 可显式 dispatch Release workflow；必须选择 tag，选择 main 或其他分支会失败，且不会自行创建 tag。该入口与 tag push 使用相同固定 provenance 门禁，不是跳过测试的捷径。
 
 可在 docs/releases/vX.Y.Z.md 维护发行说明，workflow 会将其与自动变更记录一起发布。上传后 workflow 下载附件核验 SHA-256、打包字节和解包 dist。不要移动旧 tag、覆盖已经发布的不同内容，或把旧提交/维护者单机反馈扩大成新提交/全平台测试证据。
+
+真实宿主采用四组独立前置与同名汇总；实际输入匹配时的完整基线复用及当前真实交付要求见[CI说明](docs/e2e-ci.md)，共享政策以Core testing-standard第4.1节为准。`npm test`只跑产品测试，索引工具与闭环测试必须按上列命令独立执行。

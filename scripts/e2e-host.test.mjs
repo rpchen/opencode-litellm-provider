@@ -7,8 +7,10 @@ import test from "node:test"
 import {
   candidatePackageSpec,
   environmentRecord,
+  HOST_COMMAND,
   HOST_PACKAGE,
   hostBinPath,
+  hostExecutableDigest,
   hostManifest,
   installHost,
   parseExactVersion,
@@ -18,6 +20,20 @@ import {
 
 const SHA = "abcdef0123456789abcdef0123456789abcdef01"
 const REPOSITORY = "rpchen/opencode-litellm-provider"
+
+test("host executable evidence follows PATH and detects actual binary changes", () => {
+  const first = mkdtempSync(path.join(os.tmpdir(), "host-binary-first-"))
+  const second = mkdtempSync(path.join(os.tmpdir(), "host-binary-second-"))
+  const name = "test-host"
+  writeFileSync(path.join(first, name), "binary-one")
+  writeFileSync(path.join(second, name), "binary-two")
+  const digest = hostExecutableDigest(name, { PATH: [first, second].join(path.delimiter) })
+  assert.match(digest, /^sha256:[a-f0-9]{64}$/u)
+  assert.notEqual(digest, hostExecutableDigest(name, { PATH: second }))
+  writeFileSync(path.join(first, name), "binary-three")
+  assert.notEqual(digest, hostExecutableDigest(name, { PATH: first }))
+  assert.equal(hostExecutableDigest("missing", { PATH: first }), null)
+})
 
 function tempDir() {
   return mkdtempSync(path.join(os.tmpdir(), "e2e-host-test-"))
@@ -229,5 +245,103 @@ test("installHost rejects a lock whose manifest was edited after locking", async
   await assert.rejects(
     installHost({ lockDir, prefix: path.join(tempDir(), "prefix"), run: fakeExecutor().run, env: {}, platform: "linux" }),
     /does not lock/u,
+  )
+})
+
+// The Pi gate reuses this helper with its own host package/command. Both are
+// explicit options with the OpenCode values as defaults, so the two adapters
+// never share a hard-coded host name.
+const PI_PACKAGE = "@earendil-works/pi-coding-agent"
+const PI_COMMAND = "pi"
+
+function piExecutor({ version = "1.4.0", stdoutForVersion } = {}) {
+  const calls = []
+  const run = async ({ command, args }) => {
+    calls.push([command, ...args])
+    if (command === "npm" && args[0] === "view") return { status: 0, stdout: `${version}\n`, stderr: "" }
+    if (command === "npm" && args[0] === "--version") return { status: 0, stdout: "10.9.4\n", stderr: "" }
+    if (command === "npm" && args[0] === "install") {
+      const prefix = args[args.indexOf("--prefix") + 1]
+      writeFileSync(
+        path.join(prefix, "package-lock.json"),
+        JSON.stringify({ lockfileVersion: 3, packages: { [`node_modules/${PI_PACKAGE}`]: { version } } }),
+      )
+      const bin = hostBinPath(prefix, "linux", PI_COMMAND)
+      mkdirSync(path.dirname(bin), { recursive: true })
+      writeFileSync(bin, "#!/bin/sh\n")
+      return { status: 0, stdout: "added 1 package", stderr: "" }
+    }
+    if (command === "npm" && args[0] === "ci") {
+      const prefix = args[args.indexOf("--prefix") + 1]
+      const bin = hostBinPath(prefix, "linux", PI_COMMAND)
+      mkdirSync(path.dirname(bin), { recursive: true })
+      writeFileSync(bin, "#!/bin/sh\n")
+      return { status: 0, stdout: "added 1 package", stderr: "" }
+    }
+    if (String(command).split(/[\\/]/u).at(-1) === PI_COMMAND) {
+      return { status: 0, stdout: stdoutForVersion ?? `${version}\n`, stderr: "" }
+    }
+    return { status: 1, stdout: "", stderr: `unexpected command ${command} ${args.join(" ")}` }
+  }
+  return { run, calls }
+}
+
+test("hostManifest and hostBinPath take the host package and command as options", () => {
+  assert.deepEqual(hostManifest("1.4.0", { hostPackage: PI_PACKAGE, hostCommand: PI_COMMAND }), {
+    name: "pi-e2e-host",
+    private: true,
+    version: "0.0.0",
+    dependencies: { [PI_PACKAGE]: "1.4.0" },
+  })
+  assert.equal(hostBinPath("/tmp/prefix", "linux", PI_COMMAND), path.join("/tmp/prefix", "node_modules", ".bin", "pi"))
+  assert.equal(hostBinPath("/tmp/prefix", "win32", PI_COMMAND), path.join("/tmp/prefix", "node_modules", ".bin", "pi.cmd"))
+  // Defaults keep the OpenCode behaviour, including the historic project name.
+  assert.equal(hostManifest("2.0.16").name, "opencode-e2e-host")
+  assert.equal(hostBinPath("/tmp/prefix", "linux"), path.join("/tmp/prefix", "node_modules", ".bin", HOST_COMMAND))
+  assert.throws(() => hostManifest("1.4.0", { hostPackage: "../escape" }), /npm package name/u)
+})
+
+test("resolveHost and installHost work for another host package/command", async () => {
+  const outputDir = path.join(tempDir(), "pi-host-lock")
+  const { run, calls } = piExecutor()
+  const resolved = await resolveHost({
+    outputDir,
+    run,
+    env: { ImageOS: "ubuntu24", ImageVersion: "20250101.1.0" },
+    repository: REPOSITORY,
+    candidateSha: SHA,
+    platform: "linux",
+    hostPackage: PI_PACKAGE,
+    hostCommand: PI_COMMAND,
+  })
+  assert.equal(resolved.version, "1.4.0")
+  assert.deepEqual(calls.find((call) => call[1] === "view"), ["npm", "view", `${PI_PACKAGE}@latest`, "version"])
+  assert.ok(calls.find((call) => call[1] === "install").includes(`${PI_PACKAGE}@1.4.0`))
+  assert.equal(resolved.record.hostPackage, PI_PACKAGE)
+  assert.equal(resolved.installed.binPath, hostBinPath(outputDir, "linux", PI_COMMAND))
+
+  const prefix = path.join(tempDir(), "pi-prefix")
+  const installer = piExecutor()
+  const installed = await installHost({ lockDir: outputDir, prefix, run: installer.run, env: {}, platform: "linux", hostCommand: PI_COMMAND })
+  // The host package comes from the locked manifest, so install cannot drift.
+  assert.equal(installed.hostPackage, PI_PACKAGE)
+  assert.equal(installed.binPath, hostBinPath(prefix, "linux", PI_COMMAND))
+  assert.ok(installer.calls.some((call) => call[1] === "ci"))
+})
+
+test("installHost refuses a lock that does not belong to the requested host package", async () => {
+  const outputDir = path.join(tempDir(), "host-lock")
+  await resolveHost({
+    outputDir,
+    run: fakeExecutor().run,
+    env: {},
+    repository: REPOSITORY,
+    candidateSha: SHA,
+    platform: "linux",
+  })
+  const { run } = piExecutor()
+  await assert.rejects(
+    installHost({ lockDir: outputDir, prefix: path.join(tempDir(), "prefix"), run, env: {}, platform: "linux", hostPackage: PI_PACKAGE }),
+    /does not declare @earendil-works\/pi-coding-agent/u,
   )
 })

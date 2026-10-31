@@ -65,6 +65,30 @@ test("a resolve failure alone fails the gate", () => {
   assert.equal(verdict.ok, false)
 })
 
+test("delivery mode accepts only successful current verification and explicitly skipped groups with a full baseline", () => {
+  const delivery = () => Object.fromEntries(GATE_JOBS.map(({ job }) => [job,
+    job === "resolve-host" ? { result: "success", outputs: { "verification-mode": "delivery", "verification-baseline": "123/1" } } : { result: "skipped" },
+  ]))
+  assert.equal(evaluateGate({ results: delivery() }).ok, true)
+  for (const { job } of GATE_JOBS) {
+    for (const result of ["failure", "cancelled", undefined]) {
+      const payload = delivery()
+      if (result) payload[job].result = result
+      else delete payload[job]
+      assert.equal(evaluateGate({ results: payload }).ok, false, `${job}=${result}`)
+    }
+  }
+  const missingBaseline = delivery()
+  delete missingBaseline["resolve-host"].outputs["verification-baseline"]
+  assert.equal(evaluateGate({ results: missingBaseline }).ok, false)
+  const unknown = delivery()
+  unknown["resolve-host"].outputs["verification-mode"] = "unknown"
+  assert.equal(evaluateGate({ results: unknown }).ok, false)
+  const mixed = delivery()
+  mixed["e2e-group-a"].result = "success"
+  assert.equal(evaluateGate({ results: mixed }).ok, false)
+})
+
 test("an empty, malformed or non-object payload fails closed", () => {
   assert.equal(evaluateGate({ results: {}, mode: "groups" }).ok, false)
   assert.equal(evaluateGate({ results: undefined, mode: "groups" }).ok, false)

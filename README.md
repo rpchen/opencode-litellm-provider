@@ -415,6 +415,7 @@ github:rpchen/opencode-litellm-provider#v0.11.2
 开发、构建、交付验证、OpenSpec 和共享 Core 说明请看：
 
 - [CONTRIBUTING.md](CONTRIBUTING.md)
+- [真实宿主 CI 与输入复用](docs/e2e-ci.md)
 - [litellm-discovery-core](https://github.com/rpchen/litellm-discovery-core)
 - [v0.11.2 release notes](docs/releases/v0.11.2.md)
 - [v0.11.0 release notes](docs/releases/v0.11.0.md)

@@ -1,13 +1,20 @@
 #!/usr/bin/env node
 /**
- * Single-round real-host input resolution for the OpenCode E2E gate.
+ * Single-round real-host input resolution for the real-host E2E gates.
  *
  * The gate resolves the `latest` host exactly once per CI run, locks it in an
  * ordinary private npm project, and lets every isolated group job install the
  * very same manifest/lock into its own temporary prefix:
  *
- *   node scripts/e2e-host.mjs resolve --output <dir> --candidate <40-hex> --repository <owner/repo>
- *   node scripts/e2e-host.mjs install --lock <dir> --prefix <dir>
+ *   node scripts/e2e-host.mjs resolve --output <dir> --candidate <40-hex> --repository <owner/repo> [--host-package <name>] [--host-command <bin>]
+ *   node scripts/e2e-host.mjs install --lock <dir> --prefix <dir> [--host-command <bin>]
+ *
+ * The OpenCode defaults are `@opencode/cli` + `opencode`. The same helper serves
+ * the Pi gate through `--host-package @earendil-works/pi-coding-agent
+ * --host-command pi` (and the same `hostPackage`/`hostCommand` options for direct
+ * calls); `install` takes the host package from the locked manifest, so the two
+ * sides cannot disagree. Every exported function keeps its OpenCode default
+ * behaviour.
  *
  * `resolve` runs exactly one `npm view @opencode/cli@latest version`, writes
  * `package.json`, installs the exact version locally (no `--global`) so npm
@@ -24,7 +31,8 @@
  * assert the exact command lines without touching the network.
  */
 import { spawnSync } from "node:child_process"
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
+import { createHash } from "node:crypto"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -34,6 +42,23 @@ export const HOST_COMMAND = "opencode"
 export const HOST_LOCK_FILES = ["package.json", "package-lock.json"]
 export const CANDIDATE_SHA_PATTERN = /^[0-9a-f]{40}$/u
 export const EXACT_VERSION_PATTERN = /^\d+\.\d+\.\d+$/u
+
+/** The OpenCode launcher selects CPU-specific binaries at install time.
+ * Observe the executable actually selected on PATH, including symlink targets;
+ * identical package versions/locks alone cannot establish that selection.
+ */
+export function hostExecutableDigest(command, env = process.env) {
+  try {
+    const directories = String(env.PATH ?? env.Path ?? "").split(path.delimiter).filter(Boolean)
+    for (const directory of directories) {
+      const file = path.join(directory, command)
+      if (existsSync(file)) return `sha256:${createHash("sha256").update(readFileSync(realpathSync(file))).digest("hex")}`
+    }
+  } catch {
+    // Missing evidence closes reuse, not an otherwise successful full E2E.
+  }
+  return null
+}
 
 /** Reject anything that is not an exact stable semver (`latest` never suffices). */
 export function parseExactVersion(raw) {
@@ -59,19 +84,40 @@ export function candidatePackageSpec({ repository, sha }) {
 }
 
 /** The private, throw-away npm project that holds the host dependency lock. */
-export function hostManifest(version) {
+export function hostManifest(version, { hostPackage = HOST_PACKAGE, hostCommand = HOST_COMMAND } = {}) {
+  if (!/^(?:@[\w.-]+\/)?[\w.-]+$/u.test(String(hostPackage ?? ""))) {
+    throw new Error(`host package must be an npm package name, got ${JSON.stringify(hostPackage)}`)
+  }
+  if (!/^[\w.-]+$/u.test(String(hostCommand ?? ""))) {
+    throw new Error(`host command must be a plain command name, got ${JSON.stringify(hostCommand)}`)
+  }
   return {
-    name: "opencode-e2e-host",
+    name: `${hostCommand}-e2e-host`,
     private: true,
     version: "0.0.0",
-    dependencies: { [HOST_PACKAGE]: parseExactVersion(version) },
+    dependencies: { [hostPackage]: parseExactVersion(version) },
   }
 }
 
 /** Real host command path inside a prefix (Windows npm creates `.cmd` shims). */
-export function hostBinPath(prefix, platform = process.platform) {
-  const target = path.join(prefix, "node_modules", ".bin", HOST_COMMAND)
+export function hostBinPath(prefix, platform = process.platform, hostCommand = HOST_COMMAND) {
+  const target = path.join(prefix, "node_modules", ".bin", hostCommand)
   return platform === "win32" ? `${target}.cmd` : target
+}
+
+/** The single host dependency of a lock/manifest produced by this helper. */
+export function lockedHostPackage(manifest, { hostPackage } = {}) {
+  const names = Object.keys(manifest?.dependencies ?? {})
+  if (hostPackage) {
+    if (!names.includes(hostPackage)) {
+      throw new Error(`the locked host manifest does not declare ${hostPackage}`)
+    }
+    return hostPackage
+  }
+  if (names.length !== 1) {
+    throw new Error(`the locked host manifest must declare exactly one dependency, found ${JSON.stringify(names)}`)
+  }
+  return names[0]
 }
 
 /**
@@ -79,9 +125,9 @@ export function hostBinPath(prefix, platform = process.platform) {
  * results could be reused. Values are read from the environment; nothing
  * sensitive is captured.
  */
-export function environmentRecord({ version, env = process.env, platform = process.platform, arch = process.arch, nodeVersion = process.version, npmVersion, candidateSha = null }) {
+export function environmentRecord({ version, hostPackage = HOST_PACKAGE, env = process.env, platform = process.platform, arch = process.arch, nodeVersion = process.version, npmVersion, candidateSha = null }) {
   return {
-    hostPackage: HOST_PACKAGE,
+    hostPackage,
     hostVersion: parseExactVersion(version),
     candidateSha,
     node: nodeVersion,
@@ -104,10 +150,10 @@ function requireSuccess(result, what) {
   return result
 }
 
-function lockVersion(lock, version) {
-  const entry = lock?.packages?.[`node_modules/${HOST_PACKAGE}`]
+function lockVersion(lock, version, hostPackage = HOST_PACKAGE) {
+  const entry = lock?.packages?.[`node_modules/${hostPackage}`]
   if (entry?.version !== version) {
-    throw new Error(`package-lock.json does not lock ${HOST_PACKAGE}@${version} (found ${JSON.stringify(entry?.version)})`)
+    throw new Error(`package-lock.json does not lock ${hostPackage}@${version} (found ${JSON.stringify(entry?.version)})`)
   }
   return entry.version
 }
@@ -123,8 +169,8 @@ function reportedVersion(stdout) {
  * reports the expected version. The command path itself is checked, so a
  * pre-installed global host on PATH cannot satisfy this.
  */
-export async function verifyHostInstall({ prefix, expectedVersion, run, env = process.env, platform = process.platform }) {
-  const binPath = hostBinPath(prefix, platform)
+export async function verifyHostInstall({ prefix, expectedVersion, run, env = process.env, platform = process.platform, hostCommand = HOST_COMMAND }) {
+  const binPath = hostBinPath(prefix, platform, hostCommand)
   if (!existsSync(binPath)) {
     throw new Error(`host command was not installed at ${binPath}`)
   }
@@ -144,7 +190,7 @@ export async function verifyHostInstall({ prefix, expectedVersion, run, env = pr
  *
  * `run` must be `({ command, args, env, shell }) => Promise<{status, stdout, stderr}>`.
  */
-export async function resolveHost({ outputDir, run, env = process.env, repository, candidateSha, platform = process.platform, nodeVersion = process.version }) {
+export async function resolveHost({ outputDir, run, env = process.env, repository, candidateSha, platform = process.platform, nodeVersion = process.version, hostPackage = HOST_PACKAGE, hostCommand = HOST_COMMAND }) {
   if (!outputDir) throw new Error("resolveHost requires an output directory")
   if (typeof run !== "function") throw new Error("resolveHost requires a command executor")
   const packageSpec = candidatePackageSpec({ repository, sha: candidateSha })
@@ -152,19 +198,19 @@ export async function resolveHost({ outputDir, run, env = process.env, repositor
 
   // Exactly one network resolution of the moving input.
   const view = requireSuccess(
-    await run({ command: "npm", args: ["view", `${HOST_PACKAGE}@latest`, "version"], env }),
+    await run({ command: "npm", args: ["view", `${hostPackage}@latest`, "version"], env }),
     "npm view",
   )
   const version = parseExactVersion(view.stdout)
   const npmVersion = requireSuccess(await run({ command: "npm", args: ["--version"], env }), "npm --version").stdout.trim()
 
   const manifestPath = path.join(outputDir, "package.json")
-  writeFileSync(manifestPath, `${JSON.stringify(hostManifest(version), null, 2)}\n`)
+  writeFileSync(manifestPath, `${JSON.stringify(hostManifest(version, { hostPackage, hostCommand }), null, 2)}\n`)
 
   requireSuccess(
     await run({
       command: "npm",
-      args: ["install", "--prefix", outputDir, "--save-exact", `${HOST_PACKAGE}@${version}`, "--no-audit", "--no-fund"],
+      args: ["install", "--prefix", outputDir, "--save-exact", `${hostPackage}@${version}`, "--no-audit", "--no-fund"],
       env,
     }),
     "npm install",
@@ -172,18 +218,18 @@ export async function resolveHost({ outputDir, run, env = process.env, repositor
 
   const lockPath = path.join(outputDir, "package-lock.json")
   if (!existsSync(lockPath)) throw new Error(`npm install did not produce ${lockPath}`)
-  const locked = lockVersion(JSON.parse(readFileSync(lockPath, "utf8")), version)
-  const installed = await verifyHostInstall({ prefix: outputDir, expectedVersion: locked, run, env, platform })
+  const locked = lockVersion(JSON.parse(readFileSync(lockPath, "utf8")), version, hostPackage)
+  const installed = await verifyHostInstall({ prefix: outputDir, expectedVersion: locked, run, env, platform, hostCommand })
 
   const record = {
-    ...environmentRecord({ version, env, platform, nodeVersion, npmVersion, candidateSha }),
+    ...environmentRecord({ version, hostPackage, env, platform, nodeVersion, npmVersion, candidateSha }),
     packageSpec,
     hostBin: installed.binPath,
     hostLock: HOST_LOCK_FILES,
   }
   const recordPath = path.join(outputDir, "host-input.json")
   writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`)
-  return { version, packageSpec, outputDir, lockPath, manifestPath, recordPath, record, installed }
+  return { version, hostPackage, hostCommand, packageSpec, outputDir, lockPath, manifestPath, recordPath, record, installed }
 }
 
 /**
@@ -192,7 +238,7 @@ export async function resolveHost({ outputDir, run, env = process.env, repositor
  * `lockDir` holds the uploaded `package.json` + `package-lock.json`; `prefix`
  * is a fresh directory for this job only.
  */
-export async function installHost({ lockDir, prefix, run, env = process.env, platform = process.platform }) {
+export async function installHost({ lockDir, prefix, run, env = process.env, platform = process.platform, hostPackage, hostCommand = HOST_COMMAND }) {
   if (!lockDir || !prefix) throw new Error("installHost requires both --lock and --prefix")
   if (typeof run !== "function") throw new Error("installHost requires a command executor")
   const manifestPath = path.join(lockDir, "package.json")
@@ -201,8 +247,9 @@ export async function installHost({ lockDir, prefix, run, env = process.env, pla
     if (!existsSync(file)) throw new Error(`locked host input is missing ${file}`)
   }
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"))
-  const version = parseExactVersion(manifest?.dependencies?.[HOST_PACKAGE])
-  lockVersion(JSON.parse(readFileSync(lockPath, "utf8")), version)
+  const lockedPackage = lockedHostPackage(manifest, { hostPackage })
+  const version = parseExactVersion(manifest?.dependencies?.[lockedPackage])
+  lockVersion(JSON.parse(readFileSync(lockPath, "utf8")), version, lockedPackage)
 
   mkdirSync(prefix, { recursive: true })
   for (const file of HOST_LOCK_FILES) copyFileSync(path.join(lockDir, file), path.join(prefix, file))
@@ -211,8 +258,8 @@ export async function installHost({ lockDir, prefix, run, env = process.env, pla
     await run({ command: "npm", args: ["ci", "--prefix", prefix, "--no-audit", "--no-fund"], env }),
     "npm ci",
   )
-  const installed = await verifyHostInstall({ prefix, expectedVersion: version, run, env, platform })
-  return { version, prefix, ...installed }
+  const installed = await verifyHostInstall({ prefix, expectedVersion: version, run, env, platform, hostCommand })
+  return { version, hostPackage: lockedPackage, hostCommand, prefix, ...installed }
 }
 
 /** Default executor: real processes, no shell unless a Windows `.cmd` shim needs one. */
@@ -238,20 +285,24 @@ function parseArgs(argv) {
 async function main(argv) {
   const { command, options } = parseArgs(argv)
   const run = spawnExecutor()
+  const hostPackage = options["host-package"] ?? HOST_PACKAGE
+  const hostCommand = options["host-command"] ?? HOST_COMMAND
   if (command === "resolve") {
     const result = await resolveHost({
       outputDir: options.output,
       run,
       repository: options.repository ?? process.env.GITHUB_REPOSITORY,
       candidateSha: options.candidate ?? process.env.E2E_CANDIDATE_SHA,
+      hostPackage,
+      hostCommand,
     })
-    console.log(`resolved ${HOST_PACKAGE}@${result.version} -> ${result.outputDir}`)
+    console.log(`resolved ${result.hostPackage}@${result.version} -> ${result.outputDir}`)
     console.log(JSON.stringify(result.record, null, 2))
     return
   }
   if (command === "install") {
-    const result = await installHost({ lockDir: options.lock, prefix: options.prefix, run })
-    console.log(`installed ${HOST_PACKAGE}@${result.version} at ${result.binPath}`)
+    const result = await installHost({ lockDir: options.lock, prefix: options.prefix, run, hostPackage: options["host-package"], hostCommand })
+    console.log(`installed ${result.hostPackage}@${result.version} at ${result.binPath}`)
     return
   }
   throw new Error(`unknown command ${JSON.stringify(command)}; expected resolve or install`)

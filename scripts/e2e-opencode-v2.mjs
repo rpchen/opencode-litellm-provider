@@ -5,6 +5,8 @@ import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { spawn, spawnSync } from "node:child_process"
+import { locateInstalledCandidates, readInstalledPackage, collectDeliveryInputs } from "./e2e-installed-inputs.mjs"
+import { environmentRecord, hostExecutableDigest } from "./e2e-host.mjs"
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)))
 const hostVersion = process.env.E2E_OPENCODE_VERSION ?? ""
@@ -22,7 +24,15 @@ if (!packageSpec || !/^(github:rpchen\/opencode-litellm-provider|git\+file:\/\/\
 // state can never leak between groups. An unknown group must fail before any
 // installer, host or fixture work happens.
 const group = process.env.E2E_GROUP ?? "all"
-const supportedGroups = ["all", "A", "B", "C", "D"]
+// A complete matrix run and the delivery verification report the same timing
+// facts; `scope` tells the gate which of the two produced this report. A report
+// can never claim `delivery` for a matrix run or the other way round.
+const scope = group === "delivery" ? "delivery" : "full"
+// `delivery` is the targeted verification of a candidate whose dependencies were
+// proven identical to a successful complete baseline. It is not part of the
+// complete matrix: `all` and A/B/C/D keep every existing assertion, `delivery`
+// adds no scenario of its own.
+const supportedGroups = ["all", "A", "B", "C", "D", "delivery"]
 if (!supportedGroups.includes(group)) {
   throw new Error(`E2E_GROUP must be one of ${supportedGroups.join(", ")}; got ${JSON.stringify(group)}`)
 }
@@ -42,6 +52,9 @@ const timing = {
   cli: [],
   open: [],
 }
+// Filled by `collectReportEvidence()` while the temporary HOME/XDG directories
+// and the installed candidate still exist, then written into the report.
+let reportEvidence = null
 const timingLabel = (value) =>
   sanitize(String(value)).replaceAll(workspace, "<e2e>").replace(/\s+/gu, " ").slice(0, 120)
 function count(name, by = 1) {
@@ -140,11 +153,17 @@ function timingReport(status) {
   return {
     group,
     script: timing.script,
+    scope,
     status,
     start: timing.start,
     end: new Date(endedAt).toISOString(),
     durationMs: endedAt - timingStartedAt,
     hostVersion,
+    hostInput: reportEvidence?.hostInput ?? null,
+    deliveryInputs: reportEvidence?.deliveryInputs ?? {
+      complete: false,
+      reason: "the installed dependency evidence was not collected",
+    },
     phases: timing.phases,
     waits: timing.waits,
     waitsByKind,
@@ -165,6 +184,9 @@ function flushTiming(status) {
     }
     const cliTotal = report.cli.reduce((sum, entry) => sum + entry.durationMs, 0)
     process.stdout.write(`[E2E-TIMING] cli count=${report.cli.length} durationMs=${cliTotal}\n`)
+    process.stdout.write(
+      `[E2E-TIMING] scope ${report.scope} hostInput=${report.hostInput ? "recorded" : "missing"} deliveryInputs.complete=${report.deliveryInputs.complete}${report.deliveryInputs.reason ? ` reason="${report.deliveryInputs.reason}"` : ""}\n`,
+    )
     for (const [label, bucket] of Object.entries(report.cliByLabel)
       .sort((left, right) => right[1].durationMs - left[1].durationMs)
       .slice(0, 5)) {
@@ -228,6 +250,44 @@ const state = path.join(workspace, "state")
 const opencodeConfig = path.join(config, "opencode")
 const opencodeConfigFile = path.join(opencodeConfig, "opencode.jsonc")
 for (const dir of [project, home, config, data, cache, state, opencodeConfig]) mkdirSync(dir, { recursive: true })
+// Every directory the host or the installer may write into. The installed
+// candidate evidence is only ever looked for below these, never in a real HOME.
+const runDirs = [home, config, data, cache, state]
+const candidateSha = packageSpec.match(/#([0-9a-f]{40})$/u)[1]
+
+/**
+ * Collect the report's reuse evidence while the run's own directories and the
+ * installed candidate still exist. Best effort by design: a failure only makes
+ * the report non-reusable (`complete: false` with a public reason), never
+ * changes this run's real E2E result.
+ */
+function collectReportEvidence() {
+  // Observe this group's runner, rather than copying the resolver's environment:
+  // the groups run on independent machines and an image rollout must force full.
+  const npm = spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", ["--version"], {
+    encoding: "utf8", shell: process.platform === "win32",
+  })
+  const hostInput = environmentRecord({
+    version: hostVersion, candidateSha,
+    npmVersion: npm.status === 0 ? npm.stdout.trim() : null,
+  })
+  let deliveryInputs
+  try {
+    deliveryInputs = collectDeliveryInputs({
+      roots: runDirs,
+      workspace,
+      candidateSha,
+      expectedIdentity: candidateIdentity,
+      expectedProvenance: candidateProvenance,
+    })
+    const executableDigest = hostExecutableDigest("opencode")
+    if (!executableDigest) deliveryInputs = { complete: false, reason: "the actual host executable could not be read" }
+    else deliveryInputs = { ...deliveryInputs, hostExecutableDigest: executableDigest }
+  } catch (error) {
+    deliveryInputs = { complete: false, reason: String(error?.message ?? error).slice(0, 400) }
+  }
+  reportEvidence = { hostInput, deliveryInputs }
+}
 
 // Fixed public records and complete synthetic records for existing lifecycle cases.
 const frozenDiscovery = JSON.parse(readFileSync(path.join(root,"test/fixtures/metadata-priority/synthetic-discovery.json"),"utf8"))
@@ -1168,6 +1228,78 @@ async function bootstrapPublicationGroup({ label, catalog = () => structuredClon
     { id: "max", settings: { thinking: { type: "enabled", budgetTokens: 64000 } } },
   ], "host-version wire lowering must not change the plugin's declared variants")
   console.log(`[${label}] real host baseline: 19 models (frozen 16 + 3 controls), limits/variants/prices asserted`)
+}
+
+/**
+ * Targeted delivery verification of the current candidate.
+ *
+ * This is the only scenario a `delivery` report may claim: the real OpenCode
+ * installer installs the fixed candidate, the real host loads it and registers
+ * the frozen 19-model baseline, the *installed* copy proves its Runtime Identity
+ * and Core provenance, and one real SDK turn reaches LiteLLM. The complete
+ * credential/lifecycle matrix stays with the complete groups; nothing here
+ * pretends the matrix ran.
+ */
+async function phaseDelivery() {
+  await bootstrapPublicationGroup({ label: "delivery" })
+
+  // [DELIVERY-VERIFY] Read the identity from the package the real installer produced,
+  // not from this checkout: the installer is the only source of the delivered bytes.
+  const installedCopies = locateInstalledCandidates({ roots: runDirs, workspace })
+  assert.equal(installedCopies.length, 1,
+    `exactly one installed candidate package is required, found ${installedCopies.length}`)
+  const installed = readInstalledPackage({ root: installedCopies[0].root })
+  assert.deepEqual(installed.identity, candidateIdentity,
+    "the installed package Runtime Identity must equal the candidate checkout")
+  assert.deepEqual(installed.provenance, candidateProvenance,
+    "the installed package Core provenance must equal the candidate checkout")
+  assert.equal(installed.provenance.sha, installed.identity.coreCommit)
+
+  // One real model SDK turn on this group's own async host session: the delivered
+  // candidate must still reach LiteLLM through the protocol the registry declares.
+  const target = oracle.models.find((model) => model.protocol === "chat" && model.levels.length === 0)
+  assert(target, "the frozen matrix must contain a chat model without reasoning variants")
+  const hostJson = async (method, route, body) => {
+    const response = await fetch(`${openCodeServer.url}${route}`, {
+      method,
+      headers: {
+        "content-type": "application/json",
+        authorization: "Basic " + Buffer.from(`opencode:${openCodeServer.password}`).toString("base64"),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    })
+    const text = await response.text()
+    assert(response.ok, `delivery host request failed: ${method} ${route} (${response.status}) ${sanitize(text).slice(0, 400)}`)
+    return text ? JSON.parse(text) : undefined
+  }
+  const deliverySession = payload(await hostJson("POST", "/api/session", { title: "LiteLLM delivery E2E" }))
+  assert.equal(typeof deliverySession?.id, "string", "the delivery host session.create did not return an id")
+  const ref = { id: target.id, providerID: "litellm" }
+  await hostJson("POST", `/api/session/${deliverySession.id}/model`, { model: ref })
+  const selected = payload(await hostJson("GET", `/api/session/${deliverySession.id}`))
+  assert.deepEqual(selected.model, { ...ref, variant: "default" },
+    "the delivery host session must store the selected frozen model")
+
+  const before = defaultMock.requests.length
+  const started = Date.now()
+  await hostJson("POST", `/api/session/${deliverySession.id}/prompt`, { text: "Reply ok. Do not call any tools." })
+  let finished
+  for (let attempt = 0; attempt < 100; attempt++) {
+    await sleep(200)
+    const state = payload(await hostJson("GET", `/api/session/${deliverySession.id}`))
+    if (Date.parse(state.time?.idle ?? "") >= started || (typeof state.time?.idle === "number" && state.time.idle >= started)) {
+      finished = state
+      break
+    }
+  }
+  assert(finished, `${target.id}: the delivery host turn did not finish`)
+  assert.equal(finished.outcome, "succeeded",
+    `${target.id}: the delivery SDK turn failed; session=${sanitize(JSON.stringify(finished))}`)
+  const requests = defaultMock.requests.slice(before).filter((request) => request.body.model === target.id)
+  assert(requests.length > 0, `${target.id}: the delivery SDK turn never reached LiteLLM`)
+  for (const request of requests) assert.equal(request.path, "/v1/chat/completions", `${target.id}: the delivery request used another protocol`)
+  count("deliveryModelRequests", requests.length)
+  console.log(`Delivery verification: installed candidate identity/provenance match, real ${target.id} SDK turn reached LiteLLM`)
 }
 
 async function dumpFailureDiagnostics() {
@@ -2410,6 +2542,11 @@ try {
         "the repaired catalog must publish minimax-m3 before the notification chain")
     })
     await withPhase("notification-network", phaseNotificationAndNetwork)
+  } else if (group === "delivery") {
+    // Targeted verification only: real install/load/registry, installed Runtime
+    // Identity + provenance and one real SDK turn. The complete matrix stays with
+    // `all`/A/B/C/D and is never replaced by this run.
+    await withPhase("delivery", phaseDelivery)
   } else {
     throw new Error(`E2E_GROUP must be one of ${supportedGroups.join(", ")}; got ${JSON.stringify(group)}`)
   }
@@ -2434,8 +2571,11 @@ try {
   ])
   // A just-killed OpenCode may still be writing its cache: never let cleanup mask the real result.
   await sleep(1000)
+  // The reuse evidence has to be read before the temporary HOME/XDG directories
+  // disappear, and the report is written before cleanup for the same reason.
+  collectReportEvidence()
+  flushTiming(groupFailure ? "failed" : "ok")
   try { rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }) } catch (error) {
     process.stderr.write(`cleanup skipped: ${error.code ?? error.message}\n`)
   }
-  flushTiming(groupFailure ? "failed" : "ok")
 }

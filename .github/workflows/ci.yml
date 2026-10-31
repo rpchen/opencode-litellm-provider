@@ -19,6 +19,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   verify:
@@ -122,6 +123,8 @@ jobs:
     outputs:
       host-version: ${{ steps.resolve.outputs.host-version }}
       package-spec: ${{ steps.resolve.outputs.package-spec }}
+      verification-mode: ${{ steps.plan.outputs.verification-mode }}
+      verification-baseline: ${{ steps.plan.outputs.verification-baseline }}
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -139,7 +142,7 @@ jobs:
       # real-host jobs spend runner time. Keeping the command dependency-free
       # avoids a repo-wide npm install in this job.
       - name: Test the host-input and gate helpers
-        run: node --test scripts/e2e-host.test.mjs scripts/check-e2e-groups.test.mjs
+        run: npm run test:e2e-gate
 
       # The installed candidate must be an immutable commit, never a branch.
       - name: Validate the immutable E2E candidate
@@ -176,6 +179,40 @@ jobs:
           echo "host-version=$version" >> "$GITHUB_OUTPUT"
           echo "package-spec=$package_spec" >> "$GITHUB_OUTPUT"
 
+      - name: Install current probe dependencies
+        run: npm ci
+      - name: Verify the current candidate through the real host
+        env:
+          E2E_GROUP: delivery
+          E2E_TIMING_FILE: ${{ github.workspace }}/.tmp/e2e-delivery.json
+          E2E_PACKAGE_SPEC: ${{ steps.resolve.outputs.package-spec }}
+          OPENCODE_DISABLE_AUTOUPDATE: "1"
+        run: |
+          export PATH="$RUNNER_TEMP/e2e-host-lock/node_modules/.bin:$PATH"
+          test "$(command -v opencode)" = "$RUNNER_TEMP/e2e-host-lock/node_modules/.bin/opencode"
+          npm run test:e2e:opencode-v2
+      - name: Compare actual inputs with a verified full baseline
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          FORCE_FULL: ${{ github.event_name == 'workflow_dispatch' && inputs.e2e_mode != 'groups' && 'true' || 'false' }}
+        run: |
+          node scripts/e2e-validation.mjs plan --adapter opencode --root "$GITHUB_WORKSPACE" \
+            --host-dir "$RUNNER_TEMP/e2e-host-lock" --delivery-report "$GITHUB_WORKSPACE/.tmp/e2e-delivery.json" \
+            --candidate "$E2E_CANDIDATE_SHA" --harness "$(git rev-parse HEAD)" --source-head "$SOURCE_HEAD" \
+            --force-full "$FORCE_FULL" --output "$GITHUB_WORKSPACE/.tmp/e2e-plan.json"
+      - name: Publish current verification decision
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-current-verification
+          path: |
+            ${{ github.workspace }}/.tmp/e2e-delivery.json
+            ${{ github.workspace }}/.tmp/e2e-plan.json
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Record the host and runtime inputs
         run: |
           {
@@ -199,10 +236,11 @@ jobs:
 
   # The complete scenario set, split into four isolated groups. Each group owns
   # its runner, HOME/XDG directories, fake endpoints and real host process, and
-  # rebuilds its own real preconditions. All four run on every push/PR.
+  # rebuilds its own real preconditions. Delivery-only reuse requires a verified
+  # complete baseline and a successful current real installation/request probe.
   e2e-group-a:
     name: Real OpenCode latest E2E group A (host, models, management)
-    if: github.event_name != 'workflow_dispatch' || inputs.e2e_mode != 'serial-baseline'
+    if: needs.resolve-host.outputs.verification-mode == 'full' && (github.event_name != 'workflow_dispatch' || inputs.e2e_mode != 'serial-baseline')
     needs: [resolve-host]
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -265,7 +303,7 @@ jobs:
 
   e2e-group-b:
     name: Real OpenCode latest E2E group B (prices, last-known-good)
-    if: github.event_name != 'workflow_dispatch' || inputs.e2e_mode != 'serial-baseline'
+    if: needs.resolve-host.outputs.verification-mode == 'full' && (github.event_name != 'workflow_dispatch' || inputs.e2e_mode != 'serial-baseline')
     needs: [resolve-host]
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -328,7 +366,7 @@ jobs:
 
   e2e-group-c:
     name: Real OpenCode latest E2E group C (metadata, deletion repair)
-    if: github.event_name != 'workflow_dispatch' || inputs.e2e_mode != 'serial-baseline'
+    if: needs.resolve-host.outputs.verification-mode == 'full' && (github.event_name != 'workflow_dispatch' || inputs.e2e_mode != 'serial-baseline')
     needs: [resolve-host]
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -391,7 +429,7 @@ jobs:
 
   e2e-group-d:
     name: Real OpenCode latest E2E group D (notifications, failure recovery)
-    if: github.event_name != 'workflow_dispatch' || inputs.e2e_mode != 'serial-baseline'
+    if: needs.resolve-host.outputs.verification-mode == 'full' && (github.event_name != 'workflow_dispatch' || inputs.e2e_mode != 'serial-baseline')
     needs: [resolve-host]
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -477,6 +515,36 @@ jobs:
           node-version: 22.23.4
       - name: Require the resolved host and all four groups to succeed
         run: node scripts/check-e2e-groups.mjs
+      - name: Download full group reports
+        if: needs.resolve-host.outputs.verification-mode == 'full' && success()
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: e2e-timing-group-*
+          path: ${{ runner.temp }}/e2e-full-reports
+      - name: Download the full run host lock
+        if: needs.resolve-host.outputs.verification-mode == 'full' && success()
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: e2e-host-lock
+          path: ${{ runner.temp }}/e2e-host-lock
+      - name: Record complete matrix evidence
+        if: needs.resolve-host.outputs.verification-mode == 'full' && success()
+        env:
+          SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          CANDIDATE: ${{ inputs.e2e_candidate_sha || github.event.pull_request.head.sha || github.sha }}
+        run: |
+          node scripts/e2e-validation.mjs record --adapter opencode --root "$GITHUB_WORKSPACE" \
+            --host-dir "$RUNNER_TEMP/e2e-host-lock" --reports-dir "$RUNNER_TEMP/e2e-full-reports" \
+            --candidate "$CANDIDATE" --harness "$(git rev-parse HEAD)" --source-head "$SOURCE_HEAD" \
+            --output "$RUNNER_TEMP/e2e-full-validation/validation.json"
+      - name: Publish full baseline evidence
+        if: needs.resolve-host.outputs.verification-mode == 'full' && success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-full-validation
+          path: ${{ runner.temp }}/e2e-full-validation/validation.json
+          if-no-files-found: error
+          retention-days: 30
 
 
   # Manual benchmark only: replays the pre-split serial harness at its fixed
