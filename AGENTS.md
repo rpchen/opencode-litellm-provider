@@ -36,6 +36,8 @@ npm run verify:dist
 npm run test:delivery
 npm run typecheck
 npm test
+npm run test:codebase-memory
+npm run test:e2e-gate
 npm run test:tui-render
 npm run test:distribution
 npm run test:package

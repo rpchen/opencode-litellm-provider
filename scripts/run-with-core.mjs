@@ -1,5 +1,5 @@
 import { main, prepareCore, readProvenance, selectCore } from "./prepare-core.mjs"
-import { run, typecheck, unitTest } from "./distribution.mjs"
+import { typecheck, unitTest } from "./distribution.mjs"
 
 await main(() => {
   const task = process.argv[2]
@@ -9,8 +9,7 @@ await main(() => {
     : readProvenance()
   prepareCore({ selection })
   if (task === "typecheck") typecheck()
-  else {
-    unitTest()
-    run(process.execPath, ["--test", "--test-concurrency=1", "scripts/check-openspec-closure.test.mjs", "scripts/codebase-memory.test.mjs", "scripts/codebase-memory-main.test.mjs"])
-  }
+  // CI runs the index tooling and OpenSpec closure suites in their own
+  // mandatory steps. Keep product tests here so those suites run once.
+  else unitTest()
 })
