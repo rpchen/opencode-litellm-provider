@@ -208,7 +208,7 @@ jobs:
     timeout-minutes: 30
     env:
       E2E_GROUP: A
-      E2E_TIMING_FILE: ${{ runner.temp }}/e2e-timing-a.json
+      E2E_TIMING_FILE: ${{ github.workspace }}/.tmp/e2e-timing-a.json
       E2E_OPENCODE_VERSION: ${{ needs.resolve-host.outputs.host-version }}
       E2E_PACKAGE_SPEC: ${{ needs.resolve-host.outputs.package-spec }}
       OPENCODE_DISABLE_AUTOUPDATE: "1"
@@ -271,7 +271,7 @@ jobs:
     timeout-minutes: 30
     env:
       E2E_GROUP: B
-      E2E_TIMING_FILE: ${{ runner.temp }}/e2e-timing-b.json
+      E2E_TIMING_FILE: ${{ github.workspace }}/.tmp/e2e-timing-b.json
       E2E_OPENCODE_VERSION: ${{ needs.resolve-host.outputs.host-version }}
       E2E_PACKAGE_SPEC: ${{ needs.resolve-host.outputs.package-spec }}
       OPENCODE_DISABLE_AUTOUPDATE: "1"
@@ -334,7 +334,7 @@ jobs:
     timeout-minutes: 30
     env:
       E2E_GROUP: C
-      E2E_TIMING_FILE: ${{ runner.temp }}/e2e-timing-c.json
+      E2E_TIMING_FILE: ${{ github.workspace }}/.tmp/e2e-timing-c.json
       E2E_OPENCODE_VERSION: ${{ needs.resolve-host.outputs.host-version }}
       E2E_PACKAGE_SPEC: ${{ needs.resolve-host.outputs.package-spec }}
       OPENCODE_DISABLE_AUTOUPDATE: "1"
@@ -397,7 +397,7 @@ jobs:
     timeout-minutes: 30
     env:
       E2E_GROUP: D
-      E2E_TIMING_FILE: ${{ runner.temp }}/e2e-timing-d.json
+      E2E_TIMING_FILE: ${{ github.workspace }}/.tmp/e2e-timing-d.json
       E2E_OPENCODE_VERSION: ${{ needs.resolve-host.outputs.host-version }}
       E2E_PACKAGE_SPEC: ${{ needs.resolve-host.outputs.package-spec }}
       OPENCODE_DISABLE_AUTOUPDATE: "1"
