@@ -42,7 +42,7 @@
     "test:merge-gate": "node scripts/check-merge-gate.mjs"
   },
   "peerDependencies": {
-    "@opencode/plugin": ">=2.0.15 <2.1"
+    "@opencode/plugin": ">=2.0.15 <2.3"
   },
   "devDependencies": {
     "@fission-ai/openspec": "1.13.2",

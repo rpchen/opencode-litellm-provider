@@ -1,3 +1,4 @@
+import { credentialURL } from "./host/credential.js"
 import { Plugin } from "@opencode/plugin"
 import { registerAudit } from "./host/audit-command.js"
 import { registerEndpointActivation } from "./host/endpoint-command.js"
@@ -56,6 +57,7 @@ async function setupEndpoint(
   const providerRegistration = await registerProvider(context, snapshot, endpoint)
   const loop = createDiscoveryLoop(context, snapshot, endpointOptions, dependencies, endpoint)
   const startup = loop.start()
+  await loop.initialized
   triggers?.set(endpoint.id, async () => { await loop.trigger(true) })
 
   return async () => {
@@ -417,9 +419,8 @@ export async function setupLiteLLM(
     async legacyBaseUrl() {
       const connection = await context.integration.connection.active("litellm")
       if (!connection) return undefined
-      const resolved = await context.integration.connection.resolve(connection) as { type?: string; configuration?: Record<string, unknown> } | undefined
-      const url = resolved?.type === "key" ? resolved.configuration?.url : undefined
-      return typeof url === "string" && url.length > 0 ? url : undefined
+      const resolved = await context.integration.connection.resolve(connection)
+      return credentialURL(resolved)
     },
     async removeStorage(key) {
       if (!context.storage) return

@@ -20,7 +20,7 @@ const endpointView = {
         applied: {
           type: "object",
           properties: {
-            kind: { type: "string", enum: ["active", "not-applied", "error"] },
+            kind: { type: "string", enum: ["active", "snapshot", "not-applied", "error"] },
             lastDiscoveryAt: { type: "string" },
             modelCount: { type: "number" },
             category: { type: "string" },

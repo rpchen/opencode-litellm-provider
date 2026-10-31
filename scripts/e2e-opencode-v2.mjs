@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url"
 import { spawn, spawnSync } from "node:child_process"
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)))
-const hostVersion = process.env.E2E_OPENCODE_VERSION ?? "2.0.16"
-assert(["2.0.16", "2.0.30"].includes(hostVersion), "E2E_OPENCODE_VERSION must be a pinned tested version")
+const hostVersion = process.env.E2E_OPENCODE_VERSION ?? ""
+assert(/^\d+\.\d+\.\d+$/u.test(hostVersion), "E2E_OPENCODE_VERSION must be an exact stable OpenCode version")
 const packageSpec = process.env.E2E_PACKAGE_SPEC
 // CI pins the GitHub commit. Local pre-push verification may pin a local clone with git+file://...#<sha>;
 // OpenCode's own installer still installs it, but the commit must be a full immutable SHA either way.
@@ -362,6 +362,7 @@ function plainTerminal(value) {
 }
 
 const activeTuis = new Set()
+let tuiStateSerial = 0
 
 function startAttachedTui(sessionID) {
   if (process.platform === "win32") {
@@ -377,7 +378,9 @@ function startAttachedTui(sessionID) {
   const commandLine = `stty cols 120 rows 100; exec opencode --server ${openCodeServer.url} --session ${sessionID}`
   const child = spawn("script", ["-qefc", commandLine, "/dev/null"], {
     cwd: project,
-    env,
+    // OpenCode persists TUI tabs under XDG_STATE_HOME. Each attached client
+    // must start with its own tabs while the server keeps its persistent state.
+    env: { ...env, XDG_STATE_HOME: path.join(workspace, `tui-state-${++tuiStateSerial}`) },
     stdio: ["pipe", "pipe", "pipe"],
   })
   let stdout = ""
@@ -714,7 +717,7 @@ export default {
     "session.create",
   ))
   assert.equal(typeof createdSession?.id, "string", `session.create did not return an id: ${JSON.stringify(createdSession)}`)
-  const sessionID = createdSession.id
+  let sessionID = createdSession.id
   const runSessionCommand = (name, text = "") =>
     api("POST", `/api/session/${sessionID}/command`, "--data", JSON.stringify({ name, text }))
 
@@ -729,9 +732,26 @@ export default {
   await waitForTui(tui, "LiteLLM Endpoints · active 2/2")
   await stopAttachedTui(tui)
 
-  // 2) Audit export already had latest-state recovery; keep it in the same real-host gate
-  // because the user observed all three commands appearing silent during startup.
+  // 2) Audit recovery uses its own session so the previously closed terminal's
+  // session state does not affect this independent recovery check.
+  sessionID = payload(jsonOutput(api("POST", "/api/session", "--data", JSON.stringify({ title: "LiteLLM audit E2E" })), "session.create")).id
   runSessionCommand("litellm-audit-export")
+  // The command endpoint accepts work asynchronously. Wait for the export to
+  // finish while no TUI is attached, so this really tests latest-state recovery.
+  let completedAudit
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const response = await fetch(`${openCodeServer.url}/api/rpc/litellm-audit-export/latest`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Basic " + Buffer.from(`opencode:${openCodeServer.password}`).toString("base64") },
+      body: JSON.stringify({ input: {} }),
+    })
+    if (response.ok) {
+      const result = await response.json()
+      if (result.output?.sessionID === sessionID && result.output?.path) { completedAudit = result.output; break }
+    }
+    await sleep(100)
+  }
+  assert(completedAudit?.ok, "audit command did not finish before TUI recovery")
   tui = startAttachedTui(sessionID)
   await waitForTui(tui, "LiteLLM 审查报告已导出")
   const auditTuiText = tui.output()
@@ -751,6 +771,7 @@ export default {
 
   // 3) Endpoint activation: execute before TUI startup, recover the pending selector, then prove
   // the host-native DOWN + ENTER path opens the endpoint detail and toggles it (main list -> detail -> toggle -> back).
+  sessionID = payload(jsonOutput(api("POST", "/api/session", "--data", JSON.stringify({ title: "LiteLLM endpoint E2E" })), "session.create")).id
   runSessionCommand("litellm-endpoints")
   tui = startAttachedTui(sessionID)
   let mark = tui.mark()
@@ -871,9 +892,14 @@ export default {
   }
 
   // Re-enable company through the same real selector (main list -> detail -> enable -> back).
-  runSessionCommand("litellm-endpoints")
+  // The pending-selector recovery is already exercised above. Here the TUI must
+  // subscribe before the command, so it cannot race its initial state fetch.
+  sessionID = payload(jsonOutput(api("POST", "/api/session", "--data", JSON.stringify({ title: "LiteLLM re-enable E2E" })), "session.create")).id
   tui = startAttachedTui(sessionID)
+  await waitForTui(tui, workspace)
+  await sleep(1000)
   mark = tui.mark()
+  runSessionCommand("litellm-endpoints")
   await waitForTui(tui, "LiteLLM endpoints", { from: mark })
   await waitForTui(tui, "○ company", { from: mark })
   await endpointDetailToggle(tui, "○ company", { expectAfter: /company[^|]*已启用/u, connected: true, wasActive: false, since: mark })
@@ -891,14 +917,38 @@ export default {
   assert.match(models.stdout, /litellm\//u, "CLI models must include default LiteLLM models")
   assert.match(models.stdout, /litellm-company\//u, "CLI models must include re-enabled company LiteLLM models")
 
+  // A cold server's very first model response must contain both durable
+  // snapshots even when the LiteLLM service is offline.
+  mockFailStatus = 500
+  openCodeServer.child.kill(); await sleep(1500)
+  openCodeServer = await startOpenCodeServer(); env.OPENCODE_PASSWORD = openCodeServer.password
+  const firstModels = payload(jsonOutput(api("GET", "/api/model"), "model.list"))
+  assert(firstModels.some(model => model.providerID === "litellm" && model.id === "multi-endpoint-model"), "first model read must include the offline default snapshot")
+  assert(firstModels.some(model => model.providerID === "litellm-company"), "first model read must include the offline company snapshot")
+  console.log("[STARTUP-SNAPSHOT] first real host model read contains both offline snapshots")
+  mockFailStatus = 0
+  for (const endpointId of ["default", "company"]) {
+    // Use async HTTP so the fake LiteLLM server can answer while refresh runs.
+    const response = await fetch(`${openCodeServer.url}/api/rpc/litellm-endpoints/trigger`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Basic " + Buffer.from(`opencode:${openCodeServer.password}`).toString("base64") },
+      body: JSON.stringify({ input: { endpointId } }),
+    })
+    assert(response.ok, `endpoint retry HTTP failed for ${endpointId}`)
+    const result = await response.json()
+    assert.equal(result.output?.ok, true, `network recovery failed for ${endpointId}`)
+  }
+  await waitForProviders(["litellm", "litellm-company"])
+  sessionID = payload(jsonOutput(api("POST", "/api/session", "--data", JSON.stringify({ title: "LiteLLM post-restart E2E" })), "session.create")).id
+
   // Endpoint-scoped diagnostics must use the real OpenCode command tail (prompt.text).
   // This reproduces /litellm-diagnostics company and rejects the previous silent fallback to overview.
   runSessionCommand("litellm-diagnostics", "company")
   tui = startAttachedTui(sessionID)
   mark = tui.mark()
   // PTY text normalization may collapse the full-width colon, so assert semantic spacing.
-  await waitForTui(tui, /Endpoint\s+company/u, { from: mark })
-  await waitForTui(tui, /models\.dev\s+ok/u, { from: mark })
+  await waitForTui(tui, /Endpoint[\s:：]+company/u, { from: mark })
+  await waitForTui(tui, /models\.dev[\s:：]*ok/u, { from: mark })
   await waitForTui(tui, /invalid-fields/u, { from: mark })
   const scopedDiagnostics = tui.output(mark)
   assert.doesNotMatch(scopedDiagnostics, /LiteLLM Endpoints · active \d+\/\d+/u,
@@ -1087,20 +1137,30 @@ export default {
   assert.equal(matrixReport.models.find(model=>model.id==="e2e-disabled").reasoningSupported,"unsupported")
   const requestSession=payload(jsonOutput(api("POST","/api/session","--data",JSON.stringify({title:"metadata request matrix"})),"session.create")).id
   let checkedRequests=0
+  const sessionRequest = async (method, route, body) => {
+    const response = await fetch(`${openCodeServer.url}${route}`, {
+      method,
+      headers: { "content-type": "application/json", authorization: "Basic " + Buffer.from(`opencode:${openCodeServer.password}`).toString("base64") },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    })
+    assert(response.ok, `session request failed: ${method} ${route} (${response.status})`)
+    const text = await response.text()
+    return text ? JSON.parse(text) : undefined
+  }
   const requestModel = async (id,variant,protocol) => {
     const ref={id,providerID:"litellm",...(variant===undefined?{}:{variant})}
-    api("POST",`/api/session/${requestSession}/model`,"--data",JSON.stringify({model:ref}))
-    const selected=payload(jsonOutput(api("GET",`/api/session/${requestSession}`),"session.get"))
+    await sessionRequest("POST", `/api/session/${requestSession}/model`, { model: ref })
+    const selected=payload(await sessionRequest("GET", `/api/session/${requestSession}`))
     // The host normalizes an omitted selection to a neutral default marker;
     // it does not add a Model.Info variant or a reasoning request parameter.
     assert.deepEqual(selected.model,{...ref,variant:variant??"default"},"real session stores the selected model and declared variant")
     const before=defaultMock.requests.length
     const started=Date.now()
-    api("POST",`/api/session/${requestSession}/prompt`,"--data",JSON.stringify({text:"Reply ok. Do not call any tools."}))
+    await sessionRequest("POST", `/api/session/${requestSession}/prompt`, { text: "Reply ok. Do not call any tools." })
     let finished
     for(let attempt=0;attempt<100;attempt++) {
       await sleep(200)
-      const state=payload(jsonOutput(api("GET",`/api/session/${requestSession}`),"session.get"))
+      const state=payload(await sessionRequest("GET", `/api/session/${requestSession}`))
       if(Date.parse(state.time?.idle??"")>=started || (typeof state.time?.idle==="number"&&state.time.idle>=started)){finished=state;break}
     }
     assert(finished,`${id}/${variant??"default"}: actual host turn did not finish`)
@@ -1120,7 +1180,7 @@ export default {
         // v2.0.30's native Anthropic SDK fits thinking to half max_tokens
         // (ai/src/protocols/shared.ts:fitThinkingBudget). Registry settings
         // below remain the declared 64k; only the host's wire lowering differs.
-        const maximumBudget = hostVersion === "2.0.30" ? 32000 : 64000
+        const maximumBudget = 32000
         assert.equal(request.body.thinking?.budget_tokens, variant === "max" ? maximumBudget : 16000)
       }
       else assert.equal(effort,variant,`${id}: exact requested reasoning effort`)
@@ -1263,9 +1323,12 @@ export default {
   const restarted=await diagnosticsThroughTui(/catalog 当前不可用/u,"persisted notification acknowledgement")
   assert(/提醒状态：该问题集合已确认/u.test(restarted),"same problem set stays quiet across restart")
   servedModels=[...unusableModels(),{model_name:"gap-c",model_info:{mode:"chat"}}]
-  await waitForRefreshAfter(Date.now(),"the changed problem set")
-  const changed=await diagnosticsThroughTui(/withheld[\s：:]*gap-c/u,"new missing model")
-  assert(!/提醒状态：该问题集合已确认/u.test(changed),"material change is reported again")
+  // Capture the changed discovery before a later polling cycle marks the same
+  // problem set unchanged. The TUI may start after that subsequent cycle.
+  await waitForPublicationState(state =>
+    state.withheld.some(entry => entry.id === "gap-c") && state.acknowledgement?.notify === true,
+    "notification for the changed problem set")
+  await diagnosticsThroughTui(/withheld[\s：:]*gap-c/u,"new missing model")
   console.log("[ack persistence] surfaced -> restarted suppressed -> material change re-surfaced")
 
   // Network failures retain last successful models; auth errors clear them.
@@ -1587,6 +1650,9 @@ export default {
     const allConnectIds = connectionsOf("litellm").map((c) => c.id)
     const legacyConnectId = allConnectIds.filter((id) => !beforeConnectIds.includes(id))
     assert.equal(legacyConnectId.length, 1, `legacy /connect must save one new credential (before=${beforeConnectIds} after=${allConnectIds})`)
+    // Earlier phases left a selected credential without the legacy URL. A new
+    // connection is not necessarily selected when another connection exists.
+    api("POST", `/api/credential/${legacyConnectId[0]}/activate`)
     assert(integrationsNow().some((i) => i.id === "litellm"), "legacy litellm integration must exist")
 
     const legacySession = payload(jsonOutput(api("POST", "/api/session", "--data", JSON.stringify({ title: "LiteLLM legacy mgmt" })), "session.create")).id

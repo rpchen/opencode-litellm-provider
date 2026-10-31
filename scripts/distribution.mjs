@@ -120,7 +120,7 @@ export function typecheck(root = ROOT, toolRoot = ROOT) {
 }
 
 export function unitTest(root = ROOT) {
-  run("bun", ["test"], root)
+  run("bun", ["test", "./test/"], root)
 }
 
 export function compileDistribution(root, out, selection, toolRoot = ROOT) {

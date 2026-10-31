@@ -82,7 +82,7 @@ export declare const endpointRpc: {
                                             readonly properties: {
                                                 readonly kind: {
                                                     readonly type: "string";
-                                                    readonly enum: readonly ["active", "not-applied", "error"];
+                                                    readonly enum: readonly ["active", "snapshot", "not-applied", "error"];
                                                 };
                                                 readonly lastDiscoveryAt: {
                                                     readonly type: "string";
@@ -227,7 +227,7 @@ export declare const endpointRpc: {
                                             readonly properties: {
                                                 readonly kind: {
                                                     readonly type: "string";
-                                                    readonly enum: readonly ["active", "not-applied", "error"];
+                                                    readonly enum: readonly ["active", "snapshot", "not-applied", "error"];
                                                 };
                                                 readonly lastDiscoveryAt: {
                                                     readonly type: "string";
@@ -394,7 +394,7 @@ export declare const endpointRpc: {
                                                     readonly properties: {
                                                         readonly kind: {
                                                             readonly type: "string";
-                                                            readonly enum: readonly ["active", "not-applied", "error"];
+                                                            readonly enum: readonly ["active", "snapshot", "not-applied", "error"];
                                                         };
                                                         readonly lastDiscoveryAt: {
                                                             readonly type: "string";
@@ -562,7 +562,7 @@ export declare const endpointRpc: {
                                                     readonly properties: {
                                                         readonly kind: {
                                                             readonly type: "string";
-                                                            readonly enum: readonly ["active", "not-applied", "error"];
+                                                            readonly enum: readonly ["active", "snapshot", "not-applied", "error"];
                                                         };
                                                         readonly lastDiscoveryAt: {
                                                             readonly type: "string";
@@ -728,7 +728,7 @@ export declare const endpointRpc: {
                                                     readonly properties: {
                                                         readonly kind: {
                                                             readonly type: "string";
-                                                            readonly enum: readonly ["active", "not-applied", "error"];
+                                                            readonly enum: readonly ["active", "snapshot", "not-applied", "error"];
                                                         };
                                                         readonly lastDiscoveryAt: {
                                                             readonly type: "string";
@@ -894,7 +894,7 @@ export declare const endpointRpc: {
                                                     readonly properties: {
                                                         readonly kind: {
                                                             readonly type: "string";
-                                                            readonly enum: readonly ["active", "not-applied", "error"];
+                                                            readonly enum: readonly ["active", "snapshot", "not-applied", "error"];
                                                         };
                                                         readonly lastDiscoveryAt: {
                                                             readonly type: "string";
@@ -1055,7 +1055,7 @@ export declare const endpointRpc: {
                                                     readonly properties: {
                                                         readonly kind: {
                                                             readonly type: "string";
-                                                            readonly enum: readonly ["active", "not-applied", "error"];
+                                                            readonly enum: readonly ["active", "snapshot", "not-applied", "error"];
                                                         };
                                                         readonly lastDiscoveryAt: {
                                                             readonly type: "string";
@@ -1221,7 +1221,7 @@ export declare const endpointRpc: {
                                                     readonly properties: {
                                                         readonly kind: {
                                                             readonly type: "string";
-                                                            readonly enum: readonly ["active", "not-applied", "error"];
+                                                            readonly enum: readonly ["active", "snapshot", "not-applied", "error"];
                                                         };
                                                         readonly lastDiscoveryAt: {
                                                             readonly type: "string";
@@ -1359,7 +1359,7 @@ export declare const endpointRpc: {
                                             readonly properties: {
                                                 readonly kind: {
                                                     readonly type: "string";
-                                                    readonly enum: readonly ["active", "not-applied", "error"];
+                                                    readonly enum: readonly ["active", "snapshot", "not-applied", "error"];
                                                 };
                                                 readonly lastDiscoveryAt: {
                                                     readonly type: "string";

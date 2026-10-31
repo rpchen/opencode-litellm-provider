@@ -11,7 +11,7 @@ export interface EndpointStateCompact {
     desired: "enabled" | "disabled";
     validationKind: "ok" | "invalid";
     credentialKind: "stored" | "environment" | "none" | "unknown";
-    appliedKind: "active" | "not-applied" | "error";
+    appliedKind: "active" | "snapshot" | "not-applied" | "error";
     applyErrorCategory?: string;
 }
 export interface EndpointViewItem {

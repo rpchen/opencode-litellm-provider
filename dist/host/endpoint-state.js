@@ -19,6 +19,8 @@ export function userVisibleStatus(state) {
     }
     if (state.applied.kind === "active")
         return "enabled-active";
+    if (state.applied.kind === "snapshot")
+        return "enabled-snapshot";
     if (state.applied.kind === "error")
         return "enabled-error";
     return "enabled-not-applied";
@@ -28,6 +30,7 @@ const STATUS_LABEL = {
     "disabled-invalid": "未启用 · 配置非法",
     "enabled-active": "已启用 · 已生效",
     "enabled-needs-authentication": "已启用 · 需要认证",
+    "enabled-snapshot": "已启用 · 来自上次快照、待确认",
     "enabled-not-applied": "已启用 · 未生效",
     "enabled-error": "已启用 · 出错",
     "enabled-invalid-configuration": "已启用 · 配置非法",
@@ -57,7 +60,7 @@ export function applyErrorLabel(category) {
 }
 /**
  * Frozen `/models` predicate: only endpoints that are enabled, valid, credentialed
- * and have at least one successful refresh in this process MAY publish models.
+ * and have a compatible snapshot or a successful refresh MAY publish models.
  */
 export function canPublish(state) {
     if (state.desired !== "enabled")
@@ -66,7 +69,7 @@ export function canPublish(state) {
         return false;
     if (state.credential !== "stored" && state.credential !== "environment")
         return false;
-    return state.applied.kind === "active";
+    return state.applied.kind === "active" || state.applied.kind === "snapshot";
 }
 /** Whether Retry / 重新应用 is offered for this state. */
 export function canRetry(state) {
@@ -77,7 +80,7 @@ export function canRetry(state) {
     // Without a credential, retry is meaningless — the user must Connect API Key first.
     if (state.credential === "none" || state.credential === "unknown")
         return false;
-    return state.applied.kind === "not-applied" || state.applied.kind === "error";
+    return state.applied.kind === "snapshot" || state.applied.kind === "not-applied" || state.applied.kind === "error";
 }
 export const INITIAL_APPLIED = { kind: "not-applied" };
 export function initialEndpointState(endpointId, desired, validation, credential) {
