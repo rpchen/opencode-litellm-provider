@@ -179,8 +179,6 @@ jobs:
           echo "host-version=$version" >> "$GITHUB_OUTPUT"
           echo "package-spec=$package_spec" >> "$GITHUB_OUTPUT"
 
-      - name: Install current probe dependencies
-        run: npm ci
       - name: Verify the current candidate through the real host
         env:
           E2E_GROUP: delivery
@@ -269,8 +267,6 @@ jobs:
         run: |
           node scripts/e2e-host.mjs install --lock "$RUNNER_TEMP/e2e-host-lock" --prefix "$RUNNER_TEMP/e2e-host"
           echo "$RUNNER_TEMP/e2e-host/node_modules/.bin" >> "$GITHUB_PATH"
-      - name: Install plugin dependencies
-        run: npm ci
       - name: Verify the host command comes from the locked prefix
         run: |
           command -v opencode
@@ -332,8 +328,6 @@ jobs:
         run: |
           node scripts/e2e-host.mjs install --lock "$RUNNER_TEMP/e2e-host-lock" --prefix "$RUNNER_TEMP/e2e-host"
           echo "$RUNNER_TEMP/e2e-host/node_modules/.bin" >> "$GITHUB_PATH"
-      - name: Install plugin dependencies
-        run: npm ci
       - name: Verify the host command comes from the locked prefix
         run: |
           command -v opencode
@@ -395,8 +389,6 @@ jobs:
         run: |
           node scripts/e2e-host.mjs install --lock "$RUNNER_TEMP/e2e-host-lock" --prefix "$RUNNER_TEMP/e2e-host"
           echo "$RUNNER_TEMP/e2e-host/node_modules/.bin" >> "$GITHUB_PATH"
-      - name: Install plugin dependencies
-        run: npm ci
       - name: Verify the host command comes from the locked prefix
         run: |
           command -v opencode
@@ -458,8 +450,6 @@ jobs:
         run: |
           node scripts/e2e-host.mjs install --lock "$RUNNER_TEMP/e2e-host-lock" --prefix "$RUNNER_TEMP/e2e-host"
           echo "$RUNNER_TEMP/e2e-host/node_modules/.bin" >> "$GITHUB_PATH"
-      - name: Install plugin dependencies
-        run: npm ci
       - name: Verify the host command comes from the locked prefix
         run: |
           command -v opencode

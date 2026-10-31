@@ -30,3 +30,5 @@
 [41178587569](https://github.com/rpchen/opencode-litellm-provider/actions/runs/41178587569)，candidate5069db5，完整A–D与常规CI均成功，基线记录kind=full。resolve→aggregate为368秒（6分08秒），相关job总1058 runner-seconds；常规CI108秒。resolve53秒中helper测试2秒、宿主锁安装8秒、探针17秒、规划9秒；组A/B/C/D测试步骤273/173/203/242秒，job297/201/226/270秒，汇总11秒。该轮略超原4–6分钟工程目标，不能继续用phase2的约5分钟代替。
 
 A脚本相对phase2第1轮主要增加在management：28.6→45.3秒，其中重启后打开selector的同步CLI用14.5秒。fake endpoint与测试在同一Node进程，spawnSync阻塞其响应；本轮后续将此一处改为相同route/body/auth的异步HTTP，保留所有TUI/旧凭据/删除/重启断言，并新增management-open-after-restart计时。收益待新完整CI确认，不预先宣称已省14.5秒。CLI installer/models/reload及其他CLI契约仍实际执行。
+
+[41179401172](https://github.com/rpchen/opencode-litellm-provider/actions/runs/41179401172)，candidate e114658，真实全组及常规CI成功，基线full/complete。异步打开selector实测355ms（原14.5秒），management从45.3降至31.0秒，A脚本254.982秒。整轮resolve→aggregate363秒（6分03秒）、1045 runner-seconds，仍不能说是phase2约5分钟；resolve66秒和其他环境方差抵消部分局部收益。源码核查又确认harness无第三方运行依赖，最终提交删除resolve/四组无用的开发包npm ci，预计最长链省约4+7–8秒，实际收益以最终无harness node_modules CI为准；真实宿主/插件安装与常规CI不删。

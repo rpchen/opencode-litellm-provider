@@ -91,3 +91,5 @@ resolve job用自己已安装的真实宿主执行当前candidate的delivery探�
 - artifact 上传/下载、`GITHUB_PATH` 顺序、`command -v opencode` 指向、aggregate 的真实 check-runs 名称与 ruleset 一致性，需在真实 CI 上回读确认。
 
 性能改造两轮真实通过数据见[e2e-performance.md](e2e-performance.md)。输入复用接入后的完整基线、metadata-only与故障传播集成证据单独回填；不能用之前性能run追认为新证据格式的完整基线。
+
+E2E harness及复用辅助只使用Node内置模块、本仓脚本与固定JSON/fixture，不使用checkout的node_modules。因此resolve/四组不再各自npm ci整个开发包；宿主仍按私有host锁真实安装，插件依赖仍由真实plugin installer安装。常规CI和历史串行benchmark的安装步骤保留。最终CI在无harness依赖安装条件下验收，不靠缓存假定安装可用。

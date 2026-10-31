@@ -41,3 +41,5 @@ resolve中用已安装宿主运行当前candidate的delivery探针，再比较Gi
 Core和Pi对应change均为verified-e2e-input-reuse，共享测试规范与adapter流程同步；Pi tag仍完整E2E，OpenCode Release原有交付/附件验证不减少。常规CI与准确main索引每次重跑，保护check名称/strict规则不改。
 
 后续实测41178587569在A管理重启的单次同步command耗14.5秒，该时段fake服务与测试同进程且被spawnSync阻塞。此一处改为同宿主HTTP路由异步请求，保留payload/auth与全部原断言，并单独计时；不据此改任何产品timer或强刷语义。
+
+源码导入与工作目录核查确认E2E harness无第三方运行依赖，真实plugin add工作目录为独立临时project，不能使用checkout node_modules。删除resolve及四组的冗余开发包npm ci（首轮分别4秒/7–8秒），真实host锁安装、插件installer及常规CI安装不动；由最终完整CI在缺少harness node_modules条件下验证。
