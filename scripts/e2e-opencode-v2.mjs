@@ -28,6 +28,8 @@ const group = process.env.E2E_GROUP ?? "all"
 // facts; `scope` tells the gate which of the two produced this report. A report
 // can never claim `delivery` for a matrix run or the other way round.
 const scope = group === "delivery" ? "delivery" : "full"
+// Temporary CI acceptance input, never merged into the implementation branch.
+if (group === "B") throw new Error("Controlled group B failure for aggregate gate acceptance")
 // `delivery` is the targeted verification of a candidate whose dependencies were
 // proven identical to a successful complete baseline. It is not part of the
 // complete matrix: `all` and A/B/C/D keep every existing assertion, `delivery`
