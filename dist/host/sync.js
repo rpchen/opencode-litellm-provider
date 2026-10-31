@@ -348,6 +348,7 @@ export function createDiscoveryLoop(context, snapshot, options, dependencies = {
             snapshot.apiBaseURL = addresses.apiBaseURL;
             snapshot.models = [];
             snapshot.registrationView = undefined;
+            writeCanonical({ applied: { kind: "not-applied" } });
             snapshot.audit = { status: "switching" };
             snapshot.diagnostics = {
                 cache: createDiscoveryCacheDiagnostics({ source: "none", pending: true }),

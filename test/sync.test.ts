@@ -250,6 +250,39 @@ describe("发现循环", () => {
     })
   }
 
+  for (const endpoint of [endpointIdentity("default", undefined, true), endpointIdentity("company", "https://litellm.example", false)]) {
+    test(`credential rotation invalidates ${endpoint.id} snapshot before failed discovery`, async () => {
+      const h = harness(JSON.stringify(persistedSnapshot("cached-model", "sk-first", endpoint.legacy ? undefined : endpoint.id)), false, endpoint)
+      h.setFetch(async () => { throw new Error("offline") })
+      await h.loop.start()
+      expect(h.snapshot.endpointState?.applied.kind).toBe("snapshot")
+      expect(h.snapshot.models).toHaveLength(1)
+
+      // Keep connection-a: only the API key changes.
+      h.setCredential({ type: "key", key: "sk-replaced", configuration: { url: "https://litellm.example" } })
+      const pending = deferred<unknown>()
+      h.setFetch(() => pending.promise)
+      const refreshing = h.loop.trigger()
+      await flush()
+      expect(h.snapshot.ready).toBeFalse()
+      expect(h.snapshot.models).toEqual([])
+      expect(h.snapshot.endpointState?.applied).toEqual({ kind: "not-applied" })
+      pending.reject(new Error("offline with new key"))
+      await refreshing
+
+      let published: unknown
+      applyProvider({ add: value => { published = value } }, h.snapshot, endpoint)
+      expect(published).toBeUndefined()
+      expect(h.snapshot.endpointState?.applied).toMatchObject({ kind: "error", category: "network" })
+      expect(h.snapshot.endpointState?.applied).not.toHaveProperty("modelCount")
+      expect(h.snapshot.diagnostics?.cache?.source).not.toBe("snapshot")
+      const diagnostics = createDiagnosticsLines(h.snapshot).join("\n")
+      expect(diagnostics).not.toContain("上次快照")
+      expect(diagnostics).not.toContain("等待网络确认")
+      await h.loop.dispose()
+    })
+  }
+
   test("legacy snapshot is published with the URL in current OpenCode credential metadata", async () => {
     const stored = JSON.stringify(persistedSnapshot("model-a"))
     const h = harness(stored)
