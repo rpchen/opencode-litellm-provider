@@ -103,3 +103,10 @@
 ## restore-model-metadata-priority 实施（2026-10-11）
 
 Core #34 squash merge SHA cf797e953eb1f6de8e7c3e0fd5e98094398c26f9；Pi #55 与本仓库 #63 固定同一 SHA。以16项冻结 fixture 验收实际注册/选择/请求，不验证 serving provider；复用原协议、endpoint、凭据、activation与缓存入口，publication9/snapshot2 经成功发现迁移。Model.Info无 reasoning 布尔字段，保留 Core 判定于审计视图，与 variants 分开；不为 SDK 创造未声明档位。OpenCode PR #63 于 2026-10-11 合并（merge SHA `d205122d07f90493be6682f9053f0c1c3b5a3780`），CI 与 Real OpenCode 2.0.16 E2E 均通过。`v0.10.1` 已发布，tag SHA `205299b6b152c46de92174dd7d6cd5a05919a244` 与当前 main 一致，main CI、索引发布和 Release workflow 均成功。
+
+
+## 真实宿主验证提速与实际输入复用（2026-10-31）
+
+用户批准独立四组真实前置重建，保留全部模型请求、自然恢复、凭据与历史activation/重启断言；产品timer/src/dist不变。两轮同输入关键路径约5分钟，runner总时间增加约21–22%，详见e2e-performance.md。
+
+常规CI与准确main索引仍逐候选运行；真实宿主行为矩阵仅在Git双输入、精确宿主锁、实际安装依赖、Node/npm/OS/runner和配置一致，且GitHub完整成功run/attempt/组/步骤回读通过时复用。当前交付仍须真实安装/加载/身份/provenance/注册/请求；缺证据完整跑，不用标题/分支/版本号分类。完整运行才能生成基线，复用不能递归。required check名称、strict规则及索引发布依赖不变，Release/附件验证保留。Core共享testing-standard和Pi同名change同时维护，不影响Core公共API或provenance，不为流程变更更新dist。

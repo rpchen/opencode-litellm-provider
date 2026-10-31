@@ -6,9 +6,20 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      e2e_mode:
+        description: "groups = complete gate; benchmark = complete groups plus old serial harness with the same host lock; serial-baseline = baseline only (required gate fails)."
+        type: choice
+        options: [groups, benchmark, serial-baseline]
+        default: groups
+      e2e_candidate_sha:
+        description: "Optional full 40-hex candidate commit to install. Defaults to this run's head SHA; branches and short SHAs are rejected."
+        type: string
+        required: false
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   verify:
@@ -100,18 +111,26 @@ jobs:
         run: node scripts/codebase-memory-main.mjs build
 
 
-  real-opencode-v2:
-    name: Real OpenCode latest E2E
+  # One resolution of the moving `latest` host per run. The exact version is
+  # locked in an ordinary private npm project (no --global) and published as a
+  # plain manifest/lock artifact; every isolated group job installs that same
+  # lock into its own prefix with npm ci. Sharing the lock is not a claim that
+  # the installed directories are byte-identical.
+  resolve-host:
+    name: Resolve real host input
     runs-on: ubuntu-latest
-    # The gate now also covers acknowledgement restart persistence, canonical
-    # identity change and resolved discrepancy in the real host; the previous
-    # 15 minutes budgeted only the original scenario set.
-    timeout-minutes: 30
+    timeout-minutes: 15
+    outputs:
+      host-version: ${{ steps.resolve.outputs.host-version }}
+      package-spec: ${{ steps.resolve.outputs.package-spec }}
+      verification-mode: ${{ steps.plan.outputs.verification-mode }}
+      verification-baseline: ${{ steps.plan.outputs.verification-baseline }}
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -119,24 +138,482 @@ jobs:
           node-version: 22.23.4
           cache: npm
 
-      - name: Install plugin dependencies
-        run: npm ci
+      # The gate helpers are cheap, network-free and proved before the four
+      # real-host jobs spend runner time. Keeping the command dependency-free
+      # avoids a repo-wide npm install in this job.
+      - name: Test the host-input and gate helpers
+        run: npm run test:e2e-gate
 
-      - name: Resolve an exact OpenCode v2 version
-        run: |
-          version="$(npm view @opencode/cli@latest version)"
-          node -e 'if (!/^\d+\.\d+\.\d+$/.test(process.argv[1])) { console.error("Expected an exact stable OpenCode version"); process.exit(1) }' "$version"
-          echo "E2E_OPENCODE_VERSION=$version" >> "$GITHUB_ENV"
-          echo "Testing OpenCode $version"
-
-      - name: Install real OpenCode v2 host
-        run: npm install --global @opencode/cli@${E2E_OPENCODE_VERSION}
-
-      - name: Verify real host version
-        run: opencode --version
-
-      - name: Run real host E2E
+      # The installed candidate must be an immutable commit, never a branch.
+      - name: Validate the immutable E2E candidate
+        id: candidate
         env:
+          INPUT_CANDIDATE: ${{ inputs.e2e_candidate_sha }}
+          DEFAULT_CANDIDATE: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          candidate="${INPUT_CANDIDATE:-$DEFAULT_CANDIDATE}"
+          case "$candidate" in
+            *[!0-9a-f]*|"") echo "E2E candidate must be a full 40-character lowercase commit SHA, got '$candidate'" >&2; exit 1 ;;
+          esac
+          if [ "${#candidate}" -ne 40 ]; then
+            echo "E2E candidate must be a full 40-character lowercase commit SHA, got '$candidate'" >&2
+            exit 1
+          fi
+          echo "E2E_CANDIDATE_SHA=$candidate" >> "$GITHUB_ENV"
+          echo "Testing candidate $candidate"
+
+      - name: Resolve and lock the latest host in a private npm project
+        id: resolve
+        run: |
+          # A benchmark may pin an earlier product commit, but the harness's
+          # identity expectations must still describe that installed delivery.
+          git diff --exit-code "$E2E_CANDIDATE_SHA" HEAD -- dist
+          node scripts/e2e-host.mjs resolve \
+            --output "$RUNNER_TEMP/e2e-host-lock" \
+            --candidate "$E2E_CANDIDATE_SHA" \
+            --repository "${{ github.repository }}"
+          input="$RUNNER_TEMP/e2e-host-lock/host-input.json"
+          version="$(node -p 'require(process.argv[1]).hostVersion' "$input")"
+          package_spec="$(node -p 'require(process.argv[1]).packageSpec' "$input")"
+          echo "E2E_OPENCODE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "host-version=$version" >> "$GITHUB_OUTPUT"
+          echo "package-spec=$package_spec" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the current candidate through the real host
+        env:
+          E2E_GROUP: delivery
+          E2E_TIMING_FILE: ${{ github.workspace }}/.tmp/e2e-delivery.json
+          E2E_PACKAGE_SPEC: ${{ steps.resolve.outputs.package-spec }}
           OPENCODE_DISABLE_AUTOUPDATE: "1"
-          E2E_PACKAGE_SPEC: github:${{ github.repository }}#${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          export PATH="$RUNNER_TEMP/e2e-host-lock/node_modules/.bin:$PATH"
+          test "$(command -v opencode)" = "$RUNNER_TEMP/e2e-host-lock/node_modules/.bin/opencode"
+          npm run test:e2e:opencode-v2
+      - name: Compare actual inputs with a verified full baseline
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          FORCE_FULL: ${{ github.event_name == 'workflow_dispatch' && inputs.e2e_mode != 'groups' && 'true' || 'false' }}
+        run: |
+          node scripts/e2e-validation.mjs plan --adapter opencode --root "$GITHUB_WORKSPACE" \
+            --host-dir "$RUNNER_TEMP/e2e-host-lock" --delivery-report "$GITHUB_WORKSPACE/.tmp/e2e-delivery.json" \
+            --candidate "$E2E_CANDIDATE_SHA" --harness "$(git rev-parse HEAD)" --source-head "$SOURCE_HEAD" \
+            --force-full "$FORCE_FULL" --output "$GITHUB_WORKSPACE/.tmp/e2e-plan.json"
+      - name: Publish current verification decision
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-current-verification
+          path: |
+            ${{ github.workspace }}/.tmp/e2e-delivery.json
+            ${{ github.workspace }}/.tmp/e2e-plan.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Record the host and runtime inputs
+        run: |
+          {
+            echo "## Real host input (resolved once for this run)"
+            echo '```json'
+            cat "$RUNNER_TEMP/e2e-host-lock/host-input.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the shared host lock
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-host-lock
+          path: |
+            ${{ runner.temp }}/e2e-host-lock/package.json
+            ${{ runner.temp }}/e2e-host-lock/package-lock.json
+            ${{ runner.temp }}/e2e-host-lock/host-input.json
+          if-no-files-found: error
+          retention-days: 7
+
+
+  # The complete scenario set, split into four isolated groups. Each group owns
+  # its runner, HOME/XDG directories, fake endpoints and real host process, and
+  # rebuilds its own real preconditions. Delivery-only reuse requires a verified
+  # complete baseline and a successful current real installation/request probe.
+  e2e-group-a:
+    name: Real OpenCode latest E2E group A (host, models, management)
+    if: needs.resolve-host.outputs.verification-mode == 'full' && (github.event_name != 'workflow_dispatch' || inputs.e2e_mode != 'serial-baseline')
+    needs: [resolve-host]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      E2E_GROUP: A
+      E2E_TIMING_FILE: ${{ github.workspace }}/.tmp/e2e-timing-a.json
+      E2E_OPENCODE_VERSION: ${{ needs.resolve-host.outputs.host-version }}
+      E2E_PACKAGE_SPEC: ${{ needs.resolve-host.outputs.package-spec }}
+      OPENCODE_DISABLE_AUTOUPDATE: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.4
+          cache: npm
+      - name: Download the shared host lock
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: e2e-host-lock
+          path: ${{ runner.temp }}/e2e-host-lock
+      - name: Install the locked host into this job's prefix
+        run: |
+          node scripts/e2e-host.mjs install --lock "$RUNNER_TEMP/e2e-host-lock" --prefix "$RUNNER_TEMP/e2e-host"
+          echo "$RUNNER_TEMP/e2e-host/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Verify the host command comes from the locked prefix
+        run: |
+          command -v opencode
+          if [ "$(command -v opencode)" != "$RUNNER_TEMP/e2e-host/node_modules/.bin/opencode" ]; then
+            echo "opencode must resolve to the locked prefix, not a pre-installed host" >&2
+            exit 1
+          fi
+          opencode --version
+      - name: Run real host E2E group A
         run: npm run test:e2e:opencode-v2
+      # Timing stays best-effort: a missing report never fails a group whose
+      # real scenarios passed. A report that exists but cannot be parsed is a
+      # harness defect and would corrupt the benchmark evidence, so it fails.
+      - name: Check this group's timing output
+        if: success()
+        run: |
+          if [ ! -f "$E2E_TIMING_FILE" ]; then
+            echo "::warning title=Missing E2E timing::group ${E2E_GROUP} finished without $E2E_TIMING_FILE; the scenario result stands"
+            exit 0
+          fi
+          node -e 'const fs = require("node:fs"); const parsed = JSON.parse(fs.readFileSync(process.env.E2E_TIMING_FILE, "utf8")); console.log(`group ${process.env.E2E_GROUP} timing keys: ${Object.keys(parsed).join(",")}`)'
+      - name: Upload group A timing
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-timing-group-a
+          path: ${{ env.E2E_TIMING_FILE }}
+          if-no-files-found: warn
+          retention-days: 7
+
+  e2e-group-b:
+    name: Real OpenCode latest E2E group B (prices, last-known-good)
+    if: needs.resolve-host.outputs.verification-mode == 'full' && (github.event_name != 'workflow_dispatch' || inputs.e2e_mode != 'serial-baseline')
+    needs: [resolve-host]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      E2E_GROUP: B
+      E2E_TIMING_FILE: ${{ github.workspace }}/.tmp/e2e-timing-b.json
+      E2E_OPENCODE_VERSION: ${{ needs.resolve-host.outputs.host-version }}
+      E2E_PACKAGE_SPEC: ${{ needs.resolve-host.outputs.package-spec }}
+      OPENCODE_DISABLE_AUTOUPDATE: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.4
+          cache: npm
+      - name: Download the shared host lock
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: e2e-host-lock
+          path: ${{ runner.temp }}/e2e-host-lock
+      - name: Install the locked host into this job's prefix
+        run: |
+          node scripts/e2e-host.mjs install --lock "$RUNNER_TEMP/e2e-host-lock" --prefix "$RUNNER_TEMP/e2e-host"
+          echo "$RUNNER_TEMP/e2e-host/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Verify the host command comes from the locked prefix
+        run: |
+          command -v opencode
+          if [ "$(command -v opencode)" != "$RUNNER_TEMP/e2e-host/node_modules/.bin/opencode" ]; then
+            echo "opencode must resolve to the locked prefix, not a pre-installed host" >&2
+            exit 1
+          fi
+          opencode --version
+      - name: Run real host E2E group B
+        run: npm run test:e2e:opencode-v2
+      # Timing stays best-effort: a missing report never fails a group whose
+      # real scenarios passed. A report that exists but cannot be parsed is a
+      # harness defect and would corrupt the benchmark evidence, so it fails.
+      - name: Check this group's timing output
+        if: success()
+        run: |
+          if [ ! -f "$E2E_TIMING_FILE" ]; then
+            echo "::warning title=Missing E2E timing::group ${E2E_GROUP} finished without $E2E_TIMING_FILE; the scenario result stands"
+            exit 0
+          fi
+          node -e 'const fs = require("node:fs"); const parsed = JSON.parse(fs.readFileSync(process.env.E2E_TIMING_FILE, "utf8")); console.log(`group ${process.env.E2E_GROUP} timing keys: ${Object.keys(parsed).join(",")}`)'
+      - name: Upload group B timing
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-timing-group-b
+          path: ${{ env.E2E_TIMING_FILE }}
+          if-no-files-found: warn
+          retention-days: 7
+
+  e2e-group-c:
+    name: Real OpenCode latest E2E group C (metadata, deletion repair)
+    if: needs.resolve-host.outputs.verification-mode == 'full' && (github.event_name != 'workflow_dispatch' || inputs.e2e_mode != 'serial-baseline')
+    needs: [resolve-host]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      E2E_GROUP: C
+      E2E_TIMING_FILE: ${{ github.workspace }}/.tmp/e2e-timing-c.json
+      E2E_OPENCODE_VERSION: ${{ needs.resolve-host.outputs.host-version }}
+      E2E_PACKAGE_SPEC: ${{ needs.resolve-host.outputs.package-spec }}
+      OPENCODE_DISABLE_AUTOUPDATE: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.4
+          cache: npm
+      - name: Download the shared host lock
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: e2e-host-lock
+          path: ${{ runner.temp }}/e2e-host-lock
+      - name: Install the locked host into this job's prefix
+        run: |
+          node scripts/e2e-host.mjs install --lock "$RUNNER_TEMP/e2e-host-lock" --prefix "$RUNNER_TEMP/e2e-host"
+          echo "$RUNNER_TEMP/e2e-host/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Verify the host command comes from the locked prefix
+        run: |
+          command -v opencode
+          if [ "$(command -v opencode)" != "$RUNNER_TEMP/e2e-host/node_modules/.bin/opencode" ]; then
+            echo "opencode must resolve to the locked prefix, not a pre-installed host" >&2
+            exit 1
+          fi
+          opencode --version
+      - name: Run real host E2E group C
+        run: npm run test:e2e:opencode-v2
+      # Timing stays best-effort: a missing report never fails a group whose
+      # real scenarios passed. A report that exists but cannot be parsed is a
+      # harness defect and would corrupt the benchmark evidence, so it fails.
+      - name: Check this group's timing output
+        if: success()
+        run: |
+          if [ ! -f "$E2E_TIMING_FILE" ]; then
+            echo "::warning title=Missing E2E timing::group ${E2E_GROUP} finished without $E2E_TIMING_FILE; the scenario result stands"
+            exit 0
+          fi
+          node -e 'const fs = require("node:fs"); const parsed = JSON.parse(fs.readFileSync(process.env.E2E_TIMING_FILE, "utf8")); console.log(`group ${process.env.E2E_GROUP} timing keys: ${Object.keys(parsed).join(",")}`)'
+      - name: Upload group C timing
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-timing-group-c
+          path: ${{ env.E2E_TIMING_FILE }}
+          if-no-files-found: warn
+          retention-days: 7
+
+  e2e-group-d:
+    name: Real OpenCode latest E2E group D (notifications, failure recovery)
+    if: needs.resolve-host.outputs.verification-mode == 'full' && (github.event_name != 'workflow_dispatch' || inputs.e2e_mode != 'serial-baseline')
+    needs: [resolve-host]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      E2E_GROUP: D
+      E2E_TIMING_FILE: ${{ github.workspace }}/.tmp/e2e-timing-d.json
+      E2E_OPENCODE_VERSION: ${{ needs.resolve-host.outputs.host-version }}
+      E2E_PACKAGE_SPEC: ${{ needs.resolve-host.outputs.package-spec }}
+      OPENCODE_DISABLE_AUTOUPDATE: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.4
+          cache: npm
+      - name: Download the shared host lock
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: e2e-host-lock
+          path: ${{ runner.temp }}/e2e-host-lock
+      - name: Install the locked host into this job's prefix
+        run: |
+          node scripts/e2e-host.mjs install --lock "$RUNNER_TEMP/e2e-host-lock" --prefix "$RUNNER_TEMP/e2e-host"
+          echo "$RUNNER_TEMP/e2e-host/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Verify the host command comes from the locked prefix
+        run: |
+          command -v opencode
+          if [ "$(command -v opencode)" != "$RUNNER_TEMP/e2e-host/node_modules/.bin/opencode" ]; then
+            echo "opencode must resolve to the locked prefix, not a pre-installed host" >&2
+            exit 1
+          fi
+          opencode --version
+      - name: Run real host E2E group D
+        run: npm run test:e2e:opencode-v2
+      # Timing stays best-effort: a missing report never fails a group whose
+      # real scenarios passed. A report that exists but cannot be parsed is a
+      # harness defect and would corrupt the benchmark evidence, so it fails.
+      - name: Check this group's timing output
+        if: success()
+        run: |
+          if [ ! -f "$E2E_TIMING_FILE" ]; then
+            echo "::warning title=Missing E2E timing::group ${E2E_GROUP} finished without $E2E_TIMING_FILE; the scenario result stands"
+            exit 0
+          fi
+          node -e 'const fs = require("node:fs"); const parsed = JSON.parse(fs.readFileSync(process.env.E2E_TIMING_FILE, "utf8")); console.log(`group ${process.env.E2E_GROUP} timing keys: ${Object.keys(parsed).join(",")}`)'
+      - name: Upload group D timing
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-timing-group-d
+          path: ${{ env.E2E_TIMING_FILE }}
+          if-no-files-found: warn
+          retention-days: 7
+
+
+  # The only required check keeps its exact approved name. It is satisfied only
+  # when the resolve job and all four groups really succeeded in this run:
+  # failed, cancelled, skipped and missing results are all explicit failures.
+  # No continue-on-error anywhere in this path.
+  real-opencode-v2-gate:
+    name: Real OpenCode latest E2E
+    if: always()
+    needs: [resolve-host, e2e-group-a, e2e-group-b, e2e-group-c, e2e-group-d]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      E2E_GROUP_RESULTS: ${{ toJSON(needs) }}
+      E2E_GATE_MODE: ${{ (github.event_name == 'workflow_dispatch' && inputs.e2e_mode == 'serial-baseline') && 'serial-baseline' || 'groups' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.4
+      - name: Require the resolved host and all four groups to succeed
+        run: node scripts/check-e2e-groups.mjs
+      - name: Download full group reports
+        if: needs.resolve-host.outputs.verification-mode == 'full' && success()
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: e2e-timing-group-*
+          path: ${{ runner.temp }}/e2e-full-reports
+      - name: Download the full run host lock
+        if: needs.resolve-host.outputs.verification-mode == 'full' && success()
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: e2e-host-lock
+          path: ${{ runner.temp }}/e2e-host-lock
+      - name: Record complete matrix evidence
+        if: needs.resolve-host.outputs.verification-mode == 'full' && success()
+        env:
+          SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          CANDIDATE: ${{ inputs.e2e_candidate_sha || github.event.pull_request.head.sha || github.sha }}
+        run: |
+          node scripts/e2e-validation.mjs record --adapter opencode --root "$GITHUB_WORKSPACE" \
+            --host-dir "$RUNNER_TEMP/e2e-host-lock" --reports-dir "$RUNNER_TEMP/e2e-full-reports" \
+            --candidate "$CANDIDATE" --harness "$(git rev-parse HEAD)" --source-head "$SOURCE_HEAD" \
+            --output "$RUNNER_TEMP/e2e-full-validation/validation.json"
+      - name: Publish full baseline evidence
+        if: needs.resolve-host.outputs.verification-mode == 'full' && success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-full-validation
+          path: ${{ runner.temp }}/e2e-full-validation/validation.json
+          if-no-files-found: error
+          retention-days: 30
+
+
+  # Manual benchmark only: replays the pre-split serial harness at its fixed
+  # commit, exported with git archive into RUNNER_TEMP, against the same locked
+  # host and candidate this run resolved. It reports wall-clock time for
+  # comparison; the required check above is deliberately not satisfied.
+  e2e-serial-baseline:
+    name: E2E serial baseline (manual benchmark)
+    if: github.event_name == 'workflow_dispatch' && (inputs.e2e_mode == 'serial-baseline' || inputs.e2e_mode == 'benchmark')
+    needs: [resolve-host]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      E2E_OPENCODE_VERSION: ${{ needs.resolve-host.outputs.host-version }}
+      E2E_PACKAGE_SPEC: ${{ needs.resolve-host.outputs.package-spec }}
+      OPENCODE_DISABLE_AUTOUPDATE: "1"
+      BASELINE_HARNESS_SHA: bdd64df970a6001b35f55ecee6b2efb25d3a0324
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          # The fixed pre-split harness commit must be present for git archive.
+          fetch-depth: 0
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.4
+          cache: npm
+      - name: Download the shared host lock
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: e2e-host-lock
+          path: ${{ runner.temp }}/e2e-host-lock
+      - name: Install the locked host into this job's prefix
+        run: |
+          node scripts/e2e-host.mjs install --lock "$RUNNER_TEMP/e2e-host-lock" --prefix "$RUNNER_TEMP/e2e-host"
+          echo "$RUNNER_TEMP/e2e-host/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Export the pre-split harness at its fixed commit
+        run: |
+          set -euo pipefail
+          baseline="$RUNNER_TEMP/legacy-harness"
+          git cat-file -e "$BASELINE_HARNESS_SHA^{commit}"
+          mkdir -p "$baseline"
+          git archive --format=tar "$BASELINE_HARNESS_SHA" | tar -xf - -C "$baseline"
+          test -f "$baseline/scripts/e2e-opencode-v2.mjs"
+          # Identity expectations are properties of the installed candidate, so
+          # the benchmark uses the candidate's own dist while keeping the old
+          # harness scripts and fixtures untouched in their exported tree.
+          rm -rf "$baseline/dist"
+          cp -a "$GITHUB_WORKSPACE/dist" "$baseline/dist"
+          echo "Exported the pre-split harness $BASELINE_HARNESS_SHA to $baseline"
+      - name: Install the baseline harness dependencies
+        working-directory: ${{ runner.temp }}/legacy-harness
+        run: npm ci
+      - name: Verify the host command comes from the locked prefix
+        run: |
+          command -v opencode
+          if [ "$(command -v opencode)" != "$RUNNER_TEMP/e2e-host/node_modules/.bin/opencode" ]; then
+            echo "opencode must resolve to the locked prefix, not a pre-installed host" >&2
+            exit 1
+          fi
+          opencode --version
+      - name: Run the pre-split serial harness against the same candidate
+        id: baseline
+        working-directory: ${{ runner.temp }}/legacy-harness
+        run: |
+          echo "BASELINE_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+          node scripts/e2e-opencode-v2.mjs
+      - name: Report the benchmark inputs and result
+        if: always()
+        run: |
+          {
+            echo "## Serial baseline benchmark (manual)"
+            echo "- harness commit: $BASELINE_HARNESS_SHA (git archive export, independent working directory)"
+            echo "- candidate: $E2E_PACKAGE_SPEC"
+            echo "- host: @opencode/cli@$E2E_OPENCODE_VERSION from the same private lock as the group jobs"
+            echo "- started at: $BASELINE_STARTED_AT"
+            echo "- result: ${{ steps.baseline.outcome }}"
+            echo "- run: ${{ github.run_id }} attempt ${{ github.run_attempt }}"
+            echo "- mode: ${{ inputs.e2e_mode }}; benchmark runs the groups independently, serial-baseline does not satisfy the group gate"
+          } >> "$GITHUB_STEP_SUMMARY"

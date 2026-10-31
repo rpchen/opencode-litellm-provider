@@ -5,6 +5,8 @@ import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { spawn, spawnSync } from "node:child_process"
+import { locateInstalledCandidates, readInstalledPackage, collectDeliveryInputs } from "./e2e-installed-inputs.mjs"
+import { environmentRecord, hostExecutableDigest } from "./e2e-host.mjs"
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)))
 const hostVersion = process.env.E2E_OPENCODE_VERSION ?? ""
@@ -14,6 +16,192 @@ const packageSpec = process.env.E2E_PACKAGE_SPEC
 // OpenCode's own installer still installs it, but the commit must be a full immutable SHA either way.
 if (!packageSpec || !/^(github:rpchen\/opencode-litellm-provider|git\+file:\/\/\/\S+)#[0-9a-f]{40}$/u.test(packageSpec)) {
   throw new Error("E2E_PACKAGE_SPEC must pin this repository to a full Git commit")
+}
+// [REAL-HOST-E2E] The scenario runs either as one long serial scenario ("all",
+// the default, kept as the fixed-candidate baseline) or as independently
+// schedulable real-host groups. Every group is its own process with its own
+// HOME/XDG directories, config, fake endpoints and host server, so module-level
+// state can never leak between groups. An unknown group must fail before any
+// installer, host or fixture work happens.
+const group = process.env.E2E_GROUP ?? "all"
+// A complete matrix run and the delivery verification report the same timing
+// facts; `scope` tells the gate which of the two produced this report. A report
+// can never claim `delivery` for a matrix run or the other way round.
+const scope = group === "delivery" ? "delivery" : "full"
+// `delivery` is the targeted verification of a candidate whose dependencies were
+// proven identical to a successful complete baseline. It is not part of the
+// complete matrix: `all` and A/B/C/D keep every existing assertion, `delivery`
+// adds no scenario of its own.
+const supportedGroups = ["all", "A", "B", "C", "D", "delivery"]
+if (!supportedGroups.includes(group)) {
+  throw new Error(`E2E_GROUP must be one of ${supportedGroups.join(", ")}; got ${JSON.stringify(group)}`)
+}
+
+// ===== Pure timing ==========================================================
+// Timing never changes a wait, an assertion or the order of the scenario. Every
+// record carries a public label only: no API key, no full endpoint URL and no raw
+// request body. Reporting is best-effort and must never mask the real result.
+const timingStartedAt = Date.now()
+const timing = {
+  group,
+  script: "scripts/e2e-opencode-v2.mjs",
+  start: new Date(timingStartedAt).toISOString(),
+  phases: [],
+  waits: [],
+  counters: {},
+  cli: [],
+  open: [],
+}
+// Filled by `collectReportEvidence()` while the temporary HOME/XDG directories
+// and the installed candidate still exist, then written into the report.
+let reportEvidence = null
+const timingLabel = (value) =>
+  sanitize(String(value)).replaceAll(workspace, "<e2e>").replace(/\s+/gu, " ").slice(0, 120)
+function count(name, by = 1) {
+  timing.counters[name] = (timing.counters[name] ?? 0) + by
+}
+function startPhase(name) {
+  const phase = { name: `${group}.${name}`, startedAt: Date.now() }
+  timing.open.push(phase)
+  return phase
+}
+function endPhase(phase, status = "ok") {
+  if (!phase || phase.ended) return
+  phase.ended = true
+  const index = timing.open.indexOf(phase)
+  if (index >= 0) timing.open.splice(index, 1)
+  const endedAt = Date.now()
+  const durationMs = endedAt - phase.startedAt
+  timing.phases.push({
+    label: phase.name,
+    start: new Date(phase.startedAt).toISOString(),
+    end: new Date(endedAt).toISOString(),
+    durationMs,
+    status,
+  })
+  process.stdout.write(`[E2E-TIMING] phase ${phase.name} ${durationMs}ms ${status}\n`)
+}
+// A failure leaves segments open; they must be closed with their real duration
+// before teardown, or a failed run would attribute the cleanup sleep to them.
+function closeOpenPhases(status) {
+  for (const phase of [...timing.open]) endPhase(phase, status)
+}
+async function withPhase(name, action) {
+  const phase = startPhase(name)
+  try {
+    const value = await action()
+    endPhase(phase)
+    return value
+  } catch (error) {
+    endPhase(phase, "failed")
+    throw error
+  }
+}
+function recordWait(kind, label, startedAt, attempts, detail = "") {
+  const durationMs = Date.now() - startedAt
+  timing.waits.push({
+    kind,
+    label: timingLabel(label),
+    durationMs,
+    attempts,
+    ...(detail ? { detail: timingLabel(detail) } : {}),
+  })
+  process.stdout.write(
+    `[E2E-TIMING] wait ${kind} "${timingLabel(label)}" ${durationMs}ms attempts=${attempts}${detail ? ` (${timingLabel(detail)})` : ""}\n`,
+  )
+}
+// Labels for CLI timing: the host URL and any `--data` payload are replaced, so a
+// timing record can never contain a full endpoint URL or a raw request body.
+const cliLabel = (args) => {
+  const parts = []
+  for (let index = 0; index < args.length; index += 1) {
+    const value = String(args[index])
+    if (value === "--server") {
+      index += 1
+      parts.push("--server <host>")
+      continue
+    }
+    if (/^https?:\/\//u.test(value)) {
+      parts.push("<url>")
+      continue
+    }
+    if (value.length > 60) {
+      parts.push("<data>")
+      continue
+    }
+    parts.push(value)
+  }
+  return parts.join(" ")
+}
+function recordCli(label, startedAt, status) {
+  timing.cli.push({ label: timingLabel(label), durationMs: Date.now() - startedAt, status })
+}
+function timingReport(status) {
+  const endedAt = Date.now()
+  const waitsByKind = {}
+  for (const wait of timing.waits) {
+    const bucket = (waitsByKind[wait.kind] ??= { count: 0, durationMs: 0 })
+    bucket.count += 1
+    bucket.durationMs += wait.durationMs
+  }
+  const cliByLabel = {}
+  for (const entry of timing.cli) {
+    const bucket = (cliByLabel[entry.label] ??= { count: 0, durationMs: 0 })
+    bucket.count += 1
+    bucket.durationMs += entry.durationMs
+  }
+  return {
+    group,
+    script: timing.script,
+    scope,
+    status,
+    start: timing.start,
+    end: new Date(endedAt).toISOString(),
+    durationMs: endedAt - timingStartedAt,
+    hostVersion,
+    hostInput: reportEvidence?.hostInput ?? null,
+    deliveryInputs: reportEvidence?.deliveryInputs ?? {
+      complete: false,
+      reason: "the installed dependency evidence was not collected",
+    },
+    phases: timing.phases,
+    waits: timing.waits,
+    waitsByKind,
+    cli: timing.cli,
+    cliByLabel,
+    counters: timing.counters,
+  }
+}
+function flushTiming(status) {
+  try {
+    for (const phase of [...timing.open]) endPhase(phase, status)
+    const report = timingReport(status)
+    process.stdout.write(
+      `[E2E-TIMING] summary group=${group} status=${status} durationMs=${report.durationMs} phases=${report.phases.length} waits=${report.waits.length}\n`,
+    )
+    for (const [kind, bucket] of Object.entries(report.waitsByKind)) {
+      process.stdout.write(`[E2E-TIMING] waits ${kind} count=${bucket.count} durationMs=${bucket.durationMs}\n`)
+    }
+    const cliTotal = report.cli.reduce((sum, entry) => sum + entry.durationMs, 0)
+    process.stdout.write(`[E2E-TIMING] cli count=${report.cli.length} durationMs=${cliTotal}\n`)
+    process.stdout.write(
+      `[E2E-TIMING] scope ${report.scope} hostInput=${report.hostInput ? "recorded" : "missing"} deliveryInputs.complete=${report.deliveryInputs.complete}${report.deliveryInputs.reason ? ` reason="${report.deliveryInputs.reason}"` : ""}\n`,
+    )
+    for (const [label, bucket] of Object.entries(report.cliByLabel)
+      .sort((left, right) => right[1].durationMs - left[1].durationMs)
+      .slice(0, 5)) {
+      process.stdout.write(`[E2E-TIMING] cli-slow "${label}" count=${bucket.count} durationMs=${bucket.durationMs}\n`)
+    }
+    const file = process.env.E2E_TIMING_FILE
+    if (file) {
+      const target = path.resolve(file)
+      mkdirSync(path.dirname(target), { recursive: true })
+      writeFileSync(target, `${JSON.stringify(report, null, 2)}\n`)
+      process.stdout.write(`[E2E-TIMING] wrote ${target}\n`)
+    }
+  } catch (error) {
+    process.stderr.write(`[E2E-TIMING] timing report failed (E2E result unaffected): ${error?.message ?? error}\n`)
+  }
 }
 const fixture = JSON.parse(readFileSync(path.join(root, "test/fixtures/litellm-model-info.json"), "utf8"))
 // Preserve the existing lifecycle input while the selected complete catalog
@@ -62,6 +250,44 @@ const state = path.join(workspace, "state")
 const opencodeConfig = path.join(config, "opencode")
 const opencodeConfigFile = path.join(opencodeConfig, "opencode.jsonc")
 for (const dir of [project, home, config, data, cache, state, opencodeConfig]) mkdirSync(dir, { recursive: true })
+// Every directory the host or the installer may write into. The installed
+// candidate evidence is only ever looked for below these, never in a real HOME.
+const runDirs = [home, config, data, cache, state]
+const candidateSha = packageSpec.match(/#([0-9a-f]{40})$/u)[1]
+
+/**
+ * Collect the report's reuse evidence while the run's own directories and the
+ * installed candidate still exist. Best effort by design: a failure only makes
+ * the report non-reusable (`complete: false` with a public reason), never
+ * changes this run's real E2E result.
+ */
+function collectReportEvidence() {
+  // Observe this group's runner, rather than copying the resolver's environment:
+  // the groups run on independent machines and an image rollout must force full.
+  const npm = spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", ["--version"], {
+    encoding: "utf8", shell: process.platform === "win32",
+  })
+  const hostInput = environmentRecord({
+    version: hostVersion, candidateSha,
+    npmVersion: npm.status === 0 ? npm.stdout.trim() : null,
+  })
+  let deliveryInputs
+  try {
+    deliveryInputs = collectDeliveryInputs({
+      roots: runDirs,
+      workspace,
+      candidateSha,
+      expectedIdentity: candidateIdentity,
+      expectedProvenance: candidateProvenance,
+    })
+    const executableDigest = hostExecutableDigest("opencode")
+    if (!executableDigest) deliveryInputs = { complete: false, reason: "the actual host executable could not be read" }
+    else deliveryInputs = { ...deliveryInputs, hostExecutableDigest: executableDigest }
+  } catch (error) {
+    deliveryInputs = { complete: false, reason: String(error?.message ?? error).slice(0, 400) }
+  }
+  reportEvidence = { hostInput, deliveryInputs }
+}
 
 // Fixed public records and complete synthetic records for existing lifecycle cases.
 const frozenDiscovery = JSON.parse(readFileSync(path.join(root,"test/fixtures/metadata-priority/synthetic-discovery.json"),"utf8"))
@@ -101,6 +327,14 @@ addRecord("e2e-messages",200000,64000,true,[{type:"budget_tokens",max:64000}])
 addRecord("e2e-metadata-recovery",64000,4096)
 let currentCatalog = structuredClone(baselineCatalog)
 const catalogueEntries = () => currentCatalog
+// Frozen final registry/picker configuration, real model selection and SDK requests.
+// Shared read-only fixture data; the conversational matrix that uses it stays in
+// group A, while the B/C/D bootstrap only uses it to establish its own baseline.
+const controls = [
+  { model_name:"e2e-no-effort", model_info:{mode:"chat"} },
+  { model_name:"e2e-disabled", model_info:{mode:"chat"} },
+  { model_name:"e2e-messages", litellm_params:{model:"anthropic/e2e-messages"}, model_info:{mode:"chat"} },
+]
 
 function startCatalogServer() {
   const bodies = new Map([
@@ -257,37 +491,44 @@ function sleepSync(ms) {
 }
 
 function command(args, options = {}) {
-  const attempts = options.retries ?? 1
-  for (let attempt = 1; ; attempt += 1) {
-    const result = spawnSync("opencode", args, {
-      cwd: project,
-      env,
-      encoding: "utf8",
-      timeout: options.timeout ?? 120_000,
-      maxBuffer: 33554432,
-    })
-    const stdout = sanitize(result.stdout ?? "")
-    const stderr = sanitize(result.stderr ?? "")
-    const transportFailure = (result.error || result.status !== 0) &&
-      /Could not reach server|timed out|Transport:/u.test(stdout + stderr)
-    if (attempt < attempts && transportFailure) {
-      // The real host's own CLI client uses a short HTTP timeout while the server
-      // is still starting its filesystem watchers: a transient transport failure
-      // is not a plugin failure.
-      if (options.echo !== false) process.stdout.write("$ opencode " + args.join(" ") + " (retry " + attempt + "/" + attempts + ")\n")
-      sleepSync(2_000)
-      continue
+  const startedAt = Date.now()
+  let status = "failed"
+  try {
+    const attempts = options.retries ?? 1
+    for (let attempt = 1; ; attempt += 1) {
+      const result = spawnSync("opencode", args, {
+        cwd: project,
+        env,
+        encoding: "utf8",
+        timeout: options.timeout ?? 120_000,
+        maxBuffer: 33554432,
+      })
+      const stdout = sanitize(result.stdout ?? "")
+      const stderr = sanitize(result.stderr ?? "")
+      const transportFailure = (result.error || result.status !== 0) &&
+        /Could not reach server|timed out|Transport:/u.test(stdout + stderr)
+      if (attempt < attempts && transportFailure) {
+        // The real host's own CLI client uses a short HTTP timeout while the server
+        // is still starting its filesystem watchers: a transient transport failure
+        // is not a plugin failure.
+        if (options.echo !== false) process.stdout.write("$ opencode " + args.join(" ") + " (retry " + attempt + "/" + attempts + ")\n")
+        sleepSync(2_000)
+        continue
+      }
+      if (options.echo !== false) {
+        process.stdout.write("$ opencode " + args.join(" "))
+        process.stdout.write("\n")
+        if (stdout) process.stdout.write(stdout)
+        if (stderr) process.stderr.write(stderr)
+      }
+      if (!options.allowFailure && (result.error || result.status !== 0)) {
+        throw new Error("opencode exited " + (result.status ?? "unknown") + ": " + (result.error?.message ?? (stderr || stdout)))
+      }
+      status = "ok"
+      return { status: result.status, stdout, stderr }
     }
-    if (options.echo !== false) {
-      process.stdout.write("$ opencode " + args.join(" "))
-      process.stdout.write("\n")
-      if (stdout) process.stdout.write(stdout)
-      if (stderr) process.stderr.write(stderr)
-    }
-    if (!options.allowFailure && (result.error || result.status !== 0)) {
-      throw new Error("opencode exited " + (result.status ?? "unknown") + ": " + (result.error?.message ?? (stderr || stdout)))
-    }
-    return { status: result.status, stdout, stderr }
+  } finally {
+    recordCli(cliLabel(args), startedAt, status)
   }
 }
 function jsonOutput(result, label) {
@@ -300,6 +541,7 @@ function jsonOutput(result, label) {
 }
 
 function startOpenCodeServer() {
+  const startedAt = Date.now()
   return new Promise((resolve, reject) => {
     const child = spawn("opencode", ["serve", "--hostname", "127.0.0.1", "--port", "0"], {
       cwd: project,
@@ -324,6 +566,8 @@ function startOpenCodeServer() {
       if (!url || !password) return
       settled = true
       clearTimeout(deadline)
+      count("hostServerStarts")
+      recordWait("host-start", "real host server ready", startedAt, 1)
       resolve({
         child,
         url,
@@ -414,6 +658,7 @@ function startAttachedTui(sessionID) {
     resolveExit: exit,
   }
   activeTuis.add(tui)
+  count("tuiAttached")
   return tui
 }
 
@@ -426,17 +671,23 @@ async function waitForTui(tui, expected, options = {}) {
   const from = options.from ?? 0
   const timeout = options.timeout ?? 20_000
   const deadline = Date.now() + timeout
-  while (Date.now() < deadline) {
-    const output = tui.output(from)
-    if (typeof expected === "string" ? output.includes(expected) : expected.test(output)) return output
-    if (tui.child.exitCode !== null) {
-      const diagnostic = tui.diagnostics()
-      throw new Error(`TUI exited before ${String(expected)} appeared:\n${diagnostic.stdout}\n${diagnostic.stderr}`)
+  const startedAt = Date.now()
+  const label = options.label ?? (expected instanceof RegExp ? expected.source : expected)
+  try {
+    while (Date.now() < deadline) {
+      const output = tui.output(from)
+      if (typeof expected === "string" ? output.includes(expected) : expected.test(output)) return output
+      if (tui.child.exitCode !== null) {
+        const diagnostic = tui.diagnostics()
+        throw new Error(`TUI exited before ${String(expected)} appeared:\n${diagnostic.stdout}\n${diagnostic.stderr}`)
+      }
+      await sleep(100)
     }
-    await sleep(100)
+    const diagnostic = tui.diagnostics()
+    throw new Error(`timed out waiting for TUI output ${String(expected)}; last screen text: ${lastScreenText(tui, from)}`)
+  } finally {
+    recordWait("tui", label, startedAt, 1)
   }
-  const diagnostic = tui.diagnostics()
-  throw new Error(`timed out waiting for TUI output ${String(expected)}; last screen text: ${lastScreenText(tui, from)}`)
 }
 
 async function stopAttachedTui(tui) {
@@ -519,48 +770,79 @@ const defaultMock = await startLiteLLM(secrets[0])
 const companyMock = await startLiteLLM(secrets[1])
 let openCodeServer
 
-async function dumpFailureDiagnostics() {
-  process.stderr.write("\n=== real OpenCode E2E diagnostics ===\n")
-  if (openCodeServer) {
-    const output = openCodeServer.output()
-    process.stderr.write(`--- foreground server stdout ---\n${output.stdout}\n`)
-    process.stderr.write(`--- foreground server stderr ---\n${output.stderr}\n`)
-    command(["api", "--server", openCodeServer.url, "GET", "/api/plugin"], { allowFailure: true })
-  }
-  for (const tui of activeTuis) {
-    const output = tui.diagnostics()
-    process.stderr.write(`--- attached TUI stdout ---\n${output.stdout.slice(Math.max(0, output.stdout.length - 24000))}\n`)
-    process.stderr.write(`--- attached TUI stderr ---\n${output.stderr.slice(Math.max(0, output.stderr.length - 24000))}\n`)
-  }
-  const logResult = command(["debug", "paths", "log"], { allowFailure: true, echo: false })
-  const logPath = logResult.stdout.trim()
-  if (logPath && existsSync(logPath)) {
-    const files = statSync(logPath).isDirectory()
-      ? readdirSync(logPath).map((name) => path.join(logPath, name)).filter((file) => statSync(file).isFile())
-      : [logPath]
-    for (const file of files.sort()) {
-      const content = sanitize(readFileSync(file, "utf8"))
-      process.stderr.write(`--- ${file.replaceAll(workspace, "<e2e>")} ---\n`)
-      process.stderr.write(content.slice(Math.max(0, content.length - 24000)))
-      process.stderr.write("\n")
+// State that used to be scoped to the single serial `try` block. Groups run in
+// separate processes, so these stay module-level without leaking across groups;
+// inside one group they must survive a real host restart.
+let sessionID
+let tui
+let baselinePrices
+const api = (...args) => command(["api", "--server", openCodeServer.url, ...args], { retries: 6 })
+const serverCommand = (name, ...args) => command([name, "--server", openCodeServer.url, ...args])
+const runSessionCommand = (name, text = "") =>
+  api("POST", `/api/session/${sessionID}/command`, "--data", JSON.stringify({ name, text }))
+
+// ===== Shared real-host helpers =============================================
+// These were previously defined in the middle of the serial scenario. They only
+// read module-level host state, so all groups can share them without sharing a
+// process or a fixture counter.
+async function waitForProviders(expected, absent = []) {
+  const startedAt = Date.now()
+  let attempts = 0
+  try {
+    let providers = []
+    let lastProviderError = ""
+    for (let attempt = 0; attempt < 30; attempt++) {
+      attempts = attempt + 1
+      const result = command(["api", "--server", openCodeServer.url, "GET", "/api/provider"], {
+        allowFailure: true,
+        echo: attempt === 29,
+      })
+      if (result.status === 0) {
+        try {
+          const value = payload(jsonOutput(result, "provider.list"))
+          if (Array.isArray(value)) providers = value
+        } catch (error) {
+          lastProviderError = String(error)
+        }
+        const ids = providers.map((item) => item.id)
+        if (expected.every((id) => ids.includes(id)) && absent.every((id) => !ids.includes(id))) {
+          return providers
+        }
+      } else {
+        lastProviderError = result.stderr || result.stdout
+      }
+      await sleep(1000)
     }
-  } else {
-    process.stderr.write(`No OpenCode log path found: ${sanitize(logPath)}\n`)
+    throw new Error(`providers did not converge; expected=${JSON.stringify(expected)} absent=${JSON.stringify(absent)} last=${lastProviderError || JSON.stringify(providers.map((item) => item.id))}`)
+  } finally {
+    recordWait("providers", `expected=${expected.join("+") || "none"} absent=${absent.join("+") || "none"}`, startedAt, attempts)
   }
 }
 
-try {
-  catalogServer = await startCatalogServer()
-  const catalogRequests = catalogServer.requests
-  // [REAL-HOST-E2E] Schema-9 LKG positive recovery needs a genuine models.dev
-  // outage that Core can SEE. The delivered dist keeps an in-memory catalog
-  // cache and OpenCode 2.0.16 is a compiled
-  // binary without any preload seam, so a tiny companion plugin — loaded by the
-  // SAME real host into the SAME server process — clears that cache through the
-  // INSTALLED package's own `dist/net/fetch.js` export
-  // (`resetModelsDevCacheForTest`): the in-process cache reset used before a
-  // demand-triggered refresh. It never mocks a Core value and never serves fake data; the
-  // outage itself is a real HTTP 500 from the deterministic catalog source.
+const registryIDs = providerID => payload(jsonOutput(api("GET", "/api/model"), "model.list"))
+  .filter(model => model.providerID === providerID).map(model => model.id).sort()
+const waitForRegistryIDs = async (providerID, expected, label) => {
+  const startedAt = Date.now()
+  let attempts = 0
+  try {
+    let actual = []
+    for (let attempt = 0; attempt < 90; attempt++) {
+      attempts = attempt + 1
+      actual = registryIDs(providerID)
+      if (JSON.stringify(actual) === JSON.stringify(expected)) return actual
+      await sleep(1000)
+    }
+    assert.deepEqual(actual, expected, label)
+    return actual
+  } finally {
+    recordWait("registry", `${providerID}: ${label}`, startedAt, attempts)
+  }
+}
+
+// The catalog guard is loaded by the SAME real host into the SAME server process
+// and clears the installed candidate's in-memory models.dev cache through its own
+// `dist/net/fetch.js` export. Generated by this script; never a deliverable.
+function installCatalogGuardPlugin() {
   const catalogGuardDir = path.join(workspace, "e2e-catalog-guard")
   mkdirSync(catalogGuardDir, { recursive: true })
   writeFileSync(path.join(catalogGuardDir, "package.json"), `${JSON.stringify({ name: "e2e-catalog-guard", type: "module", main: "index.js" })}\n`)
@@ -626,6 +908,444 @@ export default {
   },
 }
 `)
+  return catalogGuardDir
+}
+
+// ===== Publication helpers (real host audit / RPC / cache reset) ===========
+const auditDirPath = path.join(state, "opencode", "litellm-audit")
+const auditNames = () =>
+  existsSync(auditDirPath)
+    ? readdirSync(auditDirPath).filter((name) => name.startsWith("litellm-audit-") && name.endsWith(".json"))
+    : []
+const defaultAuditReport = (audit) => audit.endpoints?.find((entry) => entry.id === "default")?.report ?? audit
+
+// Export a fresh audit report; the command writes a file, so no TUI is needed.
+const exportAudit = async () => {
+  const startedAt = Date.now()
+  const before = new Set(auditNames())
+  runSessionCommand("litellm-audit-export")
+  for (let attempt = 0; attempt < 80; attempt++) {
+    await sleep(250)
+    const names = auditNames()
+    const fresh = names.filter((name) => !before.has(name))
+    const candidates = fresh.length > 0 ? fresh : names.filter(
+      (name) => statSync(path.join(auditDirPath, name)).mtimeMs >= startedAt,
+    )
+    if (candidates.length > 0) {
+      const latest = candidates.slice().sort().at(-1)
+      return JSON.parse(readFileSync(path.join(auditDirPath, latest), "utf8"))
+    }
+  }
+  throw new Error("audit export did not produce a fresh report")
+}
+
+const waitForRefreshAfter = async (sinceMs, label) => {
+  const startedAt = Date.now()
+  let attempts = 0
+  try {
+    for (let attempt = 0; attempt < 90; attempt++) {
+      attempts = attempt + 1
+      const report = defaultAuditReport(await exportAudit())
+      const stamp = Date.parse(report.lastSuccessfulDiscoveryAt ?? "")
+      if (Number.isFinite(stamp) && stamp > sinceMs) return report
+      await sleep(1000)
+    }
+    throw new Error(`no discovery refresh after ${label}`)
+  } finally {
+    recordWait("refresh", label, startedAt, attempts)
+  }
+}
+
+const waitForAuditStatus = async (expected, label) => {
+  const startedAt = Date.now()
+  let attempts = 0
+  try {
+    for (let attempt = 0; attempt < 90; attempt++) {
+      attempts = attempt + 1
+      const report = defaultAuditReport(await exportAudit())
+      if (report.status === expected) return report
+      await sleep(1000)
+    }
+    throw new Error(`default endpoint never reached audit status ${expected} (${label})`)
+  } finally {
+    recordWait("audit", `${expected}: ${label}`, startedAt, attempts)
+  }
+}
+
+// PTY text normalization may collapse the full-width colon, so publication
+// needles are matched as regexes on semantic spacing.
+const diagnosticsThroughTui = async (needle, label, endpointID = "default") => {
+  const matches = (text) => (typeof needle === "string" ? text.includes(needle) : needle.test(text))
+  let last = ""
+  for (let attempt = 0; attempt < 6; attempt++) {
+    runSessionCommand("litellm-diagnostics", endpointID)
+    const diagTui = startAttachedTui(sessionID)
+    try {
+      await waitForTui(diagTui, new RegExp(`Endpoint[\\s：:]+${endpointID}`, "u"), { timeout: 20_000, label: `diagnostics ${label}` })
+      last = diagTui.output()
+      if (matches(last)) return last
+    } catch (error) {
+      last = String(error)
+    } finally {
+      await stopAttachedTui(diagTui)
+    }
+    await sleep(1000)
+  }
+  throw new Error(`diagnostics never reported ${label}; last:\n${last}`)
+}
+
+const hostModels = () => command(["models", "--server", openCodeServer.url], { timeout: 120_000 }).stdout
+
+// Async HTTP transport for read-only RPC/state queries and the cache reset. The
+// fake LiteLLM and catalog listeners live in THIS process, so a synchronous CLI
+// call while the host is mid-refresh could stall both sides until a timeout.
+// The CLI contract itself stays covered by the plugin, models, reload and install
+// calls; only these wait/cache helpers moved to the host's own HTTP API.
+const hostRpc = async (route, input = {}, { attempts = 3 } = {}) => {
+  let lastError
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    let response
+    try {
+      response = await fetch(`${openCodeServer.url}${route}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Basic " + Buffer.from(`opencode:${openCodeServer.password}`).toString("base64"),
+        },
+        body: JSON.stringify({ input }),
+      })
+    } catch (error) {
+      // A transient transport failure is retried; a real host answer is not.
+      lastError = error
+      if (attempt < attempts) await sleep(500)
+      continue
+    }
+    const text = await response.text()
+    if (!response.ok) {
+      assert(false, `real host RPC failed: POST ${route} (${response.status}) ${sanitize(text).slice(0, 400)}`)
+    }
+    return text ? JSON.parse(text) : undefined
+  }
+  throw lastError
+}
+
+// [REAL-HOST-E2E] Core's publication partition through the real host's
+// read-only plugin RPC (`litellm-publication.state`): the only host surface
+// that reports the literal publication status (`configured` /
+// `configured-lkg`) and the usingLKG projection (`lkgIDs`).
+const publicationState = async () => (await hostRpc("/api/rpc/litellm-publication/state")).output
+
+const waitForPublicationState = async (predicate, label) => {
+  const startedAt = Date.now()
+  let attempts = 0
+  try {
+    let last
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      attempts = attempt + 1
+      try {
+        last = await publicationState()
+        if (predicate(last)) return last
+      } catch (error) {
+        last = String(error)
+      }
+      await sleep(1000)
+    }
+    throw new Error(`publication state never matched ${label}; last=${JSON.stringify(last)}`)
+  } finally {
+    recordWait("publication", label, startedAt, attempts)
+  }
+}
+
+// [REAL-HOST-E2E] Card lines wrap at the terminal width and sit inside
+// box-drawing borders; normalize both away so assertions on long facts can
+// never straddle a wrap boundary.
+const cardText = (text) => text.replace(/[┃╹▀╻╺╸]/gu, "").replace(/\s+/gu, "")
+
+// Clear the delivered dist's in-memory models.dev catalog cache through the guard
+// plugin's RPC. The response names the module that was reset: it must be the
+// INSTALLED candidate's `dist/net/fetch.js`, so the reset lands on the same
+// module instance the plugin's discovery loop uses.
+const resetCatalogCache = async () => {
+  const output = (await hostRpc("/api/rpc/e2e-catalog-cache/reset")).output ?? {}
+  assert.equal(output.ok, true, `the catalog cache reset must reach the installed fetch module: ${JSON.stringify(output)}`)
+  assert.match(String(output.module), /net[\\/]fetch\.js$/u, `the reset must target dist/net/fetch.js: ${JSON.stringify(output)}`)
+  assert.match(String(output.module), /opencode-litellm-provider/u, `the reset must target the installed candidate package: ${JSON.stringify(output)}`)
+  count("catalogCacheResets")
+  return output
+}
+
+// The B/C/D bootstrap only: the same activation wait the serial scenario performs
+// inline, with an explicit assertion instead of a silent fall-through.
+async function waitForPluginActive(label) {
+  const startedAt = Date.now()
+  let attempts = 0
+  let state = []
+  for (let attempt = 0; attempt < 60; attempt++) {
+    attempts = attempt + 1
+    try {
+      const value = payload(jsonOutput(api("GET", "/api/plugin"), "plugin.list"))
+      if (Array.isArray(value)) state = value
+    } catch {
+      // The host may still be registering the plugin route.
+    }
+    const plugin = state.find((item) => item.id === "litellm")
+    if (plugin?.state?.status === "active" || plugin?.state?.status === "failed") break
+    await sleep(500)
+  }
+  const plugin = state.find((item) => item.id === "litellm")
+  try {
+    assert(plugin, `${label}: LiteLLM server plugin was never discovered by the real OpenCode host`)
+    assert.equal(plugin.state?.status, "active", `${label}: LiteLLM server plugin failed to activate: ${JSON.stringify(plugin)}`)
+    return plugin
+  } finally {
+    recordWait("plugin", `${label} plugin activation`, startedAt, attempts)
+  }
+}
+
+// ===== B/C/D bootstrap =======================================================
+// Same fixed candidate through OpenCode's own installer, a real host session and a
+// real credential connect against the local fake endpoint. The frozen 16-model +
+// 3-control catalog set is in place BEFORE the first discovery of this group, so
+// each group asserts its own 19-model registry/limit/variant/price baseline
+// instead of replaying group A's 63 conversational requests. No snapshot, ack or
+// credential file is ever written directly, and the new bootstrap path uses async
+// HTTP so the in-process fake services are never blocked by a synchronous CLI.
+async function bootstrapPublicationGroup({ label, catalog = () => structuredClone(baselineCatalog) }) {
+  catalogServer = await startCatalogServer()
+  const guardDir = installCatalogGuardPlugin()
+  const groupConfig = {
+    $schema: "https://opencode.ai/config.json",
+    // The fake service emits a plain reply, not OpenCode's required compaction
+    // template. Keep the group's baseline on the real SDK conversational path.
+    compaction: { auto: false },
+    plugins: [{
+      package: packageSpec,
+      options: {
+        pollInterval: 30,
+        modelsDevUrl: catalogServer.url,
+        endpoints: { default: { baseUrl: defaultMock.baseUrl } },
+      },
+    }, {
+      package: guardDir,
+      options: {},
+    }],
+  }
+  writeFileSync(opencodeConfigFile, JSON.stringify(groupConfig, null, 2) + "\n")
+  env.OPENCODE_CONFIG_CONTENT = JSON.stringify(groupConfig)
+  env.OPENCODE_CONFIG_PROJECT_DISABLE = "1"
+
+  const version = command(["--version"]).stdout.trim()
+  assert.equal(version, `opencode v${hostVersion}`, `real host must be pinned to OpenCode ${hostVersion}, got ${version}`)
+  command(["plugin", "add", packageSpec], { timeout: 240_000 })
+  count("pluginInstalls")
+
+  openCodeServer = await startOpenCodeServer()
+  env.OPENCODE_PASSWORD = openCodeServer.password
+  await waitForPluginActive(`${label} bootstrap`)
+
+  const hostFetch = async (method, route, body, { allowFailure = false } = {}) => {
+    const response = await fetch(`${openCodeServer.url}${route}`, {
+      method,
+      headers: {
+        "content-type": "application/json",
+        authorization: "Basic " + Buffer.from(`opencode:${openCodeServer.password}`).toString("base64"),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    })
+    const text = await response.text()
+    if (!response.ok) {
+      // Poll loops must retry the host's own transient startup failures instead of
+      // turning them into a hard harness failure; state-changing calls stay strict.
+      if (allowFailure) return undefined
+      assert(false, `real host request failed: ${method} ${route} (${response.status}) ${sanitize(text).slice(0, 400)}`)
+    }
+    return text ? JSON.parse(text) : undefined
+  }
+
+  // Inputs for this group's FIRST discovery.
+  servedModels = [...frozenDiscovery.data, ...controls]
+  currentCatalog = catalog()
+  const created = payload(await hostFetch("POST", "/api/session", { title: `LiteLLM ${label} baseline` }))
+  assert.equal(typeof created?.id, "string", `${label} baseline session.create did not return an id`)
+  sessionID = created.id
+  await hostFetch("POST", "/api/integration/litellm/connect/key", { key: secrets[0] })
+  count("credentialConnects")
+
+  const providerWaitStart = Date.now()
+  let providerAttempts = 0
+  let providerIDs = []
+  try {
+    for (let attempt = 0; attempt < 180; attempt++) {
+      providerAttempts = attempt + 1
+      const providers = payload(await hostFetch("GET", "/api/provider", undefined, { allowFailure: true }))
+      providerIDs = Array.isArray(providers) ? providers.map((item) => item.id) : []
+      if (providerIDs.includes("litellm")) break
+      await sleep(500)
+    }
+    assert(providerIDs.includes("litellm"), `${label} baseline: the connected default endpoint never published a provider`)
+  } finally {
+    recordWait("providers", `${label} baseline provider publication`, providerWaitStart, providerAttempts)
+  }
+
+  // [REAL-HOST-E2E] This group's own baseline verdict: exactly the frozen 16 models
+  // plus the three controls, with the oracle limits/variants/cost and the host
+  // version's control variants. Nothing is reused from group A.
+  const expectedIDs = [...oracle.models.map((model) => model.id), ...controls.map((control) => control.model_name)].sort()
+  const registryWaitStart = Date.now()
+  let registryAttempts = 0
+  let published = []
+  try {
+    for (let attempt = 0; attempt < 180; attempt++) {
+      registryAttempts = attempt + 1
+      const models = payload(await hostFetch("GET", "/api/model", undefined, { allowFailure: true }))
+      published = Array.isArray(models) ? models.filter((model) => model.providerID === "litellm") : []
+      if (JSON.stringify(published.map((model) => model.id).sort()) === JSON.stringify(expectedIDs)) break
+      await sleep(500)
+    }
+    assert.deepEqual(published.map((model) => model.id).sort(), expectedIDs, `${label} baseline must register the frozen 16 models and the three controls`)
+  } finally {
+    recordWait("registry", `${label} frozen 19-model baseline`, registryWaitStart, registryAttempts)
+  }
+  baselinePrices = new Map(published.map((model) => [model.id, model.cost[0]]))
+  for (const expected of oracle.models) {
+    const actual = published.find((model) => model.id === expected.id)
+    assert(actual, `frozen model is missing from this group's host registry: ${expected.id}`)
+    assert.equal(actual.modelID, expected.id)
+    assert.equal(actual.name, expected.id)
+    assert.deepEqual(actual.limit, { input: 0, ...expected.limit })
+    assert.deepEqual(actual.capabilities, { tools: expected.tools, input: expected.input, output: expected.output })
+    assert.deepEqual(actual.variants.map((variant) => variant.id), expected.levels, `${expected.id}: no default variants`)
+    assert.deepEqual(actual.cost[0], {
+      input: expected.cost.input ?? 0,
+      output: expected.cost.output ?? 0,
+      cache: { read: expected.cost.cache_read ?? 0, write: expected.cost.cache_write ?? 0 },
+    })
+  }
+  assert.deepEqual(published.find((model) => model.id === "e2e-no-effort").variants, [])
+  assert.deepEqual(published.find((model) => model.id === "e2e-disabled").variants, [])
+  assert.deepEqual(published.find((model) => model.id === "e2e-messages").variants, [
+    { id: "high", settings: { thinking: { type: "enabled", budgetTokens: 16000 } } },
+    { id: "max", settings: { thinking: { type: "enabled", budgetTokens: 64000 } } },
+  ], "host-version wire lowering must not change the plugin's declared variants")
+  console.log(`[${label}] real host baseline: 19 models (frozen 16 + 3 controls), limits/variants/prices asserted`)
+}
+
+/**
+ * Targeted delivery verification of the current candidate.
+ *
+ * This is the only scenario a `delivery` report may claim: the real OpenCode
+ * installer installs the fixed candidate, the real host loads it and registers
+ * the frozen 19-model baseline, the *installed* copy proves its Runtime Identity
+ * and Core provenance, and one real SDK turn reaches LiteLLM. The complete
+ * credential/lifecycle matrix stays with the complete groups; nothing here
+ * pretends the matrix ran.
+ */
+async function phaseDelivery() {
+  await bootstrapPublicationGroup({ label: "delivery" })
+
+  // [DELIVERY-VERIFY] Read the identity from the package the real installer produced,
+  // not from this checkout: the installer is the only source of the delivered bytes.
+  const installedCopies = locateInstalledCandidates({ roots: runDirs, workspace })
+  assert.equal(installedCopies.length, 1,
+    `exactly one installed candidate package is required, found ${installedCopies.length}`)
+  const installed = readInstalledPackage({ root: installedCopies[0].root })
+  assert.deepEqual(installed.identity, candidateIdentity,
+    "the installed package Runtime Identity must equal the candidate checkout")
+  assert.deepEqual(installed.provenance, candidateProvenance,
+    "the installed package Core provenance must equal the candidate checkout")
+  assert.equal(installed.provenance.sha, installed.identity.coreCommit)
+
+  // One real model SDK turn on this group's own async host session: the delivered
+  // candidate must still reach LiteLLM through the protocol the registry declares.
+  const target = oracle.models.find((model) => model.protocol === "chat" && model.levels.length === 0)
+  assert(target, "the frozen matrix must contain a chat model without reasoning variants")
+  const hostJson = async (method, route, body) => {
+    const response = await fetch(`${openCodeServer.url}${route}`, {
+      method,
+      headers: {
+        "content-type": "application/json",
+        authorization: "Basic " + Buffer.from(`opencode:${openCodeServer.password}`).toString("base64"),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    })
+    const text = await response.text()
+    assert(response.ok, `delivery host request failed: ${method} ${route} (${response.status}) ${sanitize(text).slice(0, 400)}`)
+    return text ? JSON.parse(text) : undefined
+  }
+  const deliverySession = payload(await hostJson("POST", "/api/session", { title: "LiteLLM delivery E2E" }))
+  assert.equal(typeof deliverySession?.id, "string", "the delivery host session.create did not return an id")
+  const ref = { id: target.id, providerID: "litellm" }
+  await hostJson("POST", `/api/session/${deliverySession.id}/model`, { model: ref })
+  const selected = payload(await hostJson("GET", `/api/session/${deliverySession.id}`))
+  assert.deepEqual(selected.model, { ...ref, variant: "default" },
+    "the delivery host session must store the selected frozen model")
+
+  const before = defaultMock.requests.length
+  const started = Date.now()
+  await hostJson("POST", `/api/session/${deliverySession.id}/prompt`, { text: "Reply ok. Do not call any tools." })
+  let finished
+  for (let attempt = 0; attempt < 100; attempt++) {
+    await sleep(200)
+    const state = payload(await hostJson("GET", `/api/session/${deliverySession.id}`))
+    if (Date.parse(state.time?.idle ?? "") >= started || (typeof state.time?.idle === "number" && state.time.idle >= started)) {
+      finished = state
+      break
+    }
+  }
+  assert(finished, `${target.id}: the delivery host turn did not finish`)
+  assert.equal(finished.outcome, "succeeded",
+    `${target.id}: the delivery SDK turn failed; session=${sanitize(JSON.stringify(finished))}`)
+  const requests = defaultMock.requests.slice(before).filter((request) => request.body.model === target.id)
+  assert(requests.length > 0, `${target.id}: the delivery SDK turn never reached LiteLLM`)
+  for (const request of requests) assert.equal(request.path, "/v1/chat/completions", `${target.id}: the delivery request used another protocol`)
+  count("deliveryModelRequests", requests.length)
+  console.log(`Delivery verification: installed candidate identity/provenance match, real ${target.id} SDK turn reached LiteLLM`)
+}
+
+async function dumpFailureDiagnostics() {
+  process.stderr.write("\n=== real OpenCode E2E diagnostics ===\n")
+  if (openCodeServer) {
+    const output = openCodeServer.output()
+    process.stderr.write(`--- foreground server stdout ---\n${output.stdout}\n`)
+    process.stderr.write(`--- foreground server stderr ---\n${output.stderr}\n`)
+    command(["api", "--server", openCodeServer.url, "GET", "/api/plugin"], { allowFailure: true })
+  }
+  for (const tui of activeTuis) {
+    const output = tui.diagnostics()
+    process.stderr.write(`--- attached TUI stdout ---\n${output.stdout.slice(Math.max(0, output.stdout.length - 24000))}\n`)
+    process.stderr.write(`--- attached TUI stderr ---\n${output.stderr.slice(Math.max(0, output.stderr.length - 24000))}\n`)
+  }
+  const logResult = command(["debug", "paths", "log"], { allowFailure: true, echo: false })
+  const logPath = logResult.stdout.trim()
+  if (logPath && existsSync(logPath)) {
+    const files = statSync(logPath).isDirectory()
+      ? readdirSync(logPath).map((name) => path.join(logPath, name)).filter((file) => statSync(file).isFile())
+      : [logPath]
+    for (const file of files.sort()) {
+      const content = sanitize(readFileSync(file, "utf8"))
+      process.stderr.write(`--- ${file.replaceAll(workspace, "<e2e>")} ---\n`)
+      process.stderr.write(content.slice(Math.max(0, content.length - 24000)))
+      process.stderr.write("\n")
+    }
+  } else {
+    process.stderr.write(`No OpenCode log path found: ${sanitize(logPath)}\n`)
+  }
+}
+
+async function phaseInstallAndMatrix() {
+  const installPhase = startPhase("host-install-activate")
+  catalogServer = await startCatalogServer()
+  const catalogRequests = catalogServer.requests
+  // [REAL-HOST-E2E] Schema-9 LKG positive recovery needs a genuine models.dev
+  // outage that Core can SEE. The delivered dist keeps an in-memory catalog
+  // cache and OpenCode 2.0.16 is a compiled
+  // binary without any preload seam, so a tiny companion plugin — loaded by the
+  // SAME real host into the SAME server process — clears that cache through the
+  // INSTALLED package's own `dist/net/fetch.js` export
+  // (`resetModelsDevCacheForTest`): the in-process cache reset used before a
+  // demand-triggered refresh. It never mocks a Core value and never serves fake data; the
+  // outage itself is a real HTTP 500 from the deterministic catalog source.
+  const catalogGuardDir = installCatalogGuardPlugin()
 
   const e2eConfig = {
     $schema: "https://opencode.ai/config.json",
@@ -658,11 +1378,10 @@ export default {
   // Git package install/cache and validates the server entrypoint. Because the
   // same package is already present in our config object, it preserves endpoint options.
   command(["plugin", "add", packageSpec], { timeout: 240_000 })
+  count("pluginInstalls")
 
   openCodeServer = await startOpenCodeServer()
   env.OPENCODE_PASSWORD = openCodeServer.password
-  const api = (...args) => command(["api", "--server", openCodeServer.url, ...args], { retries: 6 })
-  const serverCommand = (name, ...args) => command([name, "--server", openCodeServer.url, ...args])
 
   // Server listen readiness precedes external plugin activation in OpenCode 2.0.16.
   // Wait until the real host has either activated or failed the LiteLLM plugin before
@@ -679,6 +1398,8 @@ export default {
   assert(litellmPlugin, "LiteLLM server plugin was never discovered by the real OpenCode host")
   assert.equal(litellmPlugin.state?.status, "active",
     `LiteLLM server plugin failed to activate: ${JSON.stringify(litellmPlugin)}`)
+  endPhase(installPhase)
+  const surfacePhase = startPhase("plugin-surface")
 
   // This is the next regression gate: v0.4.1 reproduces the real host
   // Integration/provider schema failure here, which also empties /connect and /models.
@@ -709,6 +1430,8 @@ export default {
     !commandNames.includes("litellm-acknowledge"),
     `acknowledgement must not be exposed as a slash command: ${JSON.stringify(commandNames)}`,
   )
+  endPhase(surfacePhase)
+  const activationPhase = startPhase("credentials-activation")
 
   // Reproduce the user-visible startup order before any endpoint has a credential:
   // commands are executed while no TUI listener exists, and /models has no LiteLLM namespace yet.
@@ -717,9 +1440,7 @@ export default {
     "session.create",
   ))
   assert.equal(typeof createdSession?.id, "string", `session.create did not return an id: ${JSON.stringify(createdSession)}`)
-  let sessionID = createdSession.id
-  const runSessionCommand = (name, text = "") =>
-    api("POST", `/api/session/${sessionID}/command`, "--data", JSON.stringify({ name, text }))
+  sessionID = createdSession.id
 
   const beforeConnectModels = command(["models", "--server", openCodeServer.url], { timeout: 120_000 })
   assert.doesNotMatch(beforeConnectModels.stdout, /litellm(?:-company)?\//u,
@@ -728,7 +1449,7 @@ export default {
   // 1) Diagnostics: emit while no TUI is attached, then require the newly attached TUI
   // to recover the latest diagnostic result without rerunning the command.
   runSessionCommand("litellm-diagnostics")
-  let tui = startAttachedTui(sessionID)
+  tui = startAttachedTui(sessionID)
   await waitForTui(tui, "LiteLLM Endpoints · active 2/2")
   await stopAttachedTui(tui)
 
@@ -795,33 +1516,6 @@ export default {
   }
 
   serverCommand("reload")
-
-  async function waitForProviders(expected, absent = []) {
-    let providers = []
-    let lastProviderError = ""
-    for (let attempt = 0; attempt < 30; attempt++) {
-      const result = command(["api", "--server", openCodeServer.url, "GET", "/api/provider"], {
-        allowFailure: true,
-        echo: attempt === 29,
-      })
-      if (result.status === 0) {
-        try {
-          const value = payload(jsonOutput(result, "provider.list"))
-          if (Array.isArray(value)) providers = value
-        } catch (error) {
-          lastProviderError = String(error)
-        }
-        const ids = providers.map((item) => item.id)
-        if (expected.every((id) => ids.includes(id)) && absent.every((id) => !ids.includes(id))) {
-          return providers
-        }
-      } else {
-        lastProviderError = result.stderr || result.stdout
-      }
-      await sleep(1000)
-    }
-    throw new Error(`providers did not converge; expected=${JSON.stringify(expected)} absent=${JSON.stringify(absent)} last=${lastProviderError || JSON.stringify(providers.map((item) => item.id))}`)
-  }
 
   // Company was disabled by the real terminal interaction before credentials were entered.
   // Only the default endpoint may discover/publish now.
@@ -916,6 +1610,8 @@ export default {
   models = command(["models", "--server", openCodeServer.url], { timeout: 120_000 })
   assert.match(models.stdout, /litellm\//u, "CLI models must include default LiteLLM models")
   assert.match(models.stdout, /litellm-company\//u, "CLI models must include re-enabled company LiteLLM models")
+  endPhase(activationPhase)
+  const snapshotPhase = startPhase("startup-snapshot")
 
   // A cold server's very first model response must contain both durable
   // snapshots even when the LiteLLM service is offline.
@@ -926,6 +1622,8 @@ export default {
   assert(firstModels.some(model => model.providerID === "litellm" && model.id === "multi-endpoint-model"), "first model read must include the offline default snapshot")
   assert(firstModels.some(model => model.providerID === "litellm-company"), "first model read must include the offline company snapshot")
   console.log("[STARTUP-SNAPSHOT] first real host model read contains both offline snapshots")
+  endPhase(snapshotPhase)
+  const recoveryPhase = startPhase("network-recovery")
   mockFailStatus = 0
   for (const endpointId of ["default", "company"]) {
     // Use async HTTP so the fake LiteLLM server can answer while refresh runs.
@@ -940,6 +1638,8 @@ export default {
   }
   await waitForProviders(["litellm", "litellm-company"])
   sessionID = payload(jsonOutput(api("POST", "/api/session", "--data", JSON.stringify({ title: "LiteLLM post-restart E2E" })), "session.create")).id
+  endPhase(recoveryPhase)
+  const diagnosticsPhase = startPhase("diagnostics-identity")
 
   // Endpoint-scoped diagnostics must use the real OpenCode command tail (prompt.text).
   // This reproduces /litellm-diagnostics company and rejects the previous silent fallback to overview.
@@ -975,131 +1675,12 @@ export default {
   assert(Array.isArray(plugins), "plugin.list payload must be an array")
   assert(plugins.some((item) => item.id === "litellm" && item.state?.status === "active"),
     `server plugin must be active: ${JSON.stringify(plugins.filter((item) => item.id === "litellm"))}`)
-
-  // ===== Publication phase: trusted verdicts through the real host =====
-  const auditDirPath = path.join(state, "opencode", "litellm-audit")
-  const auditNames = () =>
-    existsSync(auditDirPath)
-      ? readdirSync(auditDirPath).filter((name) => name.startsWith("litellm-audit-") && name.endsWith(".json"))
-      : []
-  const defaultAuditReport = (audit) => audit.endpoints?.find((entry) => entry.id === "default")?.report ?? audit
-
-  // Export a fresh audit report; the command writes a file, so no TUI is needed.
-  const exportAudit = async () => {
-    const startedAt = Date.now()
-    const before = new Set(auditNames())
-    runSessionCommand("litellm-audit-export")
-    for (let attempt = 0; attempt < 80; attempt++) {
-      await sleep(250)
-      const names = auditNames()
-      const fresh = names.filter((name) => !before.has(name))
-      const candidates = fresh.length > 0 ? fresh : names.filter(
-        (name) => statSync(path.join(auditDirPath, name)).mtimeMs >= startedAt,
-      )
-      if (candidates.length > 0) {
-        const latest = candidates.slice().sort().at(-1)
-        return JSON.parse(readFileSync(path.join(auditDirPath, latest), "utf8"))
-      }
-    }
-    throw new Error("audit export did not produce a fresh report")
-  }
-
-  const waitForRefreshAfter = async (sinceMs, label) => {
-    for (let attempt = 0; attempt < 90; attempt++) {
-      const report = defaultAuditReport(await exportAudit())
-      const stamp = Date.parse(report.lastSuccessfulDiscoveryAt ?? "")
-      if (Number.isFinite(stamp) && stamp > sinceMs) return report
-      await sleep(1000)
-    }
-    throw new Error(`no discovery refresh after ${label}`)
-  }
-
-  const waitForAuditStatus = async (expected, label) => {
-    for (let attempt = 0; attempt < 90; attempt++) {
-      const report = defaultAuditReport(await exportAudit())
-      if (report.status === expected) return report
-      await sleep(1000)
-    }
-    throw new Error(`default endpoint never reached audit status ${expected} (${label})`)
-  }
-
-  // PTY text normalization may collapse the full-width colon, so publication
-  // needles are matched as regexes on semantic spacing.
-  const diagnosticsThroughTui = async (needle, label, endpointID = "default") => {
-    const matches = (text) => (typeof needle === "string" ? text.includes(needle) : needle.test(text))
-    let last = ""
-    for (let attempt = 0; attempt < 6; attempt++) {
-      runSessionCommand("litellm-diagnostics", endpointID)
-      const diagTui = startAttachedTui(sessionID)
-      try {
-        await waitForTui(diagTui, new RegExp(`Endpoint[\\s：:]+${endpointID}`, "u"), { timeout: 20_000 })
-        last = diagTui.output()
-        if (matches(last)) return last
-      } catch (error) {
-        last = String(error)
-      } finally {
-        await stopAttachedTui(diagTui)
-      }
-      await sleep(1000)
-    }
-    throw new Error(`diagnostics never reported ${label}; last:\n${last}`)
-  }
-
-  const hostModels = () => command(["models", "--server", openCodeServer.url], { timeout: 120_000 }).stdout
-
-  // [REAL-HOST-E2E] Core's publication partition through the real host's
-  // read-only plugin RPC (`litellm-publication.state`): the only host surface
-  // that reports the literal publication status (`configured` /
-  // `configured-lkg`) and the usingLKG projection (`lkgIDs`).
-  const publicationState = () => {
-    const result = jsonOutput(
-      command(["api", "--server", openCodeServer.url, "POST", "/api/rpc/litellm-publication/state", "--data", JSON.stringify({ input: {} })], { retries: 6, echo: false }),
-      "litellm-publication.state",
-    )
-    return result.output
-  }
-
-  const waitForPublicationState = async (predicate, label) => {
-    let last
-    for (let attempt = 0; attempt < 90; attempt += 1) {
-      try {
-        last = publicationState()
-        if (predicate(last)) return last
-      } catch (error) {
-        last = String(error)
-      }
-      await sleep(1000)
-    }
-    throw new Error(`publication state never matched ${label}; last=${JSON.stringify(last)}`)
-  }
-
-  // [REAL-HOST-E2E] Card lines wrap at the terminal width and sit inside
-  // box-drawing borders; normalize both away so assertions on long facts can
-  // never straddle a wrap boundary.
-  const cardText = (text) => text.replace(/[┃╹▀╻╺╸]/gu, "").replace(/\s+/gu, "")
-
-  // Clear the delivered dist's in-memory models.dev catalog cache through the guard
-  // plugin's RPC. The response names the module that was reset: it must be the
-  // INSTALLED candidate's `dist/net/fetch.js`, so the reset lands on the same
-  // module instance the plugin's discovery loop uses.
-  const resetCatalogCache = async () => {
-    const result = jsonOutput(
-      command(["api", "--server", openCodeServer.url, "POST", "/api/rpc/e2e-catalog-cache/reset", "--data", JSON.stringify({ input: {} })], { retries: 6, echo: false }),
-      "e2e-catalog-cache.reset",
-    )
-    const output = result.output ?? {}
-    assert.equal(output.ok, true, `the catalog cache reset must reach the installed fetch module: ${JSON.stringify(output)}`)
-    assert.match(String(output.module), /net[\\/]fetch\.js$/u, `the reset must target dist/net/fetch.js: ${JSON.stringify(output)}`)
-    assert.match(String(output.module), /opencode-litellm-provider/u, `the reset must target the installed candidate package: ${JSON.stringify(output)}`)
-    return output
-  }
+  endPhase(diagnosticsPhase)
 
   // Frozen final registry/picker configuration, real model selection and SDK requests.
-  const controls = [
-    { model_name:"e2e-no-effort", model_info:{mode:"chat"} },
-    { model_name:"e2e-disabled", model_info:{mode:"chat"} },
-    { model_name:"e2e-messages", litellm_params:{model:"anthropic/e2e-messages"}, model_info:{mode:"chat"} },
-  ]
+  // The shared publication helpers above read this group's session and host, so the
+  // matrix keeps the exact same real-host path as before the split.
+  const matrixPhase = startPhase("model-matrix")
   servedModels = [...frozenDiscovery.data, ...controls]
   currentCatalog = structuredClone(baselineCatalog)
   await resetCatalogCache()
@@ -1108,7 +1689,7 @@ export default {
   assert.equal(matrixIDs.length,19,"all frozen models and the three controls register")
   const actualModels = payload(jsonOutput(api("GET","/api/model"),"model.list"))
   assert(Array.isArray(actualModels),"real host registry returns Model.Info[] for the picker")
-  const baselinePrices = new Map(actualModels.filter(model=>model.providerID==="litellm").map(model=>[model.id,model.cost[0]]))
+  baselinePrices = new Map(actualModels.filter(model=>model.providerID==="litellm").map(model=>[model.id,model.cost[0]]))
   for(const expected of oracle.models) {
     const actual=actualModels.find(model=>model.providerID==="litellm" && model.id===expected.id)
     assert(actual,`frozen model is missing from host registry: ${expected.id}`)
@@ -1196,20 +1777,11 @@ export default {
   await requestModel("e2e-disabled",undefined,"chat")
   for(const level of ["high","max"])await requestModel("e2e-messages",level,"messages")
   console.log(`Real OpenCode metadata priority: 16/16 final registrations and picker lists; ${checkedRequests} actual Chat/Responses/Messages requests passed`)
+  endPhase(matrixPhase)
+  const blockedPhase = startPhase("blocked-deployments")
 
   // [BLOCKED-HOST-REFRESH] [BLOCKED-HOST-ISOLATION] Actual OpenCode registry + diagnostics TUI.
   // Synthetic 29/25 layout, not a company service export. No /v1/models fetch is added.
-  const registryIDs = providerID => payload(jsonOutput(api("GET", "/api/model"), "model.list"))
-    .filter(model => model.providerID === providerID).map(model => model.id).sort()
-  const waitForRegistryIDs = async (providerID, expected, label) => {
-    let actual = []
-    for (let attempt = 0; attempt < 90; attempt++) {
-      actual = registryIDs(providerID)
-      if (JSON.stringify(actual) === JSON.stringify(expected)) return actual
-      await sleep(1000)
-    }
-    assert.deepEqual(actual, expected, label)
-  }
   const defaultBeforePause = registryIDs("litellm")
   const activeCompanyRows = blockedInfo.data.map(row => ({ ...row, model_info: { ...row.model_info, blocked: false } }))
   const pausedExpected = Array.from({ length: 13 }, (_, i) => `chat-model-${String(i + 1).padStart(2, "0")}`)
@@ -1224,6 +1796,15 @@ export default {
   companyMock.state.models = undefined
   await waitForRegistryIDs("litellm-company", defaultBeforePause, "company fixture restoration")
   console.log("Real OpenCode blocked deployments: company 20 → 13, default unchanged, diagnostics TUI passed")
+  endPhase(blockedPhase)
+}
+
+// ===== B: prices and last-known-good recovery ===============================
+// Split out of the serial tail: a stable model_name set must reuse the registered
+// configuration, and a genuine models.dev outage must be answered from the LKG
+// entry of an identity that was really configured successfully before.
+async function phasePriceAndLkg() {
+  const pricePhase = startPhase("prices")
 
   // A stable model_name set reuses the registered configuration; price-only
   // catalog changes do not trigger a metadata read.
@@ -1231,8 +1812,10 @@ export default {
   const zeroPrice=await waitForRefreshAfter(Date.now(),"the price-only error")
   assert.equal(zeroPrice.models.length,19)
   for(const model of zeroPrice.models)assert.deepEqual(model.cost[0],baselinePrices.get(model.id),"stable model_name must reuse the registered price")
-  assert.deepEqual(publicationState().regressions,[])
+  assert.deepEqual((await publicationState()).regressions,[])
   for(const expected of oracle.models)assert.deepEqual(zeroPrice.models.find(model=>model.id===expected.id).limit,{input:0,...expected.limit})
+  endPhase(pricePhase)
+  const lkgPhase = startPhase("lkg-outage")
 
   // Real models.dev outage and existing LKG recovery: remove one successfully
   // configured identity, then re-add that same model_name while the local catalog
@@ -1253,6 +1836,8 @@ export default {
   assert(lkg.publishable.length===19,"the LKG model remains published with the rest of the catalog")
   assert.deepEqual(lkgReport.models.map(model=>({id:model.id,limit:model.limit,variants:model.variants})),zeroPrice.models.map(model=>({id:model.id,limit:model.limit,variants:model.variants})))
   await diagnosticsThroughTui(/LKG 1/u,"LKG metadata summary")
+  endPhase(lkgPhase)
+  const lkgRecoveryPhase = startPhase("lkg-recovery")
 
   // Recovery from LKG uses the existing successful-deletion boundary: a stable
   // set keeps LKG; delete/re-add makes the recovered catalog prove the record fresh.
@@ -1265,6 +1850,15 @@ export default {
   servedModels=lkgRecoveryModels
   await waitForRefreshAfter(Date.now(),"re-add after models.dev recovery")
   await waitForPublicationState(state=>state.publishable.length===19&&state.lkgIDs.length===0,"fresh recovery after models.dev outage")
+  endPhase(lkgRecoveryPhase)
+}
+
+// ===== C: metadata recovery and deletion repair ============================
+// Requires a genuine baseline plus an identity that never had a successful LKG in
+// this group's own data directory, then a real catalog outage, a successful empty
+// catalog and a repaired selected record.
+async function phaseMetadataRecovery() {
+  const unavailablePhase = startPhase("metadata-unavailable")
 
   // Temporary metadata-unavailable recovery is different from stable unmatched:
   // the withheld identity is retried on the same set after the catalog recovers.
@@ -1287,12 +1881,16 @@ export default {
   await waitForRefreshAfter(Date.now(),"same-set recovery of metadata-unavailable model")
   const recoveredMetadata=await waitForPublicationState(state=>state.publishable.length===20&&state.withheld.length===0,"recovery without a model-set change")
   assert(recoveredMetadata.publishable.some(entry=>entry.id==="e2e-metadata-recovery"),"temporarily withheld model must recover")
+  endPhase(unavailablePhase)
+  const emptyPhase = startPhase("empty-catalog")
 
   // A successful live deletion wins over cached models.
   servedModels=[]
   const empty=await waitForRefreshAfter(Date.now(),"successful empty LiteLLM catalog")
   assert.deepEqual(empty.models,[])
   assert(!hostModels().includes("litellm/"),"deleted models must leave host registry")
+  endPhase(emptyPhase)
+  const repairPhase = startPhase("selected-record-repair")
 
   // Missing/illegal critical metadata stays withheld; repairing its API record
   // publishes automatically, without new acceptance or provider configuration.
@@ -1311,6 +1909,15 @@ export default {
   servedModels=repairSeed
   const repaired=await waitForRefreshAfter(Date.now(),"selected API record repair")
   assert(repaired.models.some(model=>model.id==="minimax-m3"),"complete metadata registers without user acceptance")
+  endPhase(repairPhase)
+}
+
+// ===== D: notification persistence and network/auth recovery ===============
+// The acknowledgement memory must survive a real host restart, a materially
+// changed problem set must re-notify in the round that produced it, and network
+// failures keep the last good models while authentication failures clear them.
+async function phaseNotificationAndNetwork() {
+  const notifyPhase = startPhase("notification-restart")
 
   // Existing notification memory must survive a real host restart.
   const unusableModels=()=>["gap-a","gap-b"].map(model_name=>({model_name,model_info:{mode:"chat"}}))
@@ -1330,6 +1937,8 @@ export default {
     "notification for the changed problem set")
   await diagnosticsThroughTui(/withheld[\s：:]*gap-c/u,"new missing model")
   console.log("[ack persistence] surfaced -> restarted suppressed -> material change re-surfaced")
+  endPhase(notifyPhase)
+  const networkPhase = startPhase("network-auth")
 
   // Network failures retain last successful models; auth errors clear them.
   servedModels=servedFixture.data
@@ -1348,6 +1957,12 @@ export default {
   await waitForAuditStatus("ready","authentication recovery")
   currentCatalog=structuredClone(baselineCatalog)
   console.log("Real OpenCode publication E2E passed: prices, critical metadata, route-independent LKG, recovery, deletion, network/auth and notification restart persistence verified")
+  endPhase(networkPhase)
+}
+
+// ===== A: endpoint management UX over the real TUI ==========================
+async function phaseManagement() {
+  const managementPhase = startPhase("management-endpoints")
 
   // ===== Phase 2: Endpoint Management UX over the real TUI (file-declared options, real PTY keys) =====
   await stopAttachedTui(tui).catch(() => {})
@@ -1578,7 +2193,23 @@ export default {
     const editedAgain = readConfig().replace(/("endpoints":\s*\{)/u, `$1 "hand-added": { "baseUrl": "${mgmtA.baseUrl}" },`)
     writeFileSync(opencodeConfigFile, editedAgain)
     const session3 = payload(jsonOutput(api("POST", "/api/session", "--data", JSON.stringify({ title: "LiteLLM mgmt restart" })), "session.create")).id
-    api("POST", `/api/session/${session3}/command`, "--data", JSON.stringify({ name: "litellm-endpoints", text: "" }))
+    // The edited endpoint can discover from mgmtA in this process while the
+    // host opens its selector. A synchronous CLI freezes that fake server:
+    // run 41178587569 spent 14.5s here. Keep the same real route and payload,
+    // allowing the fake server to answer while we await the host response.
+    const openAfterRestart = startPhase("management-open-after-restart")
+    const opened = await fetch(`${openCodeServer.url}/api/session/${session3}/command`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Basic " + Buffer.from(`opencode:${openCodeServer.password}`).toString("base64"),
+      },
+      body: JSON.stringify({ name: "litellm-endpoints", text: "" }),
+      signal: AbortSignal.timeout(120_000),
+    })
+    assert(opened.ok, `open endpoint selector after restart failed: HTTP ${opened.status}`)
+    await opened.text()
+    endPhase(openAfterRestart)
     const t3 = startAttachedTui(session3)
     const m3 = t3.mark()
     await waitForTui(t3, "＋ 新增 endpoint", { from: m3 })
@@ -1594,6 +2225,12 @@ export default {
       new Promise((resolve) => mgmtB.server.close(resolve)),
     ])
   }
+  endPhase(managementPhase)
+}
+
+// ===== A: legacy single-endpoint start → management + migration ============
+async function phaseLegacy() {
+  const legacyPhase = startPhase("legacy-migration")
 
   // ===== Phase 3: legacy single-endpoint start (real /connect credential) → management + migration =====
   await stopAttachedTui(tui).catch(() => {})
@@ -1768,6 +2405,12 @@ export default {
       new Promise((resolve) => legacyTarget.server.close(resolve)),
     ])
   }
+  endPhase(legacyPhase)
+}
+
+// ===== A: ghostless legacy (no connected address) ==========================
+async function phaseGhostless() {
+  const ghostlessPhase = startPhase("ghostless-legacy")
 
   // ===== Phase 4: ghostless legacy (no connected address) → first Add must not pin a stale default =====
   openCodeServer.child.kill()
@@ -1857,12 +2500,81 @@ export default {
   console.log(`Real OpenCode ${hostVersion} ghostless legacy E2E passed: Add starts inactive and no stale default activation`)
 
   console.log(`Real OpenCode ${hostVersion} E2E passed: startup recovery, native keyboard activation, endpoint-scoped diagnostics, credentials, providers, models and schema-9 LKG recovery (configured -> configured-lkg -> configured) are verified.`)
+  endPhase(ghostlessPhase)
+}
+
+// ===== Group dispatch =======================================================
+// "all" keeps the complete legacy serial order (and is the default), so a fixed
+// candidate still has a reproducible single-process baseline. A/B/C/D each run
+// only their own real-host chain after their own genuine bootstrap: no group
+// inherits mutable state from another group, and no group writes persistent
+// snapshot/acknowledgement/credential state directly.
+let groupFailure
+try {
+  if (group === "all") {
+    await withPhase("install-activate-matrix", phaseInstallAndMatrix)
+    await withPhase("prices-lkg", phasePriceAndLkg)
+    await withPhase("metadata-recovery", phaseMetadataRecovery)
+    await withPhase("notification-network", phaseNotificationAndNetwork)
+    await withPhase("management", phaseManagement)
+    await withPhase("legacy", phaseLegacy)
+    await withPhase("ghostless", phaseGhostless)
+  } else if (group === "A") {
+    await withPhase("install-activate-matrix", phaseInstallAndMatrix)
+    // Group A keeps the endpoint management chains, which need the credentials and
+    // activation selection established above. The publication lifecycle that the
+    // serial run performs in between leaves exactly this fixture state behind (the
+    // successful fixture, the baseline catalog, no injected failure and the restored
+    // key), so restore it explicitly instead of dropping any of its assertions.
+    servedModels = servedFixture.data
+    currentCatalog = structuredClone(baselineCatalog)
+    await withPhase("management", phaseManagement)
+    await withPhase("legacy", phaseLegacy)
+    await withPhase("ghostless", phaseGhostless)
+  } else if (group === "B") {
+    await withPhase("baseline", () => bootstrapPublicationGroup({ label: "price and LKG" }))
+    await withPhase("prices-lkg", phasePriceAndLkg)
+  } else if (group === "C") {
+    // The recovery identity has never had a successful LKG in this group's own
+    // data directory, which is exactly the precondition the recovery chain needs.
+    await withPhase("baseline", () => bootstrapPublicationGroup({ label: "metadata recovery" }))
+    await withPhase("metadata-recovery", phaseMetadataRecovery)
+  } else if (group === "D") {
+    // D needs the repaired catalog (minimax-m3 reasoning=false) from the metadata
+    // repair chain BEFORE its first discovery, then its own real normal baseline.
+    await withPhase("baseline", () => bootstrapPublicationGroup({
+      label: "notification and network",
+      catalog: () => {
+        const repaired = structuredClone(baselineCatalog)
+        repaired.providers.e2e.models["minimax-m3"].reasoning = false
+        return repaired
+      },
+    }))
+    await withPhase("normal-baseline", async () => {
+      servedModels = servedFixture.data
+      await resetCatalogCache()
+      const baseline = await waitForRefreshAfter(Date.now(), "the repaired catalog baseline")
+      assert(baseline.models.some((model) => model.id === "minimax-m3"),
+        "the repaired catalog must publish minimax-m3 before the notification chain")
+    })
+    await withPhase("notification-network", phaseNotificationAndNetwork)
+  } else if (group === "delivery") {
+    // Targeted verification only: real install/load/registry, installed Runtime
+    // Identity + provenance and one real SDK turn. The complete matrix stays with
+    // `all`/A/B/C/D and is never replaced by this run.
+    await withPhase("delivery", phaseDelivery)
+  } else {
+    throw new Error(`E2E_GROUP must be one of ${supportedGroups.join(", ")}; got ${JSON.stringify(group)}`)
+  }
+  console.log(`[E2E-GROUP] group ${group} completed all of its real-host groups`)
 } catch (error) {
+  groupFailure = error
   await dumpFailureDiagnostics()
   throw error
 } finally {
-  for (const tui of activeTuis) {
-    if (tui.child.exitCode === null) tui.child.kill()
+  closeOpenPhases(groupFailure ? "failed" : "ok")
+  for (const attached of activeTuis) {
+    if (attached.child.exitCode === null) attached.child.kill()
   }
   activeTuis.clear()
   openCodeServer?.child.kill()
@@ -1875,6 +2587,10 @@ export default {
   ])
   // A just-killed OpenCode may still be writing its cache: never let cleanup mask the real result.
   await sleep(1000)
+  // The reuse evidence has to be read before the temporary HOME/XDG directories
+  // disappear, and the report is written before cleanup for the same reason.
+  collectReportEvidence()
+  flushTiming(groupFailure ? "failed" : "ok")
   try { rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }) } catch (error) {
     process.stderr.write(`cleanup skipped: ${error.code ?? error.message}\n`)
   }
