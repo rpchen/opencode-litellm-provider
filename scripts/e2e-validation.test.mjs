@@ -473,41 +473,6 @@ test("plan reuses a Pi baseline with the full Pi job and step", () => {
   assert.equal(decision.plan.baseline.runId, RUN_ID)
 })
 
-test("plan accepts the pre-rename Pi full step name", () => {
-  const repo = versionFixture()
-  const piHostInput = hostInputRecord({ hostPackage: "@earendil-works/pi-coding-agent", hostVersion: "1.4.0" })
-  const receipt = fullReceipt({
-    adapter: "pi",
-    groups: { pi: "success" },
-    candidateSha: repo.base,
-    harnessSha: repo.base,
-    hostInput: piHostInput,
-    deliveryInputs: { complete: true, hostPackage: "@earendil-works/pi-coding-agent" },
-    config: fixedConfig("pi"),
-  })
-  const github = fakeGithub({
-    receipt,
-    jobs: [job("Real Pi latest E2E", [step("Run real host E2E against immutable Git candidate")])],
-  })
-  const decision = decidePlan({
-    adapter: "pi",
-    root: repo.root,
-    hostDir: makeHostDir({ hostInput: piHostInput }),
-    deliveryReport: writeDeliveryReport({ hostInput: piHostInput, deliveryInputs: { complete: true, hostPackage: "@earendil-works/pi-coding-agent" } }),
-    candidate: repo.current,
-    harness: repo.current,
-    sourceHead: PR_HEAD_SHA,
-    repository: REPOSITORY,
-    currentRunId: 9999,
-    github,
-  })
-  assertDelivery(decision)
-})
-
-/* ------------------------------------------------------------------------- *
- * plan: report and host negatives
- * ------------------------------------------------------------------------- */
-
 test("plan defaults to full when the delivery verification report is missing", () => {
   const world = createPlanWorld()
   const decision = decidePlan(world.planArgs({ deliveryReport: path.join(tmpDir("e2e-validation-none-"), "absent.json") }))

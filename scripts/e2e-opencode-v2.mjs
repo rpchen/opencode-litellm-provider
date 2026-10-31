@@ -2193,7 +2193,23 @@ async function phaseManagement() {
     const editedAgain = readConfig().replace(/("endpoints":\s*\{)/u, `$1 "hand-added": { "baseUrl": "${mgmtA.baseUrl}" },`)
     writeFileSync(opencodeConfigFile, editedAgain)
     const session3 = payload(jsonOutput(api("POST", "/api/session", "--data", JSON.stringify({ title: "LiteLLM mgmt restart" })), "session.create")).id
-    api("POST", `/api/session/${session3}/command`, "--data", JSON.stringify({ name: "litellm-endpoints", text: "" }))
+    // The edited endpoint can discover from mgmtA in this process while the
+    // host opens its selector. A synchronous CLI freezes that fake server:
+    // run 41178587569 spent 14.5s here. Keep the same real route and payload,
+    // allowing the fake server to answer while we await the host response.
+    const openAfterRestart = startPhase("management-open-after-restart")
+    const opened = await fetch(`${openCodeServer.url}/api/session/${session3}/command`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: "Basic " + Buffer.from(`opencode:${openCodeServer.password}`).toString("base64"),
+      },
+      body: JSON.stringify({ name: "litellm-endpoints", text: "" }),
+      signal: AbortSignal.timeout(120_000),
+    })
+    assert(opened.ok, `open endpoint selector after restart failed: HTTP ${opened.status}`)
+    await opened.text()
+    endPhase(openAfterRestart)
     const t3 = startAttachedTui(session3)
     const m3 = t3.mark()
     await waitForTui(t3, "＋ 新增 endpoint", { from: m3 })

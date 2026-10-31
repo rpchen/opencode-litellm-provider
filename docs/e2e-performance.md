@@ -24,3 +24,9 @@
 四个独立真实宿主各自建立必要状态，原有不同恢复链的自然30秒刷新等待重叠。第1轮B的5次refresh等待累计148秒、C的6次累计179秒，说明没有靠删除自然等待或改强刷获得提速；D保留真实通知/重启与网络/auth链。A仍保留全模型请求、blocked与管理/legacy/ghostless历史状态链，是当前最长组。
 
 来源为Actions job/step时间戳及各组`e2e-timing-group-*` artifacts。计时JSON的嵌套phase会重叠，不相加当墙钟。原断言和因果前置映射见[e2e-validation.md](e2e-validation.md)，调度和基准命令见[e2e-ci.md](e2e-ci.md)。本数据不是之后任意宿主latest版本的时长保证；输入改变后仍须验证。
+
+## 加入输入分流后的完整运行
+
+[41178587569](https://github.com/rpchen/opencode-litellm-provider/actions/runs/41178587569)，candidate5069db5，完整A–D与常规CI均成功，基线记录kind=full。resolve→aggregate为368秒（6分08秒），相关job总1058 runner-seconds；常规CI108秒。resolve53秒中helper测试2秒、宿主锁安装8秒、探针17秒、规划9秒；组A/B/C/D测试步骤273/173/203/242秒，job297/201/226/270秒，汇总11秒。该轮略超原4–6分钟工程目标，不能继续用phase2的约5分钟代替。
+
+A脚本相对phase2第1轮主要增加在management：28.6→45.3秒，其中重启后打开selector的同步CLI用14.5秒。fake endpoint与测试在同一Node进程，spawnSync阻塞其响应；本轮后续将此一处改为相同route/body/auth的异步HTTP，保留所有TUI/旧凭据/删除/重启断言，并新增management-open-after-restart计时。收益待新完整CI确认，不预先宣称已省14.5秒。CLI installer/models/reload及其他CLI契约仍实际执行。

@@ -39,3 +39,5 @@
 resolve中用已安装宿主运行当前candidate的delivery探针，再比较Git双输入、当轮精确宿主锁、实际安装包的外部依赖锁、各组自身环境与GitHub完整run/attempt/job/step。读取失败回退full；交付探针失败阻断门禁。仅full产出可复用记录，delivery不产出基线。汇总在delivery模式要求resolve成功、有效完整基线run/attempt和所有完整组明确skipped，拒绝混合成功/失败/缺失状态。
 
 Core和Pi对应change均为verified-e2e-input-reuse，共享测试规范与adapter流程同步；Pi tag仍完整E2E，OpenCode Release原有交付/附件验证不减少。常规CI与准确main索引每次重跑，保护check名称/strict规则不改。
+
+后续实测41178587569在A管理重启的单次同步command耗14.5秒，该时段fake服务与测试同进程且被spawnSync阻塞。此一处改为同宿主HTTP路由异步请求，保留payload/auth与全部原断言，并单独计时；不据此改任何产品timer或强刷语义。

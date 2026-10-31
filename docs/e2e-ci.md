@@ -15,7 +15,7 @@
 | `real-opencode-v2-gate` | `Real OpenCode latest E2E` | 唯一 required check，汇总上述 1+4 个结果 |
 | `e2e-serial-baseline` | `E2E serial baseline (manual benchmark)` | 仅手动基准模式的旧串行对照 |
 
-四组各有独立 runner、独立 HOME/XDG、独立 fake endpoint 与真实宿主进程，并在自己组内重建真实前置。push/PR 必跑全部四组。
+四组各有独立 runner、独立 HOME/XDG、独立 fake endpoint 与真实宿主进程，并在自己组内重建真实前置。完整模式必跑四组；只有当前真实交付通过并核实完整基线时才明确跳过四组。
 
 ### 汇总门禁语义
 

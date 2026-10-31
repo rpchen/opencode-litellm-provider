@@ -232,3 +232,5 @@ stdout（CI 可直接采集）：
   `node --test scripts/e2e-host.test.mjs scripts/e2e-installed-inputs.test.mjs`。
 - 达成“目标墙钟”不是本文件的结论：性能数字来自实际 CI 运行，未达到时需报告实测瓶颈，
   不以计时输出代替提速结论。
+
+管理重启后打开endpoint selector的一处命令通过相同宿主HTTP路由异步执行，避免同步CLI阻塞同进程fake endpoint。输入/auth及后续所有真实TUI与重启断言保持；新增management-open-after-restart计时，以真实CI核实收益。

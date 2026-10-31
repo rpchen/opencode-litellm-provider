@@ -30,7 +30,7 @@
  *
  * `plan` reads GitHub with the `gh` CLI and therefore needs a token with
  * `actions: read` (`GITHUB_TOKEN` or `GH_TOKEN`); `GITHUB_REPOSITORY`,
- * `GITHUB_RUN_ID`, `GITHUB_RUN_ATTEMPT`, `GITHUB_SHA` and `GITHUB_OUTPUT` are
+ * `GITHUB_RUN_ID`, `GITHUB_RUN_ATTEMPT` and `GITHUB_OUTPUT` are
  * read from the environment when present.
  *
  * `record` turns this run's real group reports into the baseline artifact
@@ -41,14 +41,10 @@
  * a best-effort record must never hide a real E2E failure and must never
  * manufacture a reusable baseline.
  *
- * Run identity binding: a record stores the immutable run id, the immutable
- * triggering commit (`runHeadSha`, `GITHUB_SHA`) and the event source head
- * (`sourceHeadSha`, PR head or `github.sha`) separately. `plan` requires
- * `record.runId === run.id` and `record.runHeadSha === run.head_sha`, and only
- * uses the (mutable) `pull_requests[].head.sha` payload of the run as extra
- * corroboration of `sourceHeadSha`; the immutable binding cannot be forged by
- * pushing to a pull request. A host input that recorded the installed
- * candidate commit must name that candidate (`candidateSha`).
+ * Run identity binding: sourceHeadSha matches the immutable run.head_sha;
+ * harnessSha independently records the actual checkout (a merge checkout on
+ * pull_request). Current pull_requests payload fields are not historical input.
+ * The receipt run/attempt and candidate installation are checked separately.
  *
  * Both commands are generic: `ADAPTER_SPECS` only changes the required groups,
  * the expected workflow path, the expected job names and the accepted step
@@ -153,9 +149,7 @@ export const ADAPTER_SPECS = Object.freeze({
     jobs: Object.freeze([
       {
         name: "Real Pi latest E2E",
-        // The Pi worker renames the full-matrix step; the pre-rename name is
-        // still a real full host E2E step, so both are accepted.
-        steps: ["Run full real Pi host E2E", "Run real host E2E against immutable Git candidate"],
+        steps: ["Run full real Pi host E2E"],
       },
     ]),
   }),
@@ -554,10 +548,8 @@ function checkJobFacts({ spec, jobs }) {
  * ------------------------------------------------------------------------- */
 
 function findBaselineFile(dir) {
-  const direct = path.join(dir, BASELINE_FILE_NAME)
-  if (existsSync(direct)) return direct
-  for (const file of walkJsonFiles(dir)) if (path.basename(file) === BASELINE_FILE_NAME) return file
-  return null
+  const file = path.join(dir, BASELINE_FILE_NAME)
+  return existsSync(file) ? file : null
 }
 
 function normalizeDeliveryInputs(value) {
@@ -714,7 +706,7 @@ export function findReusableBaseline({ spec, repository, root, candidate, harnes
     if (evaluated.ok) return evaluated
     rejections.push(`run ${runSummary?.id}: ${evaluated.reason}`)
   }
-  const shown = rejections.slice(-3)
+  const shown = rejections.slice(0, 3)
   const prefix = rejections.length === 0 ? "no previous run other than this one could be searched" : `${rejections.length} previous successful run(s) did not qualify`
   return { ok: false, reason: `${prefix}: ${shown.join(" | ")}` }
 }

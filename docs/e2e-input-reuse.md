@@ -144,10 +144,10 @@ node --test scripts/e2e-inputs.test.mjs
 
 ## 5. 尚未覆盖的边界
 
-- 未接入 CI：不生成基线记录 artifact、不回读 GitHub run/job、不影响 `Real OpenCode latest E2E` 汇总、不跳过任何组。当前默认仍是每轮完整四组。
+- CI接入已实现；首次缺基线完整跑，复用是否实际生效需对应运行证据，不能把分类器单测当集成成功。
 - 无法证明基线 run 的真实性（artifact 可被改写）；必须以 GitHub 事实为准。
 - 未证明宿主安装器对插件 runtime 传递依赖的解析可由根 lock 约束，也未证明不同 runner 的安装目录逐字节一致。
-- 未处理"基线 records 缺失/过期"这类运行期状态；调用方拿到的是纯判定结果，是否保留/淘汰基线与如何报告复用理由由接入层决定。
+- plan处理基线缺失/过期并回退完整；普通artifact按保留期清理，不建立额外缓存状态。
 - 不覆盖 README 文本与 release notes 的语义正确性（由 `test:release-metadata` 与人工 review 负责）。
 
 
