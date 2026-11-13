@@ -6,3 +6,5 @@
 - 固定Core SHA为90adfe8b0cde94ece261867997990b6f36d3e984，插件版本0.11.3。真实OpenCode latest E2E、main/索引及Release以PR/工作流实时记录为准，模拟宿主测试不替代真实宿主。
 
 Scenario自动化位于test/canonical-name-redirect.test.ts。README与release notes已更新；算法只在Core，生产adapter源码无复制。Pi对应PR #66使用同一Core SHA。
+
+真实OpenCode 2.2.7 A组两次在新目录尚未创建/打开会话前调用RPC时返回rpc.unavailable（runs/43363320804）。将同一状态断言移至原有新目录会话/TUI打开之后，保持所有启停与跨目录断言，不加重试、不改产品代码；新提交完整CI复验该用户启动顺序。

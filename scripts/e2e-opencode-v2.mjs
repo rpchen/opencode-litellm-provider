@@ -1554,8 +1554,6 @@ async function phaseInstallAndMatrix() {
     }
     const stateAt = async (suffix = "") =>
       (await request("POST", `/api/rpc/litellm-endpoints/state${suffix}`, { input: {} })).output
-    const secondState = await stateAt(query)
-    assert.deepEqual(secondState.activeEndpointIds, ["default"])
     const secondSession = await request("POST", "/api/session", { title: "activation location", location: { directory } })
     const secondID = payload(secondSession).id
     assert.equal(typeof secondID, "string")
@@ -1564,6 +1562,10 @@ async function phaseInstallAndMatrix() {
     // The directory header is stable and also identifies the intended location.
     await waitForTui(secondTui, directory)
     await sleep(1000)
+    // A new location's plugin RPC is available after the host opens its session.
+    // Exercise the user startup order before querying that location's state.
+    const secondState = await stateAt(query)
+    assert.deepEqual(secondState.activeEndpointIds, ["default"])
     const secondMark = secondTui.mark()
     api("POST", `/api/session/${secondID}/command`, "--data", JSON.stringify({ name: "litellm-endpoints", text: "" }))
     await waitForTui(secondTui, "LiteLLM endpoints", { from: secondMark })
