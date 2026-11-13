@@ -4,8 +4,8 @@
   "models": [
     {
       "id": "deepseek-v4-pro",
-      "canonicalID": "deepseek/deepseek-v4-pro",
-      "provider": "opencode",
+      "canonicalID": "deepseek/deepseek-v4-pro-0813",
+      "provider": "deepseek",
       "recordKey": "deepseek-v4-pro",
       "protocol": "chat",
       "reasoningSupported": "supported",
@@ -16,18 +16,20 @@
         {
           "type": "effort",
           "values": [
+            "low",
             "high",
             "max"
           ]
         }
       ],
       "levels": [
+        "low",
         "high",
         "max"
       ],
       "limit": {
         "context": 1000000,
-        "output": 384000
+        "output": 393216
       },
       "tools": true,
       "input": [
@@ -37,13 +39,14 @@
         "text"
       ],
       "piLevels": [
+        "low",
         "high",
         "max"
       ],
       "cost": {
-        "input": 1.74,
-        "output": 3.84,
-        "cache_read": 0.145
+        "input": 0.66,
+        "output": 1.98,
+        "cache_read": 0.022
       }
     },
     {

@@ -38,13 +38,31 @@ function selectRecord(group, catalog) {
     }
     if (targets.length > 1)
         return { identity: { status: "ambiguous", evidence: "none" } };
-    const canonical = targets[0];
+    let canonical = targets[0];
     if (!canonical)
         return { identity: { status: "unproven", evidence: "none" } };
+    const originalCanonical = canonical;
+    // A public API name can move to another canonical revision while the old
+    // registry entry remains. Follow an exact provider-name relation before
+    // filtering provider records by canonical identity. Qualified names stay pinned.
+    if (!name.includes("/")) {
+        const originalOwner = canonicalModelID(canonical).split("/")[0];
+        for (const providerID of [originalOwner, ...(OFFICIAL_PROVIDER_ALIASES[originalOwner] ?? []), "opencode", "openrouter"]) {
+            const matches = records(catalog, providerID).filter(([key, record]) => exactName(key, record, name));
+            if (matches.length !== 1)
+                continue;
+            const relation = recordCanonical(matches[0][1]);
+            const target = keys.find((key) => canonicalModelID(key) === relation);
+            if (!target)
+                continue;
+            canonical = target;
+            break;
+        }
+    }
     const canonicalID = canonicalModelID(canonical);
     const owner = canonicalID.split("/")[0];
     const identity = { status: "proven", canonicalModelID: canonical,
-        evidence: exact.length ? "model-name" : !name.includes("/") && bare(canonicalID) === name ? "registry-unique" : "record-relation" };
+        evidence: canonical !== originalCanonical ? "record-relation" : exact.length ? "model-name" : !name.includes("/") && bare(canonicalID) === name ? "registry-unique" : "record-relation" };
     const official = [owner, ...(OFFICIAL_PROVIDER_ALIASES[owner] ?? [])];
     for (const providerID of [...official, "opencode", "openrouter"]) {
         const corresponding = records(catalog, providerID).filter(([, record]) => {
