@@ -25,7 +25,7 @@ opencode plugin add github:rpchen/opencode-litellm-provider
 锁定当前发行版：
 
 ```bash
-opencode plugin add github:rpchen/opencode-litellm-provider#v0.11.2
+opencode plugin add github:rpchen/opencode-litellm-provider#v0.11.3
 ```
 
 要求：
@@ -371,7 +371,7 @@ opencode reload
 如果配置里使用固定 tag，`check/update` 参数也必须使用完整的固定来源，例如：
 
 ```text
-github:rpchen/opencode-litellm-provider#v0.11.2
+github:rpchen/opencode-litellm-provider#v0.11.3
 ```
 
 需要回滚时，将现有插件来源改回目标 tag 并重新加载即可。不要同时启用 Git 安装和本地 `file://` 两份 LiteLLM 插件。
@@ -417,6 +417,7 @@ github:rpchen/opencode-litellm-provider#v0.11.2
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [真实宿主 CI 与输入复用](docs/e2e-ci.md)
 - [litellm-discovery-core](https://github.com/rpchen/litellm-discovery-core)
+- [v0.11.3 release notes](docs/releases/v0.11.3.md)
 - [v0.11.2 release notes](docs/releases/v0.11.2.md)
 - [v0.11.0 release notes](docs/releases/v0.11.0.md)
 - [v0.10.0 release notes](docs/releases/v0.10.0.md)
@@ -439,3 +440,9 @@ github:rpchen/opencode-litellm-provider#v0.11.2
 ### main 索引同步的安全检查
 
 新任务/合并收尾会在索引下载后及返回 ready 前重新核验远端 main，记录最终核验时刻；分支或源码并发变化会保留工作并失败。发布任务按完整 SHA 隔离排队，快照从固定干净检出生成。已选择子仓的损坏 metadata 会阻止整体 ready；缺失工作 artifact 必须成功恢复。共享缓存竞争只复用完整且身份/校验一致的赢家。四客户端共用 MCP 失败门禁；每次新任务调用 prepare 仍需代理遵循 AGENTS，不能把安装配置当作宿主级强制任务拦截。详见 [索引说明](docs/codebase-memory.md#本轮审核后的同步安全边界)。
+
+## 同名模型更新后的输出额度
+
+本版本修复 models.dev 保留旧编号时，同名 API 已明确指向新版却被排除的问题：仍按官方 → OpenCode → OpenRouter 取一条完整记录，不拼参数、不硬编码模型、不用 LiteLLM 描述裁剪。例如 deepseek-v4.1-flash 通过目录明确关系找到官方记录后，最大输出额度为393216，上下文窗口为1048576。
+
+升级后请重新启动宿主运行实例并完成一次成功的模型发现，以替换旧快照；正在运行的旧实例不会因安装更新自动换入新代码。OpenCode 中请重启相关运行实例后再继续会话。

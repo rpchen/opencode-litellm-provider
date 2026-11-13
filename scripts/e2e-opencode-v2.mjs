@@ -1554,8 +1554,6 @@ async function phaseInstallAndMatrix() {
     }
     const stateAt = async (suffix = "") =>
       (await request("POST", `/api/rpc/litellm-endpoints/state${suffix}`, { input: {} })).output
-    const secondState = await stateAt(query)
-    assert.deepEqual(secondState.activeEndpointIds, ["default"])
     const secondSession = await request("POST", "/api/session", { title: "activation location", location: { directory } })
     const secondID = payload(secondSession).id
     assert.equal(typeof secondID, "string")
@@ -1564,6 +1562,10 @@ async function phaseInstallAndMatrix() {
     // The directory header is stable and also identifies the intended location.
     await waitForTui(secondTui, directory)
     await sleep(1000)
+    // A new location's plugin RPC is available after the host opens its session.
+    // Exercise the user startup order before querying that location's state.
+    const secondState = await stateAt(query)
+    assert.deepEqual(secondState.activeEndpointIds, ["default"])
     const secondMark = secondTui.mark()
     api("POST", `/api/session/${secondID}/command`, "--data", JSON.stringify({ name: "litellm-endpoints", text: "" }))
     await waitForTui(secondTui, "LiteLLM endpoints", { from: secondMark })
@@ -2175,6 +2177,10 @@ async function phaseManagement() {
     await stopAttachedTui(t)
 
     // 9. RESTART OpenCode: nothing resurrects; the bystander is intact; hand edits show up in the UI
+    // Write the hand edit before restarting, so the new runtime starts with it.
+    // Editing after startup races the host's config reload against the selector command.
+    const editedAgain = readConfig().replace(/("endpoints":\s*\{)/u, `$1 "hand-added": { "baseUrl": "${mgmtA.baseUrl}" },`)
+    writeFileSync(opencodeConfigFile, editedAgain)
     openCodeServer.child.kill()
     await sleep(2000)
     openCodeServer = await startOpenCodeServer()
@@ -2190,8 +2196,6 @@ async function phaseManagement() {
     assert(ids.includes("litellm-company"), "bystander endpoint lost after restart")
     assert.deepEqual(connectionsOf("litellm-company").map((c) => c.id).sort(), companyBaseline, "bystander credential lost after restart")
     assert(!providerIds().includes("litellm-e2e-new"), "deleted endpoint's provider resurrected")
-    const editedAgain = readConfig().replace(/("endpoints":\s*\{)/u, `$1 "hand-added": { "baseUrl": "${mgmtA.baseUrl}" },`)
-    writeFileSync(opencodeConfigFile, editedAgain)
     const session3 = payload(jsonOutput(api("POST", "/api/session", "--data", JSON.stringify({ title: "LiteLLM mgmt restart" })), "session.create")).id
     // The edited endpoint can discover from mgmtA in this process while the
     // host opens its selector. A synchronous CLI freezes that fake server:

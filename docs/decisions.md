@@ -110,3 +110,7 @@ Core #34 squash merge SHA cf797e953eb1f6de8e7c3e0fd5e98094398c26f9；Pi #55 与�
 用户批准独立四组真实前置重建，保留全部模型请求、自然恢复、凭据与历史activation/重启断言；产品timer/src/dist不变。两轮同输入关键路径约5分钟，runner总时间增加约21–22%，详见e2e-performance.md。
 
 常规CI与准确main索引仍逐候选运行；真实宿主行为矩阵仅在Git双输入、精确宿主锁、实际安装依赖、Node/npm/OS/runner和配置一致，且GitHub完整成功run/attempt/组/步骤回读通过时复用。当前交付仍须真实安装/加载/身份/provenance/注册/请求；缺证据完整跑，不用标题/分支/版本号分类。完整运行才能生成基线，复用不能递归。required check名称、strict规则及索引发布依赖不变，Release/附件验证保留。Core共享testing-standard和Pi同名change同时维护，不影响Core公共API或provenance，不为流程变更更新dist。
+
+## 消费同名canonical关系修复（2026-11-13）
+
+用户批准官方同名记录优先确定编号；官方API改名时由OpenCode精确同名记录的明确relation搭桥，再按官方优先取整记录。Core #41 merge SHA为90adfe8b0cde94ece261867997990b6f36d3e984，插件仅更新dist/provenance并以该SHA复验，不复制业务算法、不以LiteLLM上限裁剪。公开模型ID保持不变，成功的新实例网络发现会替换旧快照；当前运行实例的增量复用不保证重算已有模型。
