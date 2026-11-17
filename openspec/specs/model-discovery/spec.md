@@ -40,7 +40,7 @@ LiteLLM 请求成功但过滤后没有任何对话模型时，插件 SHALL 注�
 
 ### Requirement: models.dev catalog 来源、形状与 modelsDevUrl 语义
 
-OpenCode SHALL 继续从 `https://models.dev/catalog.json`（或现有合法 `modelsDevUrl` 镜像）读取同一 catalog snapshot，并保留 60 秒超时、60 秒失败退避、失败降级为空对象和 Core 形状校验。成功 catalog SHALL 由本地内存 cache 保留，不再按固定 6 小时 TTL 过期；最新网络 catalog 只由新增模型的本地匹配未命中驱动。
+OpenCode SHALL 继续从 `https://models.dev/catalog.json`（或现有合法 `modelsDevUrl` 镜像）读取同一 catalog snapshot，并保留 60 秒超时、60 秒失败退避、无完整本地目录时失败降级为空对象和 Core 形状校验。成功完整 catalog SHALL 由本地内存与磁盘 cache 保留，重启优先读取同来源目录，最新请求失败不得清除已有完整目录，不再按固定 6 小时 TTL 过期；最新网络 catalog 只由新增模型的本地匹配未命中驱动。
 
 #### Scenario: 默认拉取 catalog 快照
 

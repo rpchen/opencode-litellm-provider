@@ -1,3 +1,8 @@
+import { readFileSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from "node:fs"
+import { homedir } from "node:os"
+import { dirname, join } from "node:path"
+import { createHash, randomUUID } from "node:crypto"
+import { normalizeModelsDevCatalog } from "../generated/discovery-core/index.js"
 import type { LiteLLMAddresses } from "../core/litellm.js"
 
 export type DiscoveryErrorKind =
@@ -123,25 +128,48 @@ export async function fetchLiteLLMModelInfo(
 }
 
 interface CatalogCache {
+  cachePath?: string
   value?: unknown
   retryAt: number
   pending?: Promise<unknown>
 }
 
-const catalogCache: CatalogCache = { retryAt: 0 }
+const catalogCaches = new Map<string, CatalogCache>()
 
 export interface ModelsDevOptions {
+  /** Override disk location for isolated consumers/tests; false disables persistence. */
+  cachePath?: string | false
   fetchImpl?: FetchLike
   now?: () => number
   logger?: CacheLogger
   url?: string
-  /** Read the successful in-memory snapshot without starting a request. */
+  /** Read the successful local snapshot without starting a request. */
   cachedOnly?: boolean
-  /** Bypass the successful in-memory snapshot and ask for the latest catalog. */
+  /** Bypass the successful local snapshot and ask for the latest catalog. */
   forceRefresh?: boolean
 }
 
 export async function getModelsDevCatalog(options: ModelsDevOptions = {}): Promise<unknown | undefined> {
+  const url = options.url ?? MODELS_DEV_URL
+  // Injected transports are isolated unless persistence is explicitly requested.
+  const cachePath = options.cachePath === false ? undefined : options.cachePath ??
+    (options.fetchImpl ? undefined : join(homedir(), ".cache", "litellm-provider", "models-dev",
+      createHash("sha256").update(url).digest("hex") + ".json"))
+  const cacheKey = JSON.stringify([url, cachePath])
+  let existingCache = catalogCaches.get(cacheKey)
+  if (!existingCache) {
+    existingCache = { retryAt: 0, cachePath }
+    if (cachePath) {
+      try {
+        const saved = JSON.parse(readFileSync(cachePath, "utf8"))
+        if (saved.url === url && normalizeModelsDevCatalog(saved.catalog).kind === "complete") {
+          existingCache.value = saved.catalog
+        }
+      } catch { /* Missing or unreadable cache is a cold start. */ }
+    }
+    catalogCaches.set(cacheKey, existingCache)
+  }
+  const catalogCache = existingCache
   const now = options.now?.() ?? Date.now()
   if (!options.forceRefresh && catalogCache.value !== undefined) return catalogCache.value
   if (options.cachedOnly) return undefined
@@ -149,18 +177,28 @@ export async function getModelsDevCatalog(options: ModelsDevOptions = {}): Promi
   if (catalogCache.pending) return catalogCache.pending
 
   const request = fetchJSON({
-    url: options.url ?? MODELS_DEV_URL,
+    url,
     timeoutMs: 60_000,
     fetchImpl: options.fetchImpl,
   })
     .then((value) => {
+      if (normalizeModelsDevCatalog(value).kind !== "complete" && normalizeModelsDevCatalog(catalogCache.value).kind === "complete") {
+        return value
+      }
       catalogCache.value = value
       catalogCache.retryAt = 0
+      if (cachePath && normalizeModelsDevCatalog(value).kind === "complete") {
+        try {
+          mkdirSync(dirname(cachePath), { recursive: true })
+          const temporary = cachePath + "." + randomUUID() + ".tmp"
+          writeFileSync(temporary, JSON.stringify({ url, catalog: value }), { mode: 0o600 })
+          renameSync(temporary, cachePath)
+        } catch { /* Disk cache is best effort; successful discovery still works. */ }
+      }
       return value
     })
     .catch((error: unknown) => {
       const failedAt = options.now?.() ?? Date.now()
-      catalogCache.value = undefined
       catalogCache.retryAt = failedAt + MODELS_DEV_RETRY_MS
       const message = error instanceof Error ? error.message : String(error)
       options.logger?.warn(`models.dev 获取失败，暂不补充模型元数据：${redact(message)}`)
@@ -174,8 +212,13 @@ export async function getModelsDevCatalog(options: ModelsDevOptions = {}): Promi
   return request
 }
 
-export function resetModelsDevCacheForTest(): void {
-  catalogCache.value = undefined
-  catalogCache.retryAt = 0
-  catalogCache.pending = undefined
+export function resetModelsDevCacheForTest(clearDisk = false): void {
+  if (clearDisk) {
+    for (const cache of catalogCaches.values()) {
+      if (cache.cachePath) {
+        try { unlinkSync(cache.cachePath) } catch { /* Test cache may already be absent. */ }
+      }
+    }
+  }
+  catalogCaches.clear()
 }
