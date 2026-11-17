@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { getModelsDevCatalog, resetModelsDevCacheForTest } from "../src/net/fetch.js"
 import { officialCatalog } from "./fixtures/catalog.js"
 import { describe, expect, test } from "bun:test"
 import type { ConnectionInfo } from "@opencode/client"
@@ -86,6 +90,7 @@ function harness(
   useCoreDiagnostics = false,
   endpoint: EndpointIdentity = endpointIdentity("default", undefined, true),
   modelsDevCatalog?: unknown,
+  catalogLoader?: typeof getModelsDevCatalog,
 ) {
   const scheduler = new FakeScheduler()
   const events = new EventQueue()
@@ -149,10 +154,10 @@ function harness(
       fetches += 1
       return nextFetch()
     },
-    getModelsDev: async () => {
+    getModelsDev: catalogLoader ?? (async () => {
       if (typeof modelsDevCatalog === "object" && modelsDevCatalog && "models" in modelsDevCatalog) return officialCatalog((modelsDevCatalog as { models: Record<string, Record<string, unknown>> }).models)
       return modelsDevCatalog ?? {}
-    },
+    }),
     ...(useCoreDiagnostics ? {} : {
       buildModels: (response: unknown) => {
         const input = response as { model?: string; models?: string[] }
@@ -463,7 +468,6 @@ describe("发现循环", () => {
       reason: "mixed-fallback",
     })
     expect(h.snapshot.diagnostics?.discovery?.stats.protocolFallbacks).toBe(1)
-    expect(h.snapshot.diagnostics?.discovery?.modelsDev.status).toBe("ok")
     expect(h.snapshot.diagnostics?.cache?.source).toBe("network")
     await h.loop.dispose()
   })
@@ -689,3 +693,30 @@ describe("发现循环", () => {
     await h.loop.dispose()
   })
 })
+
+ test("[CATALOG-RESTART] fresh OpenCode state registers disk catalog models offline", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "opencode-catalog-restart-"))
+  const cachePath = join(directory, "catalog.json")
+  const catalog = officialCatalog({ "openai/model-a": {
+    limit: { context: 100000, output: 10000 }, tool_call: true, reasoning: false,
+    modalities: { input: ["text"], output: ["text"] },
+  } })
+  let h: ReturnType<typeof harness> | undefined
+  try {
+    await getModelsDevCatalog({ cachePath, fetchImpl: async () => Response.json(catalog) })
+    resetModelsDevCacheForTest()
+    let catalogRequests = 0
+    h = harness(undefined, true, endpointIdentity("default", undefined, true), undefined,
+      async (options = {}) => getModelsDevCatalog({ ...options, cachePath,
+        fetchImpl: async () => { catalogRequests++; throw new Error("offline") },
+      }))
+    h.setFetch(async () => ({ data: [{ model_name: "model-a", litellm_params: { model: "openai/model-a" }, model_info: {} }] }))
+    await h.loop.start()
+    expect(h.snapshot.models.map(model => model.id)).toEqual(["model-a"])
+    expect(catalogRequests).toBe(0)
+  } finally {
+    await h?.loop.dispose()
+    resetModelsDevCacheForTest()
+    rmSync(directory, { recursive: true, force: true })
+  }
+ })

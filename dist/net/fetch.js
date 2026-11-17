@@ -1,3 +1,8 @@
+import { readFileSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { normalizeModelsDevCatalog } from "../generated/discovery-core/index.js";
 export class DiscoveryError extends Error {
     kind;
     status;
@@ -89,34 +94,65 @@ export async function fetchLiteLLMModelInfo(addresses, key, fetchImpl) {
         return fetchJSON({ url: addresses.legacyModelInfoURL, key, timeoutMs: 15_000, fetchImpl });
     }
 }
-const catalogCache = { retryAt: 0 };
+const catalogCaches = new Map();
 export async function getModelsDevCatalog(options = {}) {
+    const url = options.url ?? MODELS_DEV_URL;
+    // Injected transports are isolated unless persistence is explicitly requested.
+    const cachePath = options.cachePath === false ? undefined : options.cachePath ??
+        (options.fetchImpl ? undefined : join(homedir(), ".cache", "litellm-provider", "models-dev", createHash("sha256").update(url).digest("hex") + ".json"));
+    const cacheKey = JSON.stringify([url, cachePath]);
+    let existingCache = catalogCaches.get(cacheKey);
+    if (!existingCache) {
+        existingCache = { retryAt: 0 };
+        if (cachePath) {
+            try {
+                const saved = JSON.parse(readFileSync(cachePath, "utf8"));
+                if (saved.url === url && normalizeModelsDevCatalog(saved.catalog).kind === "complete") {
+                    existingCache.value = saved.catalog;
+                }
+            }
+            catch { /* Missing or unreadable cache is a cold start. */ }
+        }
+        catalogCaches.set(cacheKey, existingCache);
+    }
+    const catalogCache = existingCache;
     const now = options.now?.() ?? Date.now();
     if (!options.forceRefresh && catalogCache.value !== undefined)
         return catalogCache.value;
     if (options.cachedOnly)
         return undefined;
     if (now < catalogCache.retryAt)
-        return {};
+        return catalogCache.value ?? {};
     if (catalogCache.pending)
         return catalogCache.pending;
     const request = fetchJSON({
-        url: options.url ?? MODELS_DEV_URL,
+        url,
         timeoutMs: 60_000,
         fetchImpl: options.fetchImpl,
     })
         .then((value) => {
+        if (normalizeModelsDevCatalog(value).kind !== "complete" && normalizeModelsDevCatalog(catalogCache.value).kind === "complete") {
+            return catalogCache.value;
+        }
         catalogCache.value = value;
         catalogCache.retryAt = 0;
+        if (cachePath && normalizeModelsDevCatalog(value).kind === "complete") {
+            try {
+                mkdirSync(dirname(cachePath), { recursive: true });
+                const temporary = cachePath + "." + randomUUID() + ".tmp";
+                writeFileSync(temporary, JSON.stringify({ url, catalog: value }), { mode: 0o600 });
+                renameSync(temporary, cachePath);
+            }
+            catch { /* Disk cache is best effort; successful discovery still works. */ }
+        }
         return value;
     })
         .catch((error) => {
         const failedAt = options.now?.() ?? Date.now();
-        catalogCache.value = undefined;
         catalogCache.retryAt = failedAt + MODELS_DEV_RETRY_MS;
         const message = error instanceof Error ? error.message : String(error);
         options.logger?.warn(`models.dev 获取失败，暂不补充模型元数据：${redact(message)}`);
-        return {};
+        return catalogCache.value ?? {};
     })
         .finally(() => {
         catalogCache.pending = undefined;
@@ -125,7 +161,5 @@ export async function getModelsDevCatalog(options = {}) {
     return request;
 }
 export function resetModelsDevCacheForTest() {
-    catalogCache.value = undefined;
-    catalogCache.retryAt = 0;
-    catalogCache.pending = undefined;
+    catalogCaches.clear();
 }

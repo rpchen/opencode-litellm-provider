@@ -446,3 +446,7 @@ github:rpchen/opencode-litellm-provider#v0.11.3
 本版本修复 models.dev 保留旧编号时，同名 API 已明确指向新版却被排除的问题：仍按官方 → OpenCode → OpenRouter 取一条完整记录，不拼参数、不硬编码模型、不用 LiteLLM 描述裁剪。例如 deepseek-v4.1-flash 通过目录明确关系找到官方记录后，最大输出额度为393216，上下文窗口为1048576。
 
 升级后请重新启动宿主运行实例并完成一次成功的模型发现，以替换旧快照；正在运行的旧实例不会因安装更新自动换入新代码。OpenCode 中请重启相关运行实例后再继续会话。
+
+### models.dev 跨重启缓存
+
+成功获取的完整公开目录保存在 `~/.cache/litellm-provider/models-dev/`，按来源 URL 隔离，不包含 LiteLLM 凭据。重启先复用目录；已有模型本地匹配成功时不请求 models.dev。新增模型本地未命中才获取最新目录，获取失败继续使用已有完整目录。首次尚无完整缓存时仍需成功联网；LiteLLM 已删除的模型不会从缓存恢复。
