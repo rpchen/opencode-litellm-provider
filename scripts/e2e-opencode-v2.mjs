@@ -898,7 +898,7 @@ export default {
           const mod = await import(pathToFileURL(target).href)
           if (typeof mod.resetModelsDevCacheForTest !== "function")
             return { ok: false, module: target, error: "resetModelsDevCacheForTest missing" }
-          mod.resetModelsDevCacheForTest()
+          mod.resetModelsDevCacheForTest(true)
           return { ok: true, module: target }
         } catch (error) {
           return { ok: false, module: "", error: String(error) }

@@ -31,4 +31,4 @@ export interface ModelsDevOptions {
     forceRefresh?: boolean;
 }
 export declare function getModelsDevCatalog(options?: ModelsDevOptions): Promise<unknown | undefined>;
-export declare function resetModelsDevCacheForTest(): void;
+export declare function resetModelsDevCacheForTest(clearDisk?: boolean): void;

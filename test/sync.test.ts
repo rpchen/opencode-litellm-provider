@@ -720,3 +720,35 @@ describe("发现循环", () => {
     rmSync(directory, { recursive: true, force: true })
   }
  })
+
+ test("[CATALOG-RESTART-NEW] new offline model retries without withdrawing cached existing models", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "opencode-catalog-new-"))
+  const cachePath = join(directory, "catalog.json")
+  const record = { limit: { context: 100000, output: 10000 }, tool_call: true, reasoning: false,
+    modalities: { input: ["text"], output: ["text"] } }
+  let h: ReturnType<typeof harness> | undefined
+  try {
+    await getModelsDevCatalog({ cachePath, fetchImpl: async () => Response.json(officialCatalog({ "openai/model-a": record })) })
+    resetModelsDevCacheForTest()
+    let offline = true
+    let clock = 1000
+    h = harness(undefined, true, endpointIdentity("default", undefined, true), undefined,
+      async (options = {}) => getModelsDevCatalog({ ...options, cachePath, now: () => clock,
+        fetchImpl: async () => {
+          if (offline) throw new Error("offline")
+          return Response.json(officialCatalog({ "openai/model-a": record, "openai/model-b": record }))
+        },
+      }))
+    h.setFetch(async () => ({ data: ["model-a", "model-b"].map(model_name => ({ model_name, litellm_params: { model: "openai/" + model_name }, model_info: {} })) }))
+    await h.loop.start()
+    expect(h.snapshot.models.map(model => model.id)).toEqual(["model-a"])
+    offline = false
+    clock += 60001
+    await h.loop.trigger(true)
+    expect(h.snapshot.models.map(model => model.id)).toEqual(["model-a", "model-b"])
+  } finally {
+    await h?.loop.dispose()
+    resetModelsDevCacheForTest()
+    rmSync(directory, { recursive: true, force: true })
+  }
+ })

@@ -623,6 +623,8 @@ export function createDiscoveryLoop(
               now,
             }).result
             if (needsCatalogRefresh(addedResult, processedModelNames)) {
+              // Capture complete local matches before fetching metadata for misses.
+              seedPublicationLKG(controller.store, responseToBuild, catalog, options, addedResult.publishable, now, processedModelNames)
               try {
                 catalog = (await loadCatalog(true)) ?? {}
               } catch (error) {

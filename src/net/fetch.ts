@@ -1,4 +1,4 @@
-import { readFileSync, mkdirSync, writeFileSync, renameSync } from "node:fs"
+import { readFileSync, mkdirSync, writeFileSync, renameSync, unlinkSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { createHash, randomUUID } from "node:crypto"
@@ -128,6 +128,7 @@ export async function fetchLiteLLMModelInfo(
 }
 
 interface CatalogCache {
+  cachePath?: string
   value?: unknown
   retryAt: number
   pending?: Promise<unknown>
@@ -157,7 +158,7 @@ export async function getModelsDevCatalog(options: ModelsDevOptions = {}): Promi
   const cacheKey = JSON.stringify([url, cachePath])
   let existingCache = catalogCaches.get(cacheKey)
   if (!existingCache) {
-    existingCache = { retryAt: 0 }
+    existingCache = { retryAt: 0, cachePath }
     if (cachePath) {
       try {
         const saved = JSON.parse(readFileSync(cachePath, "utf8"))
@@ -172,7 +173,7 @@ export async function getModelsDevCatalog(options: ModelsDevOptions = {}): Promi
   const now = options.now?.() ?? Date.now()
   if (!options.forceRefresh && catalogCache.value !== undefined) return catalogCache.value
   if (options.cachedOnly) return undefined
-  if (now < catalogCache.retryAt) return catalogCache.value ?? {}
+  if (now < catalogCache.retryAt) return {}
   if (catalogCache.pending) return catalogCache.pending
 
   const request = fetchJSON({
@@ -182,7 +183,7 @@ export async function getModelsDevCatalog(options: ModelsDevOptions = {}): Promi
   })
     .then((value) => {
       if (normalizeModelsDevCatalog(value).kind !== "complete" && normalizeModelsDevCatalog(catalogCache.value).kind === "complete") {
-        return catalogCache.value
+        return value
       }
       catalogCache.value = value
       catalogCache.retryAt = 0
@@ -201,7 +202,7 @@ export async function getModelsDevCatalog(options: ModelsDevOptions = {}): Promi
       catalogCache.retryAt = failedAt + MODELS_DEV_RETRY_MS
       const message = error instanceof Error ? error.message : String(error)
       options.logger?.warn(`models.dev 获取失败，暂不补充模型元数据：${redact(message)}`)
-      return catalogCache.value ?? {}
+      return {}
     })
     .finally(() => {
       catalogCache.pending = undefined
@@ -211,6 +212,13 @@ export async function getModelsDevCatalog(options: ModelsDevOptions = {}): Promi
   return request
 }
 
-export function resetModelsDevCacheForTest(): void {
+export function resetModelsDevCacheForTest(clearDisk = false): void {
+  if (clearDisk) {
+    for (const cache of catalogCaches.values()) {
+      if (cache.cachePath) {
+        try { unlinkSync(cache.cachePath) } catch { /* Test cache may already be absent. */ }
+      }
+    }
+  }
   catalogCaches.clear()
 }

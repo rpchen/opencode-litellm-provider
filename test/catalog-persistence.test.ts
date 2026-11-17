@@ -36,7 +36,7 @@ test("failed latest request preserves disk catalog across another restart", asyn
   resetModelsDevCacheForTest()
   expect(await getModelsDevCatalog({ cachePath, forceRefresh: true, fetchImpl: async () => {
     throw new Error("offline")
-  } })).toEqual(catalog)
+  } })).toEqual({})
   resetModelsDevCacheForTest()
   expect(await getModelsDevCatalog({ cachePath, cachedOnly: true })).toEqual(catalog)
 })
@@ -53,8 +53,15 @@ test("invalid disk content is ignored and mirror URLs do not reuse another sourc
 test("invalid latest catalog cannot replace the previous complete catalog", async () => {
   const cachePath = location()
   await getModelsDevCatalog({ cachePath, fetchImpl: success })
-  expect(await getModelsDevCatalog({ cachePath, forceRefresh: true, fetchImpl: async () => Response.json({}) })).toEqual(catalog)
+  expect(await getModelsDevCatalog({ cachePath, forceRefresh: true, fetchImpl: async () => Response.json({}) })).toEqual({})
   resetModelsDevCacheForTest()
   expect(await getModelsDevCatalog({ cachePath, cachedOnly: true })).toEqual(catalog)
 })
 
+
+ test("explicit E2E eviction removes both cache layers to exercise genuine LKG fallback", async () => {
+  const cachePath = location()
+  await getModelsDevCatalog({ cachePath, fetchImpl: success })
+  resetModelsDevCacheForTest(true)
+  expect(await getModelsDevCatalog({ cachePath, cachedOnly: true })).toBeUndefined()
+ })
